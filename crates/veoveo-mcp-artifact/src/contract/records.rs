@@ -170,6 +170,9 @@ pub struct UploadRecord {
     pub part_size: Option<PartSize>,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// When the upload completed, was aborted or expired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<DateTime<Utc>>,
 }
 
 /// One share link without its secret.

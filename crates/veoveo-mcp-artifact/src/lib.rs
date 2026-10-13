@@ -4,6 +4,8 @@
 
 #[cfg(feature = "contract")]
 pub mod contract;
+#[cfg(feature = "server")]
+pub mod store;
 
 #[cfg(feature = "server")]
 use veoveo_types::ServerSlug;
@@ -17,6 +19,13 @@ pub fn component() -> &'static str {
 #[cfg(feature = "server")]
 pub fn server() -> ServerSlug {
     ServerSlug::parse("artifact").expect("Artifact's slug")
+}
+
+/// The migrations in `migrations/`, which the server applies in its own schema at
+/// startup and which record their history in `artifact._sqlx_migrations`.
+#[cfg(feature = "server")]
+pub fn migrator() -> sqlx::migrate::Migrator {
+    sqlx::migrate!()
 }
 
 #[cfg(test)]

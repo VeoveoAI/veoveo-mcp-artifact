@@ -36,6 +36,13 @@ impl ValueError {
     }
 }
 
+/// A Unicode noncharacter: U+FDD0 to U+FDEF, or a code point ending in FFFE or FFFF.
+/// Names exclude them, so a prefix followed by U+10FFFF bounds every name with that prefix.
+fn noncharacter(character: char) -> bool {
+    let code = u32::from(character);
+    (0xFDD0..=0xFDEF).contains(&code) || code & 0xFFFE == 0xFFFE
+}
+
 fn printable(value: &str) -> bool {
     !value.chars().any(char::is_control)
 }
@@ -65,9 +72,9 @@ fn admit_name_text(value: &str) -> Result<(), ValueError> {
     if value.is_empty() || value.len() > MAX_NAME_BYTES {
         return Err(ValueError::new("an artifact name holds 1 to 255 bytes"));
     }
-    if !printable(value) || value.contains(['/', '\\']) {
+    if !printable(value) || value.contains(['/', '\\']) || value.chars().any(noncharacter) {
         return Err(ValueError::new(
-            "an artifact name holds no control characters, `/` or `\\`",
+            "an artifact name holds no control characters, noncharacters, `/` or `\\`",
         ));
     }
     Ok(())
@@ -464,6 +471,8 @@ mod tests {
             assert!(ArtifactName::parse(bad).is_err(), "{bad:?}");
         }
         assert!(NamePrefix::parse(".").is_ok());
+        assert!(ArtifactName::parse("a\u{10FFFF}").is_err());
+        assert!(ArtifactName::parse("a\u{FDD0}").is_err());
     }
 
     #[test]
