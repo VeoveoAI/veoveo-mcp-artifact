@@ -312,32 +312,42 @@ async fn bounded<F: Future<Output = Result<()>>>(seconds: u64, test: F) -> Resul
 
 #[tokio::test]
 #[ignore = "requires a running local installation"]
-async fn the_member_discovers_artifact_and_is_refused_its_risky_tools() -> Result<()> {
+async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_rest() -> Result<()> {
     bounded(120, async {
         let installation = Installation::from_env()?;
+        // The Gateway lists the tools a caller's role may call: the member's role carries
+        // no sensitive, destructive or administer risk, and the admin's carries all three.
         let member = installation.connect(MEMBER).await?;
-        let tools = member.list_all_tools().await?;
-        for name in [
+        let admin = installation.connect(ADMIN).await?;
+        let listed = |tools: Vec<rmcp::model::Tool>| -> Vec<String> {
+            let mut names: Vec<String> = tools
+                .into_iter()
+                .filter_map(|tool| tool.name.strip_prefix("artifact__").map(str::to_owned))
+                .collect();
+            names.sort();
+            names
+        };
+        let risk_free = [
+            "abort_upload",
+            "complete_upload",
+            "create_download",
             "create_upload",
             "sign_upload_parts",
-            "complete_upload",
-            "abort_upload",
-            "create_download",
+        ];
+        let risky = [
+            "delete_artifact",
             "grant_artifact",
             "revoke_artifact_grant",
-            "delete_artifact",
             "set_upload_limits",
-        ] {
-            ensure!(
-                tools
-                    .iter()
-                    .any(|tool| tool.name == format!("artifact__{name}")),
-                "the Gateway does not list artifact__{name}"
-            );
-        }
-        // The member's role carries no sensitive, destructive or administer risk, so
-        // each call is refused with arguments that would otherwise be served.
-        let admin = installation.connect(ADMIN).await?;
+        ];
+        let seen = listed(member.list_all_tools().await?);
+        ensure!(seen == risk_free, "the Gateway lists the member {seen:?}");
+        let mut every: Vec<&str> = risk_free.iter().chain(&risky).copied().collect();
+        every.sort_unstable();
+        let seen = listed(admin.list_all_tools().await?);
+        ensure!(seen == every, "the Gateway lists the admin {seen:?}");
+        // A call the member's role does not admit is refused, with arguments that would
+        // otherwise be served.
         let artifact_id = upload_declared(&admin, "risks.bin", &part_bytes(1, 1024)).await?;
         let group = json!({"kind": "group", "id": "acceptance-readers"});
         refused(

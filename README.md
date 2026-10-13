@@ -127,8 +127,8 @@ receives SIGTERM or Ctrl-C.
 
 `tests/acceptance.rs` calls Artifact through the Gateway as the installation's
 `acceptance-member` and `acceptance-admin` callers and moves bytes through the URLs
-Artifact signs: discovery, and the member refused the tools whose permissions carry a
-risk; a small upload with a declared SHA-256 through one signed PUT, available at
+Artifact signs: each caller lists exactly the tools its role may call, and the member
+is refused the tools whose permissions carry a risk; a small upload with a declared SHA-256 through one signed PUT, available at
 completion, read by the owner and by a member of its Work Context, and fetched as a
 range; a gibibyte of unknown size uploaded in parts, verified by the server's Task,
 fetched as a range across a part boundary, then deleted and released by the sweep; a
