@@ -3,10 +3,14 @@
 //! dependency.
 
 mod ids;
+mod resource;
 mod values;
 mod vocabulary;
 
 pub use ids::{AccessRequestId, ArtifactId, ArtifactIdentifierError, ShareLinkId, UploadId};
+pub use resource::{
+    AccessRequestRole, ArtifactResource, ArtifactResourceError, ListCursor, MAX_CURSOR_BYTES,
+};
 pub use values::{
     ArtifactLabels, ArtifactMetadataMap, ArtifactName, IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES,
     MAX_LABELS, MAX_METADATA_BYTES, MAX_NAME_BYTES, MAX_OBJECT_BYTES, MAX_RETENTION_DAYS,

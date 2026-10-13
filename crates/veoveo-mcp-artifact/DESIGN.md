@@ -110,7 +110,7 @@ caller's data labels.
 
 | URI | Returns |
 |---|---|
-| `artifact://artifacts{?work_context,owner,media_type,name,released,cursor}` | A page of artifacts the caller may read, newest first |
+| `artifact://artifacts{?work_context,owner,media_type,name,release_state,cursor}` | A page of artifacts the caller may read, newest first |
 | `artifact://artifacts/{artifact_id}` | The artifact's metadata |
 | `artifact://artifacts/{artifact_id}/grants` | Its grants, for administrators |
 | `artifact://artifacts/{artifact_id}/share-links{?cursor}` | Its share links without their secrets, for administrators |
