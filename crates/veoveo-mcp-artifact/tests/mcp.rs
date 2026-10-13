@@ -78,6 +78,7 @@ fn token(granted: &[ArtifactPermission]) -> String {
         authority,
         permissions: granted.iter().map(|permission| permission.name()).collect(),
         request_context: Some(context),
+        acting_server: None,
         expires_at: now + TimeDelta::minutes(5),
     })
     .unwrap()
