@@ -27,11 +27,11 @@ use veoveo_types::Checked;
 
 use crate::{
     contract::{
-        AbortUploadResult, ArtifactRequest, CompleteUploadResult, CreateDownloadResult,
-        CreateUploadRequest, CreateUploadResult, DeleteArtifactResult, GrantArtifactRequest,
-        GrantArtifactResult, RevokeArtifactGrantRequest, RevokeArtifactGrantResult,
-        SetUploadLimitsRequest, SignUploadPartsRequest, SignUploadPartsResult, UploadLimitsResult,
-        UploadRequest,
+        AbortUploadRequest, AbortUploadResult, CompleteUploadRequest, CompleteUploadResult,
+        CreateDownloadRequest, CreateDownloadResult, CreateUploadRequest, CreateUploadResult,
+        DeleteArtifactRequest, DeleteArtifactResult, GrantArtifactRequest, GrantArtifactResult,
+        RevokeArtifactGrantRequest, RevokeArtifactGrantResult, SetUploadLimitsRequest,
+        SignUploadPartsRequest, SignUploadPartsResult, UploadLimitsResult,
     },
     service::ArtifactService,
 };
@@ -134,7 +134,7 @@ impl ArtifactMcp {
     )]
     async fn complete_upload(
         &self,
-        Parameters(request): Parameters<UploadRequest>,
+        Parameters(request): Parameters<CompleteUploadRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let identity = require(&context, Target::Tool("complete_upload"))?;
@@ -160,7 +160,7 @@ impl ArtifactMcp {
     )]
     async fn abort_upload(
         &self,
-        Parameters(request): Parameters<UploadRequest>,
+        Parameters(request): Parameters<AbortUploadRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let identity = require(&context, Target::Tool("abort_upload"))?;
@@ -185,7 +185,7 @@ impl ArtifactMcp {
     )]
     async fn create_download(
         &self,
-        Parameters(request): Parameters<ArtifactRequest>,
+        Parameters(request): Parameters<CreateDownloadRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let identity = require(&context, Target::Tool("create_download"))?;
@@ -262,7 +262,7 @@ impl ArtifactMcp {
     )]
     async fn delete_artifact(
         &self,
-        Parameters(request): Parameters<ArtifactRequest>,
+        Parameters(request): Parameters<DeleteArtifactRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let identity = require(&context, Target::Tool("delete_artifact"))?;

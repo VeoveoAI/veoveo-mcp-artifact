@@ -3,6 +3,7 @@
 //! dependency.
 
 mod audit;
+mod calls;
 mod ids;
 mod permissions;
 mod records;
@@ -13,6 +14,7 @@ mod values;
 mod vocabulary;
 
 pub use audit::*;
+pub use calls::{ArtifactProvider, served_tools};
 pub use ids::{AccessRequestId, ArtifactId, ArtifactIdentifierError, ShareLinkId, UploadId};
 pub use permissions::ArtifactScope;
 pub use records::{
@@ -26,14 +28,14 @@ pub use resource::{
     MAX_CURSOR_BYTES,
 };
 pub use tools::{
-    AbortUploadResult, AccessRequestRef, AccessRequestResult, ArtifactRequest, ArtifactResult,
-    CompleteUploadResult, CreateDownloadResult, CreateShareLinkRequest, CreateShareLinkResult,
-    CreateUploadRequest, CreateUploadResult, DecideAccessRequestRequest, DeleteArtifactResult,
-    GrantArtifactRequest, GrantArtifactResult, MAX_PARTS_PER_SIGNING, MAX_SHARE_LINK_DAYS,
-    PartRequest, RequestArtifactAccessRequest, RevokeArtifactGrantRequest,
-    RevokeArtifactGrantResult, RevokeShareLinkRequest, SetReleaseStateRequest,
-    SetUploadLimitsRequest, ShareLinkDays, ShareLinkResult, SignUploadPartsRequest,
-    SignUploadPartsResult, UploadLimitsResult, UploadRequest,
+    AbortUploadRequest, AbortUploadResult, AccessRequestRef, AccessRequestResult, ArtifactResult,
+    CompleteUploadRequest, CompleteUploadResult, CreateDownloadRequest, CreateDownloadResult,
+    CreateShareLinkRequest, CreateShareLinkResult, CreateUploadRequest, CreateUploadResult,
+    DecideAccessRequestRequest, DeleteArtifactRequest, DeleteArtifactResult, GrantArtifactRequest,
+    GrantArtifactResult, MAX_PARTS_PER_SIGNING, MAX_SHARE_LINK_DAYS, PartRequest,
+    RequestArtifactAccessRequest, RevokeArtifactGrantRequest, RevokeArtifactGrantResult,
+    RevokeShareLinkRequest, SetReleaseStateRequest, SetUploadLimitsRequest, ShareLinkDays,
+    ShareLinkResult, SignUploadPartsRequest, SignUploadPartsResult, UploadLimitsResult,
 };
 pub use transfer::{
     MAX_SIGNED_URL_BYTES, SignedPart, SignedTransfer, SignedUrl, TransferMethod, UploadTransfer,

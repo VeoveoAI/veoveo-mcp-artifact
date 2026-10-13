@@ -136,6 +136,10 @@ async fn discovery_lists_every_tool_and_resource() {
                 "sign_upload_parts",
             ]
         );
+        // Every typed call a consumer can make names one of these tools.
+        let mut typed = veoveo_mcp_artifact::contract::served_tools().to_vec();
+        typed.sort_unstable();
+        assert_eq!(names, typed);
         let resources = gateway.rpc("resources/list", json!({})).await;
         let uris: Vec<&str> = resources["result"]["resources"]
             .as_array()

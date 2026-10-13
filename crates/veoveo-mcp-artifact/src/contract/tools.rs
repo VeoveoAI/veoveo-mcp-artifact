@@ -118,10 +118,17 @@ pub struct SignUploadPartsResult {
     pub parts: Vec<SignedPart>,
 }
 
-/// `complete_upload`, `abort_upload`: an upload by its identifier.
+/// `complete_upload`: complete an upload whose bytes arrived.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct UploadRequest {
+pub struct CompleteUploadRequest {
+    pub upload_id: UploadId,
+}
+
+/// `abort_upload`: abort an open upload and release its reserved bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AbortUploadRequest {
     pub upload_id: UploadId,
 }
 
@@ -139,10 +146,17 @@ pub struct AbortUploadResult {
     pub upload: UploadRecord,
 }
 
-/// `create_download`, `delete_artifact`: an artifact by its identifier.
+/// `create_download`: a signed GET of an artifact's bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ArtifactRequest {
+pub struct CreateDownloadRequest {
+    pub artifact_id: ArtifactId,
+}
+
+/// `delete_artifact`: delete an artifact and release its bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeleteArtifactRequest {
     pub artifact_id: ArtifactId,
 }
 

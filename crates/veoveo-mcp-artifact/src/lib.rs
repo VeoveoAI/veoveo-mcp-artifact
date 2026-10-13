@@ -17,7 +17,7 @@ pub mod store;
 #[cfg(feature = "server")]
 pub mod sweep;
 
-#[cfg(feature = "server")]
+#[cfg(feature = "contract")]
 use veoveo_types::ServerSlug;
 
 /// The component name, taken from the crate name.
@@ -25,8 +25,9 @@ pub fn component() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
-/// The server's slug, which names its schema `artifact`, its roles and its channel.
-#[cfg(feature = "server")]
+/// The server's slug, which names its schema `artifact`, its roles, its channel and the
+/// provider that consumers call.
+#[cfg(feature = "contract")]
 pub fn server() -> ServerSlug {
     ServerSlug::parse("artifact").expect("Artifact's slug")
 }
