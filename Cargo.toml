@@ -15,6 +15,33 @@ publish = false
 veoveo-platform-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
 veoveo-test-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
 veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
+veoveo-audit-contract = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
+veoveo-task-runtime = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
+# The Rust SDK for Veoveo MCP servers: the contract feature for the permission and audit
+# declarations, the server feature for hosting, registration and forwarded identity.
+veoveo-sdk-rust = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "5c6e1bafc4acd64df117c7ed92149b969619093a", default-features = false }
+
+anyhow = "=1.0.104"
+# Object storage through the AWS SDK for Rust, without aws-config: credentials come from
+# the server's configuration, and the HTTP client is hyper 1 on rustls with ring.
+aws-sdk-s3 = { version = "=1.152.0", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+aws-smithy-http-client = { version = "=1.5.0", default-features = false, features = ["rustls-ring"] }
+base64 = "0.23.1"
+bytes = "1.12.1"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+dotenvy = "0.15.7"
+futures = "0.3.34"
+hex = "=0.4.3"
+# The SDK's HTTP client release; the registration client and the tests share it.
+reqwest = { version = "=0.13.5", default-features = false }
+# The rmcp fork the SDK pins; Artifact's tool router uses its macros.
+rmcp = { version = "=3.5.0", git = "https://github.com/VeoveoAI/rust-sdk", rev = "917e7914c93975fc1eddbff8792f1e2de933bc17" }
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
+# The release the SDK pins exactly.
+sha2 = "=0.11.0"
+tokio-util = "0.7.20"
+tracing = "0.1.44"
+url = "=2.5.8"
 
 # Date and time without a clock in the contract; the server enables `clock`. The exact
 # release matches veoveo-types.

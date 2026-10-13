@@ -4,6 +4,8 @@
 //! `PATH`.
 #![allow(dead_code)]
 
+pub mod rustfs;
+
 use std::{collections::BTreeSet, future::Future, time::Duration};
 
 use chrono::{DateTime, TimeZone, Utc};
