@@ -36,3 +36,42 @@ decisions; bytes move between clients and object storage through URLs the server
 - `tests/database_conformance.rs` runs core's database checks over every statement and
   the `artifact` schema; regenerate `.sqlx` before running it.
 - `docker build --target check .` runs the gate.
+
+## Contract Compliance
+
+<!-- veoveo:contract-compliance:start -->
+Contract: https://veoveo.ai/contracts/hosted-mcp
+
+- C01: met
+- C02: met
+- C03: met — no tool runs past its request; checksum verification of a large object runs as a durable Task on the shared Task runtime
+- C04: met — keyset pages of at most 100 records filtered by per-artifact access inside each statement; exact reads by key
+- C05: met
+- C06: met
+- C07: met
+- C08: met
+- C09: met
+- C10: met
+- C11: met
+- C12: met
+- C13: met
+- C14: met — bytes move only between clients and object storage through signed URLs; the server serves no byte route
+- C15: pending — the OCI image builds; the Helm chart is pending
+- C16: met
+- C17: met
+- C18: met
+- C19: met
+- C20: met
+- C21: met
+- C22: met
+- C23: met
+- C24: met
+- C25: met
+- C26: met
+- C27: met
+- C28: met
+- C29: met — every replica sweeps and verifies; FOR UPDATE SKIP LOCKED and Task claims hand each row and Task to one replica
+- C30: met
+- C31: pending — installed Discover and list readiness qualification is pending
+- C33: pending — Owner naming producers, consumers and installed qualification are pending.
+<!-- veoveo:contract-compliance:end -->

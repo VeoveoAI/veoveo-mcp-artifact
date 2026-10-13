@@ -16,9 +16,10 @@ pub use audit::*;
 pub use ids::{AccessRequestId, ArtifactId, ArtifactIdentifierError, ShareLinkId, UploadId};
 pub use permissions::ArtifactScope;
 pub use records::{
-    AccessRequestRecord, ActiveUploadLimit, AllowedMediaTypes, ArtifactGrant, ArtifactProvenance,
-    ArtifactRecord, ByteCount, DerivedFrom, MAX_DERIVED_FROM, MAX_NOTE_BYTES, Note, PartNumber,
-    PartSize, ShareLinkRecord, StorageUsage, UploadLimits, UploadRecord,
+    AccessRequestRecord, ActiveUploadLimit, AllowedMediaTypes, ArtifactEntry, ArtifactGrant,
+    ArtifactListing, ArtifactProvenance, ArtifactRecord, ByteCount, DerivedFrom, GrantListing,
+    MAX_DERIVED_FROM, MAX_NOTE_BYTES, Note, PartNumber, PartSize, ShareLinkRecord, StorageUsage,
+    UploadLimits, UploadListing, UploadRecord,
 };
 pub use resource::{
     AccessRequestRole, ArtifactDocument, ArtifactResource, ArtifactResourceError, ListCursor,

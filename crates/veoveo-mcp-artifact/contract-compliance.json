@@ -1,0 +1,142 @@
+{
+  "format": "https://veoveo.ai/formats/hosted-mcp-compliance",
+  "contract": "https://veoveo.ai/contracts/hosted-mcp",
+  "server": "artifact",
+  "compliance": [
+    {
+      "id": "C01",
+      "status": "met"
+    },
+    {
+      "id": "C02",
+      "status": "met"
+    },
+    {
+      "id": "C03",
+      "status": "met",
+      "note": "no tool runs past its request; checksum verification of a large object runs as a durable Task on the shared Task runtime"
+    },
+    {
+      "id": "C04",
+      "status": "met",
+      "note": "keyset pages of at most 100 records filtered by per-artifact access inside each statement; exact reads by key"
+    },
+    {
+      "id": "C05",
+      "status": "met"
+    },
+    {
+      "id": "C06",
+      "status": "met"
+    },
+    {
+      "id": "C07",
+      "status": "met"
+    },
+    {
+      "id": "C08",
+      "status": "met"
+    },
+    {
+      "id": "C09",
+      "status": "met"
+    },
+    {
+      "id": "C10",
+      "status": "met"
+    },
+    {
+      "id": "C11",
+      "status": "met"
+    },
+    {
+      "id": "C12",
+      "status": "met"
+    },
+    {
+      "id": "C13",
+      "status": "met"
+    },
+    {
+      "id": "C14",
+      "status": "met",
+      "note": "bytes move only between clients and object storage through signed URLs; the server serves no byte route"
+    },
+    {
+      "id": "C15",
+      "status": "pending",
+      "note": "the OCI image builds; the Helm chart is pending"
+    },
+    {
+      "id": "C16",
+      "status": "met"
+    },
+    {
+      "id": "C17",
+      "status": "met"
+    },
+    {
+      "id": "C18",
+      "status": "met"
+    },
+    {
+      "id": "C19",
+      "status": "met"
+    },
+    {
+      "id": "C20",
+      "status": "met"
+    },
+    {
+      "id": "C21",
+      "status": "met"
+    },
+    {
+      "id": "C22",
+      "status": "met"
+    },
+    {
+      "id": "C23",
+      "status": "met"
+    },
+    {
+      "id": "C24",
+      "status": "met"
+    },
+    {
+      "id": "C25",
+      "status": "met"
+    },
+    {
+      "id": "C26",
+      "status": "met"
+    },
+    {
+      "id": "C27",
+      "status": "met"
+    },
+    {
+      "id": "C28",
+      "status": "met"
+    },
+    {
+      "id": "C29",
+      "status": "met",
+      "note": "every replica sweeps and verifies; FOR UPDATE SKIP LOCKED and Task claims hand each row and Task to one replica"
+    },
+    {
+      "id": "C30",
+      "status": "met"
+    },
+    {
+      "id": "C31",
+      "status": "pending",
+      "note": "installed Discover and list readiness qualification is pending"
+    },
+    {
+      "id": "C33",
+      "status": "pending",
+      "note": "Owner naming producers, consumers and installed qualification are pending."
+    }
+  ]
+}

@@ -5,6 +5,8 @@
 #[cfg(feature = "contract")]
 pub mod contract;
 #[cfg(feature = "server")]
+pub mod mcp;
+#[cfg(feature = "server")]
 pub mod service;
 #[cfg(feature = "server")]
 pub mod storage;
