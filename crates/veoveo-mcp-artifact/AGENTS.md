@@ -35,6 +35,9 @@ decisions; bytes move between clients and object storage through URLs the server
   before the row goes.
 - A verification Task carries its artifact's identifier. Do not queue a second one.
 - The storage secret lives in the server's environment, because SigV4 signs with it.
+- Every decision appends its audit record through `ArtifactStore::record` on its own
+  transaction's connection, before the commit. A new decision declares its detail type
+  in `contract/audit.rs`; the server declares the classes at startup.
 
 ## Build And Test
 

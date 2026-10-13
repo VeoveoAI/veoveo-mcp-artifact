@@ -290,17 +290,30 @@ with it.
 
 ## Audit And Notifications
 
-Artifact's contract declares a closed detail type for each decision:
-`artifact.upload_created`, `artifact.upload_completed`, `artifact.upload_aborted`,
-`artifact.download_issued`, `artifact.grant_changed`, `artifact.deleted` and
-`artifact.upload_limits_set`. A record states the authorization, such as a principal
-allowed to download an artifact until a time. An installation that must prove each
-transfer adds RustFS's own audit feed.
+Every decision appends its audit record on the connection of the transaction that
+makes the change, so the decision and its record commit together or not at all.
+Artifact's contract declares a closed detail type for each class:
 
-Core's audit schema takes class declarations and records only from the installation
-owner, so a server's login can neither declare its classes nor append its records.
-Artifact appends no audit record until core admits a server's own; Contract Compliance
-lists the gap.
+| Class | Recorded when | Outcome |
+|---|---|---|
+| `artifact.upload_created` | `create_upload` reserves an artifact | succeeded |
+| `artifact.upload_completed` | `complete_upload` records the bytes that arrived | succeeded, or failed with reason `conflict` when the size differs from the declared one |
+| `artifact.verified` | the server records a computed SHA-256, during `complete_upload` or in the verification Task | succeeded, or failed with reason `conflict` when it differs from the declared digest |
+| `artifact.upload_aborted` | `abort_upload` | succeeded |
+| `artifact.download_issued` | `create_download` signs a URL, before the URL is returned | succeeded |
+| `artifact.grant_changed` | `grant_artifact`, or `revoke_artifact_grant` with no level | succeeded |
+| `artifact.deleted` | `delete_artifact` marks the artifact | succeeded |
+| `artifact.upload_limits_set` | `set_upload_limits` | succeeded |
+
+Records about an artifact target its resource address; a limits record targets the
+server. A record's actor, authority and request come from the Gateway's signed request
+context, and a verification Task's records carry its owner and a background request.
+Startup declares the classes through the server's own login with core's
+`AuditStore::declare_as_server`, and each record goes through
+`AuditTransactionWrite::append_as_server`, which the database confines to classes under
+the `artifact.` prefix. A record states the authorization, such as a principal allowed
+to download an artifact until a time. An installation that must prove each transfer
+adds RustFS's own audit feed.
 
 Row triggers notify the `artifact` channel with each row's key and tenant, and
 subscriptions wake only for their own tenant.
@@ -317,7 +330,7 @@ forwarded token. A target the declaration omits is denied.
 Artifact prepares its bucket, then registers with the Gateway at startup like any
 server: it loads its key, discovers the registration endpoint, registers its slug,
 scheme, endpoint and permissions, connects with the database login the response grants,
-applies its migrations and serves. On SIGTERM it stops serving, stops its loops, ends
+applies its migrations, declares its audit classes and serves. On SIGTERM it stops serving, stops its loops, ends
 its process instance and deletes its registration.
 
 ## Deployment
@@ -340,7 +353,6 @@ header would void the signature.
 
 | Area | State |
 |---|---|
-| Audit records | Core's audit schema admits class declarations and records only from the installation owner; Artifact declares its detail types and appends none |
 | Inline content for a model without a sandbox (`write_artifact` and a content resource) | Open decision D27 |
 | Calls from other servers, with the acting server and Task in provenance | Needs Gateway token exchange (A5) |
 | The `client` feature and `ArtifactClient` | Plan item M5, after the SDK's `ctx.client()` (M3) |
@@ -356,5 +368,6 @@ header would void the signature.
 | Database | Core's database checks over every statement and table; `effective_level` against a matrix of owners, grants, groups, Work Context roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
 | Object storage | A private RustFS per test process, from the binary in the pinned image: signed single and multipart uploads, a wrong size, checksum or part checksum refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
 | Service | The store and RustFS together: declared and undeclared uploads, refused bytes, aborts, a large object verified in a Task, a digest mismatch, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
-| MCP | The SDK's in-process Gateway: discovery, permission refusals on tools and resources, a signed upload counted in storage usage, and upload limits |
+| MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery, permission refusals on tools and resources, a signed upload counted in storage usage, and upload limits |
+| Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision records its declared class with its target, actor and detail, and a digest mismatch records a failed verification |
 | Acceptance | Through the Gateway on macOS and Linux, with the installation's RustFS (stage D of the core cut) |
