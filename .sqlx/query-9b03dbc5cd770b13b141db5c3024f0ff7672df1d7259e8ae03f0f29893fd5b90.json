@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Record an owner's class declarations. Repeating one changes nothing; a changed schema\n-- replaces the stored one.\nINSERT INTO audit.detail_type AS t (class, schema)\nSELECT d.class, d.schema\nFROM unnest($1::text[], $2::jsonb[]) AS d (class, schema)\nON CONFLICT ON CONSTRAINT detail_type_pkey DO UPDATE SET\n    schema = excluded.schema,\n    declared_at = now()\nWHERE t.schema IS DISTINCT FROM excluded.schema\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "JsonbArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9b03dbc5cd770b13b141db5c3024f0ff7672df1d7259e8ae03f0f29893fd5b90"
+}
