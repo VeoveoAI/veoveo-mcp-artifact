@@ -33,7 +33,7 @@ veoveo-mcp-artifact = { git = "https://github.com/VeoveoAI/veoveo-mcp-artifact",
 The server owns the PostgreSQL schema `artifact`. Every statement is a `.sql` file that
 sqlx checks at compile time against the migrated schema, and the statements and tables
 follow the server schema rules of veoveo-core's
-[database design](https://github.com/VeoveoAI/veoveo-core/blob/dd7394ee566bf2a325a3eb2715e1645b27a6f0de/docs/DATABASE.md).
+[database design](https://github.com/VeoveoAI/veoveo-core/blob/f685fbfd3d28a477d35f77cee3feacc8787772ac/docs/DATABASE.md).
 Tests need the PostgreSQL 18 server programs on `PATH`; each test clones its own
 database from a migrated template.
 
