@@ -78,7 +78,8 @@ size for a body of unknown size, because Artifact otherwise reserves the tenant'
 largest object and sizes parts to fit it. A large object resolves `verifying` while
 Artifact computes its SHA-256; `until_verified` waits for it through the artifact's
 resource updates and resolves available. Artifact records the calling server, and the
-Task when the call came from one, in the artifact's provenance and its audit records.
+Task when the call came from one, in the artifact's provenance and as the `via` of its
+audit records.
 The consumer's OpenShell policy lets its binary reach the Gateway's `/oauth/token` and
 `/mcp/{profile}`, and object storage as TCP pass-through.
 
@@ -87,7 +88,7 @@ The consumer's OpenShell policy lets its binary reach the Gateway's `/oauth/toke
 The server owns the PostgreSQL schema `artifact`. Every statement is a `.sql` file that
 sqlx checks at compile time against the migrated schema, and the statements and tables
 follow the server schema rules of veoveo-core's
-[database design](https://github.com/VeoveoAI/veoveo-core/blob/f685fbfd3d28a477d35f77cee3feacc8787772ac/docs/DATABASE.md).
+[database design](https://github.com/VeoveoAI/veoveo-core/blob/50e72a3a1895d59b4f1eedd2b50cf947fa5d2e72/docs/DATABASE.md).
 Tests need the PostgreSQL 18 server programs on `PATH`; each test clones its own
 database from a migrated template.
 

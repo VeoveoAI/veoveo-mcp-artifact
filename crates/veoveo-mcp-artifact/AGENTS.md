@@ -52,7 +52,10 @@ decisions; bytes move between clients and object storage through URLs the server
   artifact with data labels takes no share link.
 - Every decision appends its audit record through `ArtifactStore::record` on its own
   transaction's connection, before the commit. A new decision declares its detail type
-  in `contract/audit.rs`; the server declares the classes at startup.
+  and OCSF activity in `contract/audit.rs`; the server declares the classes at startup.
+  The record's target is the Artifact resource the decision concerns, the acting server
+  and Task travel in the envelope's `via` rather than the detail, and a failed decision
+  names a reason from `ArtifactAuditReason`.
 
 ## Build And Test
 

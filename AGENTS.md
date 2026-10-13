@@ -13,7 +13,7 @@ These rules apply to veoveo-mcp-artifact.
   `.cargo/config.toml` sets `SQLX_OFFLINE`. After changing a query or a migration,
   regenerate the metadata from an empty target directory.
 - Statements and tables follow the server schema rules of veoveo-core's
-  [database design](https://github.com/VeoveoAI/veoveo-core/blob/f685fbfd3d28a477d35f77cee3feacc8787772ac/docs/DATABASE.md),
+  [database design](https://github.com/VeoveoAI/veoveo-core/blob/50e72a3a1895d59b4f1eedd2b50cf947fa5d2e72/docs/DATABASE.md),
   which `crates/veoveo-mcp-artifact/tests/database_conformance.rs` checks. A statement binds its tenant, bounds its
   rows and reaches them through an index in a generic plan. A table has a primary key,
   an index whose leading columns are each foreign key's, and a

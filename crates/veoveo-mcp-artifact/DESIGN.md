@@ -28,8 +28,9 @@ port         8801
 
 | Standard or protocol | Implemented profile |
 |---|---|
-| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-sdk-rust` 5165538 implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
+| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-sdk-rust` 5216efe implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
 | [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/) | Tool inputs and results, resource contents and the audit detail types Artifact declares. |
+| [Veoveo audit record](https://github.com/VeoveoAI/veoveo-core/blob/50e72a3a1895d59b4f1eedd2b50cf947fa5d2e72/platform/audit/contract/DESIGN.md), after NIST SP 800-53 Rev. 5 AU-3 and mapped to [OCSF 1.9](https://schema.ocsf.io/1.9.0/) | Each record carries core's envelope: Artifact's class with its OCSF API Activity (6003) and activity, an outcome, Artifact's reason code when a decision fails, the caller, the acting server and Task as `via`, the Artifact resource the decision concerns as its target, and a closed detail. |
 | [URI Template RFC 6570](https://www.rfc-editor.org/rfc/rfc6570) | Discovery declares simple variables, and collection pages continue through a `cursor` query parameter. |
 | Amazon S3 REST API | The subset in [Object Storage](#object-storage): PutObject, CreateMultipartUpload, UploadPart, ListParts, CompleteMultipartUpload, AbortMultipartUpload, HeadObject, GetObject, DeleteObject, CreateBucket, PutBucketCors and PutBucketLifecycleConfiguration. |
 | AWS Signature Version 4, query-string authentication | Signed URLs for PutObject, UploadPart and GetObject, valid for at most 15 minutes. Each URL binds the method, object key and every header the client must send. |
@@ -37,13 +38,13 @@ port         8801
 | [RFC 6266](https://www.rfc-editor.org/rfc/rfc6266) | Download responses carry an attachment disposition with the artifact's name as `filename*`. |
 | [RFC 6838](https://www.rfc-editor.org/rfc/rfc6838) media types | An artifact's media type is a bare `type/subtype` without parameters. |
 | SHA-256 | Every available artifact records its SHA-256 in the foundational `Sha256Digest` spelling, `sha256:` followed by 64 lowercase hexadecimal digits. |
-| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Gateway forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, and the server's Task when the call came from one, which Artifact records as the acting server and acting Task. `ArtifactClient` calls through a Gateway profile with a token the SDK obtains by exchange. |
+| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Gateway forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, and the server's Task when the call came from one, which Artifact records in each artifact's provenance and as the `via` of its audit records. `ArtifactClient` calls through a Gateway profile with a token the SDK obtains by exchange. |
 | [HTTP range requests, RFC 9110 §14](https://www.rfc-editor.org/rfc/rfc9110#name-range-requests) | `ArtifactClient` sends one `bytes=first-last` or `bytes=first-` range with a signed GET and expects `206 Partial Content`. |
 | [HTTP semantics, RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) `303 See Other` and `Cache-Control: no-store` ([RFC 9111](https://www.rfc-editor.org/rfc/rfc9111)) | The share route answers a live link with `303` to a signed GET, and every answer carries `no-store`. |
 | [Base64url, RFC 4648 §5](https://www.rfc-editor.org/rfc/rfc4648#section-5) | A share link's secret is 32 random bytes in unpadded canonical base64url, 43 characters. |
 | [Referrer Policy](https://www.w3.org/TR/referrer-policy/) | The share route's answers carry `Referrer-Policy: no-referrer`. |
 | [Veoveo server registration](https://github.com/VeoveoAI/veoveo-sdk-rust) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions in `ai.veoveo/authorization`. |
-| [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/f685fbfd3d28a477d35f77cee3feacc8787772ac/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. |
+| [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/50e72a3a1895d59b4f1eedd2b50cf947fa5d2e72/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. |
 | RustFS 1.0.1 | The installation's object store, pinned by image digest. Artifact uses only the S3 calls listed above through aws-sdk-s3 1.152.0, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
 
 ## Domain Contract
@@ -275,11 +276,11 @@ A server such as Media declares uses of `artifact.artifacts.read` and
 a token from token exchange. The token names the original caller and an `act` chain of
 the calling server and the Gateway, and carries only the Artifact permissions the
 calling server declared and the caller holds. Artifact authorizes the call for the
-caller, records the acting server in the artifact's provenance, and names it as
-`actingServer` in the audit record of every decision the call makes. A call that one
-of the calling server's Tasks makes after its request returned also names that Task,
-as the calling server identifies it: in `provenance.task` and as `actingTask` in the
-same audit records.
+caller, records the acting server in the artifact's provenance, and names it as the
+`via` of the audit record of every decision the call makes. A call that one of the
+calling server's Tasks makes after its request returned also names that Task: in
+`provenance.task` as the calling server identifies it, and in `via` when it is a Task
+of core's Task runtime.
 
 An idempotency key on `create_upload` is unique per tenant and acting identity. A
 repeated call with the same key returns the existing upload or artifact, so a Task
@@ -384,33 +385,37 @@ with it.
 ## Audit And Notifications
 
 Every decision appends its audit record on the connection of the transaction that
-makes the change, so the decision and its record commit together or not at all.
-Artifact's contract declares a closed detail type for each class:
+makes the change, so the decision and its record commit together or not at all. Each
+record carries core's envelope, and Artifact's contract declares a closed detail type
+for each class with the OCSF API Activity (6003) activity the export maps it to:
 
-| Class | Recorded when | Outcome |
-|---|---|---|
-| `artifact.upload_created` | `create_upload` reserves an artifact | succeeded |
-| `artifact.upload_completed` | `complete_upload` records the bytes that arrived | succeeded, or failed with reason `conflict` when the size differs from the declared one |
-| `artifact.verified` | the server records a computed SHA-256, during `complete_upload` or in the verification Task | succeeded, or failed with reason `conflict` when it differs from the declared digest |
-| `artifact.upload_aborted` | `abort_upload` | succeeded |
-| `artifact.download_issued` | `create_download` signs a URL, before the URL is returned | succeeded |
-| `artifact.grant_changed` | `grant_artifact`, or `revoke_artifact_grant` with no level | succeeded |
-| `artifact.deleted` | `delete_artifact` marks the artifact | succeeded |
-| `artifact.upload_limits_set` | `set_upload_limits` | succeeded |
-| `artifact.release_changed` | `set_release_state`, with the number of live share links a return to private ended | succeeded |
-| `artifact.share_link_created` | `create_share_link`, with the link's expiry and limit | succeeded |
-| `artifact.share_link_revoked` | `revoke_share_link` | succeeded |
-| `artifact.share_link_redeemed` | the share route counts a redemption, before it answers; the record names no actor | succeeded |
-| `artifact.access_requested` | `request_artifact_access` | succeeded |
-| `artifact.access_request_cancelled` | `cancel_access_request` | succeeded |
-| `artifact.access_request_decided` | `decide_access_request`, with the decision; an approval that writes a grant also records `artifact.grant_changed` | succeeded |
+| Class | Recorded when | Target | OCSF activity | Outcome |
+|---|---|---|---|---|
+| `artifact.upload_created` | `create_upload` reserves an artifact | the upload | Create | success |
+| `artifact.upload_completed` | `complete_upload` records the bytes that arrived | the upload | Update | success, or failure with reason `size_mismatch` when the size differs from the declared one or exceeds the reservation |
+| `artifact.verified` | the server records a computed SHA-256, during `complete_upload` or in the verification Task | the artifact | Update | success, or failure with reason `digest_mismatch` when it differs from the declared digest |
+| `artifact.upload_aborted` | `abort_upload` | the upload | Delete | success |
+| `artifact.download_issued` | `create_download` signs a URL, before the URL is returned | the artifact | Read | success |
+| `artifact.grant_changed` | `grant_artifact`, `revoke_artifact_grant` with no level, or an approved access request | the artifact's grants | Update | success |
+| `artifact.deleted` | `delete_artifact` marks the artifact | the artifact | Delete | success |
+| `artifact.upload_limits_set` | `set_upload_limits` | `artifact://storage-usage` | Update | success |
+| `artifact.release_changed` | `set_release_state`, with the number of live share links a return to private ended | the artifact | Update | success |
+| `artifact.share_link_created` | `create_share_link`, with the link's expiry and limit | the artifact's share links | Create | success |
+| `artifact.share_link_revoked` | `revoke_share_link` | the artifact's share links | Delete | success |
+| `artifact.share_link_redeemed` | the share route counts a redemption, before it answers; the record names no actor | the artifact | Read | success |
+| `artifact.access_requested` | `request_artifact_access` | the artifact | Create | success |
+| `artifact.access_request_cancelled` | `cancel_access_request` | the artifact | Update | success |
+| `artifact.access_request_decided` | `decide_access_request`, with the decision; an approval that writes a grant also records `artifact.grant_changed` | the artifact | Update | success |
 
-Records about an artifact target its resource address; a limits record targets the
-server. Every detail names the acting server as `actingServer` when another server made
-the call for the caller, and that server's Task as `actingTask` when the call came from
-one. A record's actor, authority and request come from the Gateway's
-signed request context, and a verification Task's records carry its owner and a background request.
-Startup declares the classes through the server's own login with core's
+A target is the Artifact resource address the decision concerns, such as
+`artifact://artifacts/{artifact_id}`, `artifact://uploads/{upload_id}` or
+`artifact://artifacts/{artifact_id}/grants`. Artifact records the decisions it makes;
+a refused request changes nothing and records nothing, so its reason codes are
+`size_mismatch` and `digest_mismatch`. A record's actor and request come from the
+Gateway's signed request context, and its `via` names the server that made the call for
+the caller and that server's Task, so details carry Artifact's facts only. A
+verification Task's records carry its owner and a background request that names the
+Task. Startup declares the classes through the server's own login with core's
 `AuditStore::declare_as_server`, and each record goes through
 `AuditTransactionWrite::append_as_server`, which the database confines to classes under
 the `artifact.` prefix. A record states the authorization, such as a principal allowed
@@ -459,7 +464,7 @@ header would void the signature.
 
 | Area | State |
 |---|---|
-| Inline content for a model without a sandbox (`write_artifact` and a content resource) | Open decision D27 |
+| Inline content for a model without a sandbox (`write_artifact` and a content resource) | Taken up with the agents (E4), under decision D27 |
 | The library App | Plan item M8 |
 | Helm chart | Pending (C15) |
 
@@ -474,6 +479,6 @@ header would void the signature.
 | MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
 | Sharing | Database tests: returning to private ends only live links and releasing again revives none; links need an administrator and a released, available artifact without labels; twelve concurrent redemptions of a link limited to three count exactly three; expired, revoked, deleted and unknown links redeem nothing, and a dropped redemption counts nothing; share-link pages and their cursors. Access requests: an approval writes the requested grant and records each step, visibility and the held level bound a request, only the requester withdraws and only an administrator decides, an approval keeps a stronger grant, and listings page by role and state |
 | Share route | `tests/share_route.rs` through the hosted router and a private RustFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
-| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private RustFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves verifying, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and waits for its verification through the artifact's resource updates, which resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and in the audit records, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
-| Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with its target, actor and detail, a redemption records no actor in the installation's partition, and a digest mismatch records a failed verification |
+| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private RustFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves verifying, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and waits for its verification through the artifact's resource updates, which resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
+| Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size or digest mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |
 | Acceptance | `tests/acceptance.rs` through a running installation's Gateway and RustFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |
