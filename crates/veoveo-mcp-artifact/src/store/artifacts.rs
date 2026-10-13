@@ -197,7 +197,10 @@ impl ArtifactStore {
             &mut tx,
             caller,
             artifact_target(artifact_id),
-            &ArtifactDeleted { artifact_id },
+            &ArtifactDeleted {
+                artifact_id,
+                acting_server: caller.acting_server().cloned(),
+            },
             Decided::Succeeded,
         )
         .await?;

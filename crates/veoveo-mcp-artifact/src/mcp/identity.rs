@@ -52,9 +52,8 @@ pub fn caller(identity: &GatewayInternalIdentity) -> Result<Caller, McpError> {
             groups,
             labels: actor.data_labels.clone(),
             output_labels,
-            // Calls from other servers arrive through token exchange (plan item A5);
-            // until then every call is the caller's own.
-            acting_server: None,
+            // A call another server made for the caller names that server.
+            acting_server: identity.acting_server().cloned(),
             task: None,
         },
         audit,

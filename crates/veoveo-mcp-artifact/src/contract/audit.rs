@@ -1,11 +1,12 @@
 //! Artifact's audit vocabulary: one class per decision, `artifact.<name>`, each with a
 //! closed detail type whose JSON Schema the server declares. A record's target is the
-//! artifact or upload resource it names.
+//! artifact or upload resource it names, and a decision another server asked for on the
+//! caller's behalf names that server as `actingServer`.
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use veoveo_audit_contract::{AuditDetailError, AuditDetailType, AuditRegistryBuilder};
-use veoveo_types::{AccessLevel, AccessSubject, Sha256Digest, TenantId};
+use veoveo_types::{AccessLevel, AccessSubject, ServerSlug, Sha256Digest, TenantId};
 
 use super::{ArtifactId, ArtifactState, ObjectSize, UploadForm, UploadId, UploadLimits};
 
@@ -17,6 +18,9 @@ pub struct UploadCreated {
     pub upload_id: UploadId,
     pub form: UploadForm,
     pub reserved: ObjectSize,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
 }
 impl AuditDetailType for UploadCreated {
     const CLASS: &'static str = "artifact.upload_created";
@@ -30,6 +34,9 @@ pub struct UploadCompleted {
     pub upload_id: UploadId,
     pub size: ObjectSize,
     pub state: ArtifactState,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
 }
 impl AuditDetailType for UploadCompleted {
     const CLASS: &'static str = "artifact.upload_completed";
@@ -41,6 +48,9 @@ impl AuditDetailType for UploadCompleted {
 pub struct UploadAborted {
     pub artifact_id: ArtifactId,
     pub upload_id: UploadId,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
 }
 impl AuditDetailType for UploadAborted {
     const CLASS: &'static str = "artifact.upload_aborted";
@@ -53,6 +63,9 @@ impl AuditDetailType for UploadAborted {
 pub struct DownloadIssued {
     pub artifact_id: ArtifactId,
     pub expires_at: DateTime<Utc>,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
 }
 impl AuditDetailType for DownloadIssued {
     const CLASS: &'static str = "artifact.download_issued";
@@ -67,6 +80,9 @@ pub struct GrantChanged {
     pub subject: AccessSubject,
     pub level: Option<AccessLevel>,
     pub expires_at: Option<DateTime<Utc>>,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
 }
 impl AuditDetailType for GrantChanged {
     const CLASS: &'static str = "artifact.grant_changed";
@@ -80,6 +96,9 @@ pub struct ArtifactVerified {
     pub artifact_id: ArtifactId,
     pub sha256: Sha256Digest,
     pub state: ArtifactState,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
 }
 impl AuditDetailType for ArtifactVerified {
     const CLASS: &'static str = "artifact.verified";
@@ -90,6 +109,9 @@ impl AuditDetailType for ArtifactVerified {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ArtifactDeleted {
     pub artifact_id: ArtifactId,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
 }
 impl AuditDetailType for ArtifactDeleted {
     const CLASS: &'static str = "artifact.deleted";
@@ -102,6 +124,9 @@ impl AuditDetailType for ArtifactDeleted {
 pub struct UploadLimitsSet {
     pub tenant: TenantId,
     pub limits: UploadLimits,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
 }
 impl AuditDetailType for UploadLimitsSet {
     const CLASS: &'static str = "artifact.upload_limits_set";

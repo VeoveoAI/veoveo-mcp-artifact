@@ -112,6 +112,7 @@ impl ArtifactStore {
             &UploadLimitsSet {
                 tenant: tenant.clone(),
                 limits: set.clone(),
+                acting_server: administrator.acting_server().cloned(),
             },
             Decided::Succeeded,
         )
@@ -137,6 +138,7 @@ impl ArtifactStore {
             &DownloadIssued {
                 artifact_id,
                 expires_at,
+                acting_server: caller.acting_server().cloned(),
             },
             Decided::Succeeded,
         )

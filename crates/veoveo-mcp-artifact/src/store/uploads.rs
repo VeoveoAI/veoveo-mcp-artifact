@@ -219,6 +219,7 @@ impl ArtifactStore {
                 upload_id: upload.upload_id,
                 form: upload.form,
                 reserved: upload.reserved,
+                acting_server: caller.acting_server().cloned(),
             },
             Decided::Succeeded,
         )
@@ -326,6 +327,7 @@ impl ArtifactStore {
                     upload_id,
                     size: object.size,
                     state: ArtifactState::Failed,
+                    acting_server: caller.acting_server().cloned(),
                 },
                 Decided::Failed(AuditReason::Conflict),
             )
@@ -356,6 +358,7 @@ impl ArtifactStore {
                 upload_id,
                 size: object.size,
                 state: artifact.state,
+                acting_server: caller.acting_server().cloned(),
             },
             Decided::Succeeded,
         )
@@ -411,6 +414,7 @@ impl ArtifactStore {
                 artifact_id,
                 sha256: computed.clone(),
                 state,
+                acting_server: caller.acting_server().cloned(),
             },
             decided,
         )
@@ -455,6 +459,7 @@ impl ArtifactStore {
             &UploadAborted {
                 artifact_id: upload.artifact_id,
                 upload_id,
+                acting_server: caller.acting_server().cloned(),
             },
             Decided::Succeeded,
         )

@@ -111,6 +111,7 @@ impl ArtifactStore {
                 subject: request.subject.clone(),
                 level: Some(request.level),
                 expires_at: request.expires_at,
+                acting_server: caller.acting_server().cloned(),
             },
             Decided::Succeeded,
         )
@@ -152,6 +153,7 @@ impl ArtifactStore {
                 subject: revoked_subject,
                 level: None,
                 expires_at: None,
+                acting_server: caller.acting_server().cloned(),
             },
             Decided::Succeeded,
         )
