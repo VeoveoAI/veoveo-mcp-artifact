@@ -31,6 +31,8 @@ pub enum ArtifactError {
     Storage(#[from] StorageError),
     #[error("no bytes arrived for the upload")]
     NoBytes,
+    #[error("the received bytes do not match the SHA-256 the upload declared")]
+    DigestMismatch,
     #[error("a part declares {declared} bytes, more than the upload's part size of {part_size}")]
     PartTooLarge { declared: u64, part_size: u64 },
     #[error("the upload takes one signed PutObject, not parts")]

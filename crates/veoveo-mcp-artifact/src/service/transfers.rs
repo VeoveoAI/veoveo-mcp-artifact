@@ -239,6 +239,7 @@ impl ArtifactService {
                 .await?;
             if state == ArtifactState::Failed {
                 self.discard_object(caller, artifact_id).await;
+                return Err(ArtifactError::DigestMismatch);
             }
             return self.artifact(caller, artifact_id, now).await;
         }

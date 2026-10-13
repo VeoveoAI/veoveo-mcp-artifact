@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 pub mod rustfs;
+pub mod service;
 
 use std::{collections::BTreeSet, future::Future, time::Duration};
 

@@ -8,6 +8,7 @@ pub(crate) fn tool_error(error: ArtifactError) -> McpError {
     match error {
         ArtifactError::Store(error) => store_error(error),
         refusal @ (ArtifactError::NoBytes
+        | ArtifactError::DigestMismatch
         | ArtifactError::PartTooLarge { .. }
         | ArtifactError::NotMultipart) => McpError::invalid_params(refusal.to_string(), None),
         ArtifactError::Storage(crate::storage::StorageError::ObjectExists) => {
