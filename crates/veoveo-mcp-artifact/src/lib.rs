@@ -5,9 +5,13 @@
 #[cfg(feature = "contract")]
 pub mod contract;
 #[cfg(feature = "server")]
+pub mod service;
+#[cfg(feature = "server")]
 pub mod storage;
 #[cfg(feature = "server")]
 pub mod store;
+#[cfg(feature = "server")]
+pub mod sweep;
 
 #[cfg(feature = "server")]
 use veoveo_types::ServerSlug;

@@ -20,7 +20,7 @@ pub use plan::{DEFAULT_PART_BYTES, SINGLE_PUT_MAX_BYTES, UPLOAD_LIFETIME, Upload
 pub use rows::VisibleArtifact;
 pub use sweep::{
     ACCESS_REQUEST_RETENTION, ClaimedDeletion, DeletionBatch, ExpiredUpload, FAILED_RETENTION,
-    SHARE_LINK_RETENTION, UPLOAD_RETENTION,
+    SHARE_LINK_RETENTION, StaleVerification, UPLOAD_RETENTION,
 };
 pub use uploads::{
     CompletedObject, CreatedUpload, MAX_UPLOADS_PER_PAGE, UploadPage, UploadPageSize,

@@ -348,6 +348,30 @@ async fn the_sweep_ends_expired_uploads_and_removes_deleted_and_failed_artifacts
             store.upload(&caller, open.upload.upload_id).await,
             Err(ArtifactStoreError::UploadNotFound)
         ));
+
+        // The failed artifact goes after a week, through a batch that removes its object
+        // first.
+        let early = store
+            .claim_failed(now() + Duration::days(6), batch)
+            .await
+            .unwrap();
+        assert!(early.claimed.is_empty());
+        early.commit().await.unwrap();
+        let mut failed = store
+            .claim_failed(now() + Duration::days(9), batch)
+            .await
+            .unwrap();
+        assert_eq!(failed.claimed.len(), 1);
+        assert_eq!(failed.claimed[0].artifact_id, open.artifact.artifact_id);
+        let claimed = failed.claimed[0];
+        failed.remove(claimed).await.unwrap();
+        failed.commit().await.unwrap();
+        assert!(matches!(
+            store
+                .artifact(&caller, open.artifact.artifact_id, now())
+                .await,
+            Err(ArtifactStoreError::ArtifactNotFound)
+        ));
     })
     .await;
 }

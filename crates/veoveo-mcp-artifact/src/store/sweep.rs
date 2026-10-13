@@ -36,23 +36,51 @@ pub struct ClaimedDeletion {
     pub artifact_id: ArtifactId,
 }
 
-/// A batch of deleted artifacts held for one transaction. The caller deletes each
-/// object, removes each row, then commits; a crash before the commit hands the batch to
-/// the next sweep, and deleting an absent object succeeds.
+/// A verifying artifact the sweep checks for a live verification Task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaleVerification {
+    pub tenant: StoredTenant,
+    pub artifact_id: ArtifactId,
+}
+
+/// Which artifacts a batch removes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Removal {
+    Deleted,
+    Failed,
+}
+
+/// A batch of deleted or failed artifacts held for one transaction. The caller deletes
+/// each object, removes each row, then commits; a crash before the commit hands the
+/// batch to the next sweep, and deleting an absent object succeeds.
 pub struct DeletionBatch {
     tx: Transaction<'static, Postgres>,
+    removal: Removal,
     pub claimed: Vec<ClaimedDeletion>,
 }
 
 impl DeletionBatch {
     pub async fn remove(&mut self, deletion: ClaimedDeletion) -> Result<(), ArtifactStoreError> {
-        sqlx::query_file!(
-            "src/store/sweep/remove_deleted.sql",
-            deletion.tenant as StoredTenant,
-            deletion.artifact_id as ArtifactId,
-        )
-        .execute(&mut *self.tx)
-        .await?;
+        match self.removal {
+            Removal::Deleted => {
+                sqlx::query_file!(
+                    "src/store/sweep/remove_deleted.sql",
+                    deletion.tenant as StoredTenant,
+                    deletion.artifact_id as ArtifactId,
+                )
+                .execute(&mut *self.tx)
+                .await?
+            }
+            Removal::Failed => {
+                sqlx::query_file!(
+                    "src/store/sweep/remove_failed_artifact.sql",
+                    deletion.tenant as StoredTenant,
+                    deletion.artifact_id as ArtifactId,
+                )
+                .execute(&mut *self.tx)
+                .await?
+            }
+        };
         Ok(())
     }
 
@@ -111,29 +139,82 @@ impl ArtifactStore {
         )
         .fetch_all(&mut *tx)
         .await?;
-        Ok(DeletionBatch { tx, claimed })
+        Ok(DeletionBatch {
+            tx,
+            removal: Removal::Deleted,
+            claimed,
+        })
     }
 
-    /// Remove failed artifacts, ended uploads, expired grants, ended share links and
-    /// decided access requests past their retention, batch by batch.
+    /// Claim a batch of artifacts that failed more than [`FAILED_RETENTION`] before
+    /// `now`, for object removal.
+    pub async fn claim_failed(
+        &self,
+        now: DateTime<Utc>,
+        limit: MaintenanceBatch,
+    ) -> Result<DeletionBatch, ArtifactStoreError> {
+        let mut tx = self.pool().begin().await?;
+        let claimed = sqlx::query_file_as!(
+            ClaimedDeletion,
+            "src/store/sweep/failed_batch.sql",
+            limit.limit(),
+            now - FAILED_RETENTION,
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        Ok(DeletionBatch {
+            tx,
+            removal: Removal::Failed,
+            claimed,
+        })
+    }
+
+    /// Verifying artifacts whose upload completed by `cutoff`.
+    pub async fn stale_verifications(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: MaintenanceBatch,
+    ) -> Result<Vec<StaleVerification>, ArtifactStoreError> {
+        Ok(sqlx::query_file_as!(
+            StaleVerification,
+            "src/store/sweep/stale_verifications.sql",
+            cutoff,
+            limit.limit(),
+        )
+        .fetch_all(self.pool())
+        .await?)
+    }
+
+    /// Fail a verifying artifact whose verification can no longer finish. Returns false
+    /// when it is no longer verifying.
+    pub async fn fail_verification(
+        &self,
+        tenant: StoredTenant,
+        artifact_id: ArtifactId,
+        now: DateTime<Utc>,
+    ) -> Result<bool, ArtifactStoreError> {
+        Ok(sqlx::query_file_scalar!(
+            "src/store/uploads/fail_artifact.sql",
+            tenant as StoredTenant,
+            artifact_id as ArtifactId,
+            now,
+        )
+        .fetch_optional(self.pool())
+        .await?
+        .is_some())
+    }
+
+    /// Remove ended uploads, expired grants, ended share links and decided access
+    /// requests past their retention, batch by batch. Failed artifacts go through
+    /// [`Self::claim_failed`], which removes their objects first.
     pub async fn prune(
         &self,
         now: DateTime<Utc>,
         batch: MaintenanceBatch,
     ) -> Result<Pruned, ArtifactStoreError> {
-        let failed_before = now - FAILED_RETENTION;
         let uploads_before = now - UPLOAD_RETENTION;
         let links_before = now - SHARE_LINK_RETENTION;
         let requests_before = now - ACCESS_REQUEST_RETENTION;
-        let failed = Pruned::in_batches(batch, |limit| async move {
-            Ok::<_, ArtifactStoreError>(
-                sqlx::query_file!("src/store/sweep/remove_failed.sql", failed_before, limit)
-                    .execute(self.pool())
-                    .await?
-                    .rows_affected(),
-            )
-        })
-        .await?;
         let uploads = Pruned::in_batches(batch, |limit| async move {
             Ok::<_, ArtifactStoreError>(
                 sqlx::query_file!("src/store/sweep/prune_uploads.sql", uploads_before, limit)
@@ -174,6 +255,6 @@ impl ArtifactStore {
             )
         })
         .await?;
-        Ok(failed + uploads + grants + links + requests)
+        Ok(uploads + grants + links + requests)
     }
 }
