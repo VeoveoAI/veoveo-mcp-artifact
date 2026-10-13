@@ -1,6 +1,7 @@
 //! The hosted process: prepare the bucket, register with the Gateway, connect with the
-//! registration's database login, migrate, then serve MCP while the sweep, the
-//! verification worker and the change watcher run. Stopping deletes the registration.
+//! registration's database login, migrate, then serve MCP and the share route while the
+//! sweep, the verification worker and the change watcher run. Stopping deletes the
+//! registration.
 mod config;
 mod registration;
 
@@ -23,6 +24,7 @@ use crate::{
     contract::audit_registry,
     mcp::{self, ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs, watch_changes},
     service::{ArtifactService, run_verifications},
+    share,
     storage::ObjectStorage,
     store::ArtifactStore,
     sweep::run_sweep,
@@ -101,10 +103,12 @@ async fn serve(
         .declare_as_server(&crate::server())
         .await
         .context("declaring Artifact's audit classes")?;
+    let share_base = args.share_base().context("configuring share links")?;
     let service = Arc::new(ArtifactService::new(
         ArtifactStore::new(store.clone(), registry),
         storage.clone(),
         tasks,
+        share_base.clone(),
     ));
     let hubs = Arc::new(TenantHubs::default());
     let app = Arc::new(ArtifactApp {
@@ -120,12 +124,21 @@ async fn serve(
     let ready = storage.clone();
     let hosted = HostedServer::for_domain::<ArtifactMcp>()
         .deployment(deployment, args.allow_loopback_hosts)?
-        .allowed_hosts(args.allowed_hosts.iter().cloned())
+        // A browser following a share link names the share origin's host.
+        .allowed_hosts(
+            args.allowed_hosts
+                .iter()
+                .cloned()
+                .chain([share_base.authority()]),
+        )
         .internal_trust(registration.access_tokens(), http)?
         .handler(move || {
             Hosted::new(ArtifactMcp::new(app.clone()))
                 .with_tasks(ListenOnly::new(ArtifactSubscriptions::new(app.clone())))
         })
+        // Share links work for people without an account, so their route needs no
+        // Gateway authentication; it verifies the link's secret itself.
+        .public_routes(share::routes(service.clone()))
         // Artifact serves only while its bucket answers.
         .readiness(move || {
             let storage = ready.clone();

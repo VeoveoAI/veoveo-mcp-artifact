@@ -14,6 +14,8 @@ pub mod server;
 #[cfg(feature = "server")]
 pub mod service;
 #[cfg(feature = "server")]
+pub mod share;
+#[cfg(feature = "server")]
 pub mod storage;
 #[cfg(feature = "server")]
 pub mod store;

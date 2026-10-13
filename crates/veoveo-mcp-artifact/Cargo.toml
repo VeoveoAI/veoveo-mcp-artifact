@@ -50,6 +50,7 @@ server = [
     "chrono/clock",
     "veoveo-sdk-rust/server",
     "dep:anyhow",
+    "dep:axum",
     "dep:aws-sdk-s3",
     "dep:aws-smithy-http-client",
     "dep:base64",
@@ -57,6 +58,7 @@ server = [
     "dep:clap",
     "dep:dotenvy",
     "dep:futures",
+    "dep:getrandom",
     "dep:hex",
     "dep:reqwest",
     "dep:rmcp",
@@ -89,6 +91,7 @@ veoveo-sdk-rust = { workspace = true, features = ["contract"], optional = true }
 veoveo-types = { workspace = true, optional = true }
 
 anyhow = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
 aws-sdk-s3 = { workspace = true, optional = true }
 aws-smithy-http-client = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
@@ -96,6 +99,7 @@ bytes = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 dotenvy = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["rustls-no-provider"], optional = true }
 rmcp = { workspace = true, features = ["server", "macros", "schemars", "transport-streamable-http-server"], optional = true }
@@ -124,6 +128,7 @@ rmcp = { workspace = true, features = ["client", "transport-streamable-http-clie
 veoveo-test-fixtures = { workspace = true, features = ["store", "database-conformance"] }
 reqwest = { workspace = true, features = ["rustls-no-provider"] }
 tokio = { workspace = true, features = ["full"] }
+tower = { workspace = true, features = ["util"] }
 
 [[bin]]
 name = "veoveo-mcp-artifact"

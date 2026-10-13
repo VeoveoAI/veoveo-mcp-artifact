@@ -1,6 +1,7 @@
 //! The server's operations: each one combines the store's decision with the object
 //! storage call it needs. MCP handlers translate requests into these calls; the tests
 //! drive them directly.
+mod sharing;
 mod transfers;
 mod verification;
 
@@ -13,6 +14,7 @@ use crate::{
         ArtifactGrant, ArtifactId, ArtifactRecord, ArtifactState, CreateDownloadResult,
         DeleteArtifactResult, GrantArtifactRequest, UploadLimits,
     },
+    share::ShareBase,
     storage::{ObjectKey, ObjectStorage, StorageError},
     store::{ArtifactStore, ArtifactStoreError, Caller},
 };
@@ -39,22 +41,32 @@ pub enum ArtifactError {
     NotMultipart,
     #[error("the verification Task failed: {0}")]
     Tasks(#[from] veoveo_task_runtime::TaskError),
+    #[error("the operating system's random source failed: {0}")]
+    Random(getrandom::Error),
 }
 
-/// The server's state: its store, its bucket and its Task runtime.
+/// The server's state: its store, its bucket, its Task runtime and the origin its share
+/// links name.
 #[derive(Clone)]
 pub struct ArtifactService {
     store: ArtifactStore,
     storage: ObjectStorage,
     tasks: TaskRuntime,
+    share_base: ShareBase,
 }
 
 impl ArtifactService {
-    pub fn new(store: ArtifactStore, storage: ObjectStorage, tasks: TaskRuntime) -> Self {
+    pub fn new(
+        store: ArtifactStore,
+        storage: ObjectStorage,
+        tasks: TaskRuntime,
+        share_base: ShareBase,
+    ) -> Self {
         Self {
             store,
             storage,
             tasks,
+            share_base,
         }
     }
 

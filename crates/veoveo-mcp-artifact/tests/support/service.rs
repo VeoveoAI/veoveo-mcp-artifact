@@ -5,7 +5,9 @@
 use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
 
 use sha2::{Digest as _, Sha256};
-use veoveo_mcp_artifact::{migrator, server, service::ArtifactService, storage::ObjectStorage};
+use veoveo_mcp_artifact::{
+    migrator, server, service::ArtifactService, share::ShareBase, storage::ObjectStorage,
+};
 use veoveo_platform_store::Instance;
 use veoveo_task_runtime::{PrincipalKind, TaskOwner, TaskRuntime, TaskSurface};
 use veoveo_test_fixtures::store::TestDb;
@@ -16,6 +18,9 @@ use veoveo_types::{
 };
 
 use super::{Who, rustfs::TestRustFs};
+
+/// The origin the test service names in share links.
+pub const SHARE_ORIGIN: &str = "http://artifact.test:8801";
 
 /// The service and the object store behind it, for one test.
 pub struct Harness {
@@ -41,7 +46,12 @@ where
         let rustfs = TestRustFs::start().await;
         let storage = rustfs.storage().await;
         let store = super::declared_store(platform).await;
-        let service = Arc::new(ArtifactService::new(store, storage.clone(), tasks));
+        let service = Arc::new(ArtifactService::new(
+            store,
+            storage.clone(),
+            tasks,
+            ShareBase::parse(SHARE_ORIGIN).unwrap(),
+        ));
         let harness = Arc::new(Harness {
             service,
             storage,

@@ -8,7 +8,7 @@ use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 use veoveo_sdk_rust::{PublicDeployment, parse_allowed_host_authority};
 
-use crate::storage::StorageConfig;
+use crate::{share::ShareBase, storage::StorageConfig};
 
 #[derive(Parser)]
 #[command(name = "veoveo-mcp-artifact", about = "Artifact MCP server")]
@@ -19,6 +19,10 @@ pub(super) struct Args {
     /// `{public_base_url}/artifact/mcp` and registers that URL.
     #[arg(long, env = "VEOVEO_PUBLIC_BASE_URL")]
     pub public_base_url: String,
+    /// The origin a share link's URL names, under which `/artifact/shares/{token}`
+    /// reaches Artifact for someone without an account. Defaults to the public base URL.
+    #[arg(long, env = "VEOVEO_SHARE_BASE_URL")]
+    pub share_base_url: Option<String>,
     /// The Gateway's RFC 8414 issuer; registration discovers its endpoint from there.
     #[arg(long, env = "VEOVEO_GATEWAY_ISSUER")]
     pub gateway_issuer: Url,
@@ -84,6 +88,15 @@ impl Args {
         PublicDeployment::new(&self.public_base_url)
     }
 
+    pub fn share_base(&self) -> anyhow::Result<ShareBase> {
+        ShareBase::parse(
+            self.share_base_url
+                .as_deref()
+                .unwrap_or(&self.public_base_url),
+        )
+        .map_err(anyhow::Error::msg)
+    }
+
     pub fn storage(&self) -> StorageConfig {
         StorageConfig {
             internal_endpoint: self.storage_endpoint.clone(),
@@ -137,6 +150,11 @@ mod tests {
         .unwrap();
         let storage = args.storage();
         assert_eq!(storage.signing_endpoint, storage.internal_endpoint);
+        assert_eq!(
+            args.share_base().unwrap().authority(),
+            "host.openshell.internal:8801",
+            "share links default to the public base URL"
+        );
         assert_eq!(storage.bucket, "artifacts");
         assert!(!format!("{storage:?}").contains("not-printed"));
     }
