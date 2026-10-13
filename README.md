@@ -73,19 +73,83 @@ feature and the nextest `ci` profile. It runs the same way on macOS and Linux.
 
 ## Development Environment
 
-Build the `dev` image on the host and create an OpenShell sandbox from it:
+Build the `dev` image on the host and create an OpenShell sandbox from it with the
+installation's `vv-registration` provider attached:
 
 ```sh
 docker build --target dev -t veoveo-mcp-artifact:dev .
 openshell sandbox create --name vv-mcp-artifact --from veoveo-mcp-artifact:dev \
-  --policy openshell/policy.yaml --detach -- sleep infinity
+  --policy openshell/policy.yaml --provider vv-registration --detach -- sleep infinity
 ```
 
 The policy lets the server reach the Gateway at `host.openshell.internal:8080`, the
 installation's PostgreSQL server at port 5432 and its object store at port 9000, and lets
-acceptance tests reach the Gateway and the object store. OpenShell pins each policy-listed executable to the
-SHA-256 it first observes, so the server runs from a content-addressed copy under
-`/sandbox/run`.
+acceptance tests reach the Gateway and the object store. Signed requests to the object
+store pass through as TCP, because a proxy that changed a signed header would void the
+signature.
+
+### Running Artifact in the environment
+
+Artifact runs inside `vv-mcp-artifact` on port 8801 and registers with a Gateway that the
+environment reaches at `http://host.openshell.internal:8080`. The `vv-registration`
+provider supplies `VEOVEO_REGISTRATION_SECRET` as a placeholder that OpenShell resolves
+only on the Gateway endpoint. The storage credential cannot work that way, because the
+server signs URLs with the secret itself, so the installation uploads it as an
+owner-only file, `/sandbox/state/storage.env`, that holds `VEOVEO_STORAGE_ACCESS_KEY` and
+`VEOVEO_STORAGE_SECRET_KEY`.
+
+OpenShell pins every policy-listed executable path to the SHA-256 it first observes and
+denies the path once the file changes. Artifact therefore runs from a content-addressed
+copy under `/sandbox/run`, so each build gets a fresh path:
+
+```sh
+openshell sandbox exec vv-mcp-artifact -- bash -lc 'cd /sandbox/src \
+  && cargo build --locked --bin veoveo-mcp-artifact \
+  && bin=/sandbox/run/veoveo-mcp-artifact-$(sha256sum target/debug/veoveo-mcp-artifact | cut -c1-16) \
+  && install -D -m 0755 target/debug/veoveo-mcp-artifact "$bin" \
+  && set -a && . /sandbox/state/storage.env && set +a \
+  && VEOVEO_PUBLIC_BASE_URL=http://host.openshell.internal:8801 \
+     VEOVEO_GATEWAY_ISSUER=http://host.openshell.internal:8080 \
+     VEOVEO_KEY_DIRECTORY=/sandbox/artifact/keys \
+     VEOVEO_STORAGE_ENDPOINT=http://host.openshell.internal:9000 \
+     "$bin"'
+openshell forward start 8801 vv-mcp-artifact -d
+```
+
+The first command keeps running in its terminal. Artifact prepares its bucket and
+registers before it listens, and the Gateway reaches it as
+`http://host.openshell.internal:8801/artifact/mcp`. Signed URLs name the object store as
+`http://host.openshell.internal:9000`; a browser on the host resolves that name only
+when the host maps it to `127.0.0.1`. Artifact removes its registration when it
+receives SIGTERM or Ctrl-C.
+
+## Acceptance
+
+`tests/acceptance.rs` calls Artifact through the Gateway as the installation's
+`acceptance-member` and `acceptance-admin` callers and moves bytes through the URLs
+Artifact signs: discovery, and the member refused the tools whose permissions carry a
+risk; a small upload with a declared SHA-256 through one signed PUT, available at
+completion, read by the owner and by a member of its Work Context, and fetched as a
+range; a gibibyte of unknown size uploaded in parts, verified by the server's Task,
+fetched as a range across a part boundary, then deleted and released by the sweep; a
+grant listed and revoked; and an upload refused by the quota the admin sets, then
+admitted once the limits are restored. The tests share the tenant's usage and limits,
+so nextest runs them one at a time. The local installation has one tenant, so a read
+refused across tenants is covered by the database tests.
+
+The tests are ignored by default. With the installation running and the callers' keys
+copied to `/sandbox/acceptance`, run them from a fresh nextest archive extraction, so the
+test binaries also get fresh paths:
+
+```sh
+openshell sandbox exec vv-mcp-artifact -- bash -lc 'cd /sandbox/src \
+  && cargo nextest archive --test acceptance --archive-file /sandbox/run/acceptance.tar.zst \
+  && run=/sandbox/run/acceptance-$(date +%s%N) && mkdir -p "$run" \
+  && VEOVEO_ACCEPTANCE_GATEWAY=http://host.openshell.internal:8080 \
+     VEOVEO_ACCEPTANCE_KEY_DIRECTORY=/sandbox/acceptance \
+     cargo nextest run --archive-file /sandbox/run/acceptance.tar.zst \
+       --workspace-remap /sandbox/src --extract-to "$run" --run-ignored only'
+```
 
 ## License
 
