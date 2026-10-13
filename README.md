@@ -61,6 +61,7 @@ let artifact = artifacts
     .upload(name, media_type, UploadBody::stream(output.bytes_stream().map_err(std::io::Error::other)))
     .max_size(ObjectSize::new(512 * 1024 * 1024)?)
     .idempotency_key(key)
+    .until_verified(Duration::from_secs(300))
     .await?;
 let first_kib = artifacts
     .download(artifact.artifact_id)
@@ -74,9 +75,12 @@ let first_kib = artifacts
 A body of at most 16 MiB goes in one PUT with its size and SHA-256 declared. A larger
 one streams in parts, at most four 16 MiB parts in memory by default. Give a maximum
 size for a body of unknown size, because Artifact otherwise reserves the tenant's
-largest object and sizes parts to fit it. The consumer's OpenShell policy lets its
-binary reach the Gateway's `/oauth/token` and `/mcp/{profile}`, and object storage as
-TCP pass-through.
+largest object and sizes parts to fit it. A large object resolves `verifying` while
+Artifact computes its SHA-256; `until_verified` waits for it through the artifact's
+resource updates and resolves available. Artifact records the calling server, and the
+Task when the call came from one, in the artifact's provenance and its audit records.
+The consumer's OpenShell policy lets its binary reach the Gateway's `/oauth/token` and
+`/mcp/{profile}`, and object storage as TCP pass-through.
 
 ## Database
 

@@ -43,8 +43,8 @@ decisions; bytes move between clients and object storage through URLs the server
 - A verification Task carries its artifact's identifier. Do not queue a second one.
 - The storage secret lives in the server's environment, because SigV4 signs with it.
 - A share link's secret appears only in the URL `create_share_link` returns. The store
-  keeps its SHA-256, records and errors never name it, and the share route logs only
-  root events, outside the request span that records its path.
+  keeps its SHA-256, records and errors never name it, and the hosted server's request
+  span records the route template, never the path. Never log a request path or query.
 - Every refused share link answers the same `404`; a refusal never says why. A
   redemption counts in the statement that checks the limit, and its audit record
   commits with it before the route answers.
