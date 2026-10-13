@@ -47,6 +47,7 @@ tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "mac
 veoveo-platform-store = { workspace = true, optional = true }
 
 [dev-dependencies]
+veoveo-platform-store.workspace = true
 # `database-conformance` holds the crate's queries and schema to core's database rules.
 veoveo-test-fixtures = { workspace = true, features = ["store", "database-conformance"] }
 tokio = { workspace = true, features = ["full"] }

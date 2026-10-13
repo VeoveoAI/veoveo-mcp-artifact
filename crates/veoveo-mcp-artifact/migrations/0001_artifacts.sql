@@ -319,11 +319,17 @@ DECLARE
     after bigint := CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN coalesce(NEW.size_bytes, 0) ELSE 0 END;
     owner_tenant uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.tenant ELSE NEW.tenant END;
 BEGIN
+    -- A size first appears on a tenant whose upload created its usage row, so a change
+    -- updates that row. An upsert would check its proposed row, which a decrease makes
+    -- negative, before it found the conflict.
     IF before <> after THEN
-        INSERT INTO artifact.storage_usage AS u (tenant, stored_bytes, reserved_bytes, open_uploads)
-        VALUES (owner_tenant, after - before, 0, 0)
-        ON CONFLICT (tenant) DO UPDATE
-        SET stored_bytes = u.stored_bytes + (after - before);
+        UPDATE artifact.storage_usage
+        SET stored_bytes = stored_bytes + (after - before)
+        WHERE tenant = owner_tenant;
+        IF NOT FOUND THEN
+            INSERT INTO artifact.storage_usage (tenant, stored_bytes, reserved_bytes, open_uploads)
+            VALUES (owner_tenant, after - before, 0, 0);
+        END IF;
     END IF;
     RETURN NULL;
 END
