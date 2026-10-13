@@ -12,14 +12,15 @@ publish = false
 
 [workspace.dependencies]
 # veoveo-core, pinned to one revision for every core crate.
-veoveo-platform-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
-veoveo-test-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
-veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
-veoveo-audit-contract = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
-veoveo-task-runtime = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "7a6c210ff1f9ee9f5150c0a5d101afeb98d659da" }
+veoveo-platform-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "dd7394ee566bf2a325a3eb2715e1645b27a6f0de" }
+veoveo-test-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "dd7394ee566bf2a325a3eb2715e1645b27a6f0de" }
+veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "dd7394ee566bf2a325a3eb2715e1645b27a6f0de" }
+veoveo-audit = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "dd7394ee566bf2a325a3eb2715e1645b27a6f0de" }
+veoveo-audit-contract = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "dd7394ee566bf2a325a3eb2715e1645b27a6f0de" }
+veoveo-task-runtime = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "dd7394ee566bf2a325a3eb2715e1645b27a6f0de" }
 # The Rust SDK for Veoveo MCP servers: the contract feature for the permission and audit
 # declarations, the server feature for hosting, registration and forwarded identity.
-veoveo-sdk-rust = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "5c6e1bafc4acd64df117c7ed92149b969619093a", default-features = false }
+veoveo-sdk-rust = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "3524b83eac8cad3cc1f6a66c579389d7135fdc9e", default-features = false }
 
 anyhow = "=1.0.104"
 # Object storage through the AWS SDK for Rust, without aws-config: credentials come from
