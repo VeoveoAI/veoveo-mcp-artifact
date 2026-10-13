@@ -30,6 +30,10 @@ impl ValueError {
     fn new(message: impl Into<Cow<'static, str>>) -> Self {
         Self(message.into())
     }
+
+    pub(crate) fn from_static(message: &'static str) -> Self {
+        Self(Cow::Borrowed(message))
+    }
 }
 
 fn printable(value: &str) -> bool {
