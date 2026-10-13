@@ -122,6 +122,7 @@ fn forwarded(
         permissions,
         request_context: Some(context),
         acting_server: None,
+        acting_task: None,
         expires_at: now + TimeDelta::minutes(5),
     })
     .unwrap()
