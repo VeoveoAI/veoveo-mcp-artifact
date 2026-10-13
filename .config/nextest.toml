@@ -7,3 +7,13 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# Artifact's acceptance tests share one tenant's usage and upload limits in a running
+# installation, so they run one at a time and allow for a gibibyte transfer.
+[test-groups]
+acceptance = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = "binary(acceptance)"
+test-group = "acceptance"
+slow-timeout = { period = "120s", terminate-after = 8 }

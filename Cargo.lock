@@ -2839,6 +2839,8 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "serde",
+ "serde_json",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
@@ -2884,6 +2886,7 @@ dependencies = [
  "pastey",
  "pin-project-lite",
  "rand 0.10.3",
+ "reqwest",
  "rmcp-macros",
  "schemars",
  "serde",
@@ -4264,11 +4267,27 @@ dependencies = [
  "uuid",
  "veoveo-audit",
  "veoveo-audit-contract",
+ "veoveo-oauth-client",
  "veoveo-platform-store",
  "veoveo-sdk-rust",
  "veoveo-task-runtime",
  "veoveo-test-fixtures",
  "veoveo-types",
+]
+
+[[package]]
+name = "veoveo-oauth-client"
+version = "0.1.0"
+source = "git+https://github.com/VeoveoAI/veoveo-core?rev=f685fbfd3d28a477d35f77cee3feacc8787772ac#f685fbfd3d28a477d35f77cee3feacc8787772ac"
+dependencies = [
+ "jsonwebtoken",
+ "schemars",
+ "serde",
+ "thiserror 2.0.21",
+ "url",
+ "uuid",
+ "veoveo-types",
+ "zeroize",
 ]
 
 [[package]]

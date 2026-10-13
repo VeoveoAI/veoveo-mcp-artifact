@@ -18,6 +18,8 @@ veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "f685fbf
 veoveo-audit = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "f685fbfd3d28a477d35f77cee3feacc8787772ac" }
 veoveo-audit-contract = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "f685fbfd3d28a477d35f77cee3feacc8787772ac" }
 veoveo-task-runtime = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "f685fbfd3d28a477d35f77cee3feacc8787772ac" }
+# RFC 7523 client assertions for the acceptance callers.
+veoveo-oauth-client = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "f685fbfd3d28a477d35f77cee3feacc8787772ac" }
 # The Rust SDK for Veoveo MCP servers: the contract feature for the permission and audit
 # declarations, the server feature for hosting, registration and forwarded identity.
 veoveo-sdk-rust = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "c9742c0b624c55e47f0d336cc7fd200676226304", default-features = false }
