@@ -28,7 +28,7 @@ port         8801
 
 | Standard or protocol | Implemented profile |
 |---|---|
-| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-sdk-rust` c9742c0 implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
+| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-sdk-rust` 4f2773f implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
 | [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/) | Tool inputs and results, resource contents and the audit detail types Artifact declares. |
 | [URI Template RFC 6570](https://www.rfc-editor.org/rfc/rfc6570) | Discovery declares simple variables, and collection pages continue through a `cursor` query parameter. |
 | Amazon S3 REST API | The subset in [Object Storage](#object-storage): PutObject, CreateMultipartUpload, UploadPart, ListParts, CompleteMultipartUpload, AbortMultipartUpload, HeadObject, GetObject, DeleteObject, CreateBucket, PutBucketCors and PutBucketLifecycleConfiguration. |
@@ -37,7 +37,8 @@ port         8801
 | [RFC 6266](https://www.rfc-editor.org/rfc/rfc6266) | Download responses carry an attachment disposition with the artifact's name as `filename*`. |
 | [RFC 6838](https://www.rfc-editor.org/rfc/rfc6838) media types | An artifact's media type is a bare `type/subtype` without parameters. |
 | SHA-256 | Every available artifact records its SHA-256 in the foundational `Sha256Digest` spelling, `sha256:` followed by 64 lowercase hexadecimal digits. |
-| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Gateway forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server. |
+| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Gateway forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, which Artifact records as the acting server. `ArtifactClient` calls through a Gateway profile with a token the SDK obtains by exchange. |
+| [HTTP range requests, RFC 9110 §14](https://www.rfc-editor.org/rfc/rfc9110#name-range-requests) | `ArtifactClient` sends one `bytes=first-last` or `bytes=first-` range with a signed GET and expects `206 Partial Content`. |
 | [Veoveo server registration](https://github.com/VeoveoAI/veoveo-sdk-rust) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions in `ai.veoveo/authorization`. |
 | [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/f685fbfd3d28a477d35f77cee3feacc8787772ac/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. |
 | RustFS 1.0.1 | The installation's object store, pinned by image digest. Artifact uses only the S3 calls listed above through aws-sdk-s3 1.152.0, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
@@ -64,14 +65,13 @@ The crate is a library and a binary.
 
 | Feature | Contains | Depends on |
 |---|---|---|
-| `contract` | `ArtifactId`, the typed resource addresses, every tool request and result, metadata, grant levels and subjects, access requests, upload limits, the `ArtifactPermission` vocabulary and the audit detail types | `veoveo-types`, the SDK's `contract` feature, Serde and Schemars |
-| `client` | `contract` plus `ArtifactClient`, which uploads a stream of known or unknown size and downloads through signed URLs, built on the SDK's `ctx.client()` | the SDK's `client` feature and an HTTP client |
+| `contract` | `ArtifactId`, the typed resource addresses, every tool request and result, metadata, grant levels and subjects, access requests, upload limits, the `ArtifactPermission` vocabulary, the audit detail types, and `ArtifactProvider` with a `ToolCall` for each served tool | `veoveo-types`, the SDK's `contract` feature, Serde and Schemars |
+| `client` | `contract` plus `ArtifactClient`, which uploads a stream of known or unknown size and downloads through signed URLs, built on the SDK's `GatewayClient` | the SDK's `client` feature, reqwest, Tokio and sha2 |
 | `server` (default) | the hosted server, persistence and object storage | the SDK's `server` feature, sqlx and aws-sdk-s3 |
 
 A consumer such as Media selects `default-features = false, features = ["client"]` and
-compiles neither sqlx nor the S3 SDK. The check stage proves that with `cargo tree`.
-
-The `client` feature is plan item M5 and waits for the SDK's `ctx.client()` (M3).
+compiles neither sqlx nor the S3 SDK. `tests/contract_boundary.rs` proves both features'
+boundaries with `cargo tree`.
 
 ### Hosted Process
 
@@ -230,15 +230,56 @@ the share route, because ranges and resumes go to RustFS.
 
 ## Calls From Other Servers
 
-A server such as Media calls Artifact through the Gateway with a token from token
-exchange. The token names the original caller and an `act` chain of the calling server
-and the Gateway, and carries only the Artifact permissions the calling server declared
-and the caller holds. Artifact authorizes the call for the caller and records the acting
-server and the Task in the artifact's provenance.
+A server such as Media declares uses of `artifact.artifacts.read` and
+`artifact.artifacts.write` when it registers, and calls Artifact through the Gateway with
+a token from token exchange. The token names the original caller and an `act` chain of
+the calling server and the Gateway, and carries only the Artifact permissions the
+calling server declared and the caller holds. Artifact authorizes the call for the
+caller, records the acting server in the artifact's provenance, and names it as
+`actingServer` in the audit record of every decision the call makes.
 
 An idempotency key on `create_upload` is unique per tenant and acting identity. A
 repeated call with the same key returns the existing upload or artifact, so a Task
 that restarts after a crash does not store an output twice.
+
+The `contract` feature publishes each served tool as a typed call. `ArtifactProvider`
+names the `artifact` slug, and each request type names its tool and result, such as
+`CreateUploadRequest` with `CreateUploadResult`, so a consumer calls
+`client.call(request)` on the SDK's `GatewayClient` and never spells a tool name.
+
+### ArtifactClient
+
+`ArtifactClient::new(calls, http)` wraps a `GatewayClient`: the one `ctx.client()` binds
+to a request's caller, the one `ServerCalls::for_task` binds to a Task's caller, or a
+program's own. `http` moves the bytes straight to object storage, and the program
+chooses its TLS configuration. `upload(name, media_type, body)` and `download(id)` are
+builders that run when awaited.
+
+An upload reads the body from an `AsyncRead`, a stream of chunks or bytes in memory:
+
+| Body | Upload |
+|---|---|
+| at most 16 MiB, size known or not | The client reads it into memory, then declares its size and SHA-256 with `create_upload`. One create-only PUT sends it, and RustFS refuses other bytes. The artifact is available at completion. |
+| larger than 16 MiB | The client declares a known size as the upload's maximum size, so the upload is multipart and every part can be signed and sent again on its own. It reads parts of the upload's part size and sends them while it reads the next. |
+
+A part takes a permit before the client reads it, so at most `parallelism` parts are in
+memory. The default holds 64 MiB: four 16 MiB parts, or one part when the part size is
+larger. A body of unknown size without a maximum size reserves the tenant's largest
+object, whose parts can reach 525 MiB, so a consumer gives the maximum size it expects.
+The client signs parts in batches of up to 100 as the upload reaches them, signs a part
+again when its signature expires within a minute or object storage refuses it, and sends
+a part up to four times when the network or storage fails. A body that holds another
+number of bytes than its declared size, or more than its bound, fails the upload, and
+every failure after `create_upload` aborts the upload, which releases its reserved bytes.
+An upload whose future is dropped stays open until it expires.
+
+A download calls `create_download` and streams the signed GET, whole or as one range.
+A failure names object storage's status and S3 error code, never the signed URL.
+
+A call bound to a request lasts as long as the forwarded token, at most a minute, so a
+handler starts a Task for an upload that may take longer. A consumer's OpenShell policy
+lets its binary reach the Gateway's `/oauth/token` and `/mcp/{profile}`, and object
+storage as TCP pass-through, like Artifact's own policy.
 
 ## Lists And Paging
 
@@ -306,8 +347,9 @@ Artifact's contract declares a closed detail type for each class:
 | `artifact.upload_limits_set` | `set_upload_limits` | succeeded |
 
 Records about an artifact target its resource address; a limits record targets the
-server. A record's actor, authority and request come from the Gateway's signed request
-context, and a verification Task's records carry its owner and a background request.
+server. Every detail names the acting server as `actingServer` when another server made
+the call for the caller. A record's actor, authority and request come from the Gateway's
+signed request context, and a verification Task's records carry its owner and a background request.
 Startup declares the classes through the server's own login with core's
 `AuditStore::declare_as_server`, and each record goes through
 `AuditTransactionWrite::append_as_server`, which the database confines to classes under
@@ -354,8 +396,8 @@ header would void the signature.
 | Area | State |
 |---|---|
 | Inline content for a model without a sandbox (`write_artifact` and a content resource) | Open decision D27 |
-| Calls from other servers, with the acting server and Task in provenance | Needs Gateway token exchange (A5) |
-| The `client` feature and `ArtifactClient` | Plan item M5, after the SDK's `ctx.client()` (M3) |
+| The calling server's Task in provenance | Pending: the forwarded token names the acting server but not its Task, so `provenance.task` stays empty for calls from other servers |
+| Waiting for a large artifact's verification in `ArtifactClient` | Pending: an upload resolves with a `verifying` artifact, and the client offers no wait, because MCP resource reads are outside the SDK's `GatewayClient` |
 | Release states, share links and their route, access requests and the review prompts | Plan item M7 |
 | The library App | Plan item M8 |
 | Helm chart | Pending (C15) |
@@ -368,6 +410,7 @@ header would void the signature.
 | Database | Core's database checks over every statement and table; `effective_level` against a matrix of owners, grants, groups, Work Context roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
 | Object storage | A private RustFS per test process, from the binary in the pinned image: signed single and multipart uploads, a wrong size, checksum or part checksum refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
 | Service | The store and RustFS together: declared and undeclared uploads, refused bytes, aborts, a large object verified in a Task, a digest mismatch, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
-| MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery, permission refusals on tools and resources, a signed upload counted in storage usage, and upload limits |
+| MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery, which matches the typed calls the contract publishes, permission refusals on tools and resources, a signed upload counted in storage usage, and upload limits |
+| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private RustFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned; a caller without the write permission is refused; the acting server is recorded in provenance and in the audit records; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision records its declared class with its target, actor and detail, and a digest mismatch records a failed verification |
 | Acceptance | `tests/acceptance.rs` through a running installation's Gateway and RustFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, and the admin's quota refusing an upload. The local installation has one tenant, so the database tests cover a read refused across tenants |

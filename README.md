@@ -12,7 +12,7 @@ design and operational contract.
 
 | Path | Purpose |
 |---|---|
-| `crates/veoveo-mcp-artifact` | The library and binary. The `contract` feature holds Artifact's public types; the default `server` feature adds the MCP server, persistence, object storage, the verification worker and the sweep |
+| `crates/veoveo-mcp-artifact` | The library and binary. The `contract` feature holds Artifact's public types and typed calls, the `client` feature adds `ArtifactClient` for consumers' uploads and downloads, and the default `server` feature adds the MCP server, persistence, object storage, the verification worker and the sweep |
 | `crates/veoveo-mcp-artifact/migrations/` | The `artifact` schema, applied in the server's own PostgreSQL schema at startup |
 | `.sqlx/` | sqlx's checked metadata for every query the workspace compiles |
 | `Dockerfile` | The `dev` environment, the `check` gate, the release `build` and the `runtime` image |
@@ -27,6 +27,56 @@ builds without a database, runtime or object-storage dependency:
 ```toml
 veoveo-mcp-artifact = { git = "https://github.com/VeoveoAI/veoveo-mcp-artifact", rev = "<revision>", default-features = false, features = ["contract"] }
 ```
+
+## Using The Client
+
+A server that stores files in Artifact declares uses of Artifact's permissions when it
+registers, selects the `client` feature and wraps the client the SDK binds to its
+caller:
+
+```rust
+let declaration = AuthorizationBuilder::<MediaPermission>::new()
+    // ... the server's own tools ...
+    .uses(ArtifactPermission::ArtifactsRead)
+    .uses(ArtifactPermission::ArtifactsWrite)
+    .build(&slug, &scheme)?;
+```
+
+In a tool handler, the client acts for the request's caller:
+
+```rust
+let artifacts = ArtifactClient::new(context.client()?, http.clone());
+let artifact = artifacts
+    .upload(name, media_type, UploadBody::bytes(rendered))
+    .labels(labels)
+    .await?;
+```
+
+In a Task, it acts for the caller that created the Task while the Task runs, so an
+upload may outlast the request:
+
+```rust
+let artifacts = ArtifactClient::new(calls.for_task(&snapshot)?, http.clone());
+let artifact = artifacts
+    .upload(name, media_type, UploadBody::stream(output.bytes_stream().map_err(std::io::Error::other)))
+    .max_size(ObjectSize::new(512 * 1024 * 1024)?)
+    .idempotency_key(key)
+    .await?;
+let first_kib = artifacts
+    .download(artifact.artifact_id)
+    .range(0..=1023)
+    .await?
+    .body
+    .collect()
+    .await?;
+```
+
+A body of at most 16 MiB goes in one PUT with its size and SHA-256 declared. A larger
+one streams in parts, at most four 16 MiB parts in memory by default. Give a maximum
+size for a body of unknown size, because Artifact otherwise reserves the tenant's
+largest object and sizes parts to fit it. The consumer's OpenShell policy lets its
+binary reach the Gateway's `/oauth/token` and `/mcp/{profile}`, and object storage as
+TCP pass-through.
 
 ## Database
 
@@ -69,7 +119,7 @@ docker build --target check .
 
 The `check` stage checks the `.sqlx` metadata against a migrated PostgreSQL 18.6
 database, then runs rustfmt, clippy with warnings denied, cargo-deny, cargo-hack on each
-feature and the nextest `ci` profile. It runs the same way on macOS and Linux.
+feature and the nextest `ci` profile with every feature on. It runs the same way on macOS and Linux.
 
 ## Development Environment
 

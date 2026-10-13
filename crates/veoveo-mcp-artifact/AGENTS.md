@@ -12,9 +12,16 @@ decisions; bytes move between clients and object storage through URLs the server
 
 - Owns the `artifact://` URI scheme and the PostgreSQL schema `artifact`. Identity: slug
   `artifact`, MCP `/artifact/mcp`, share route `/artifact/shares/{token}`, port 8801.
-- The `contract` feature builds without sqlx, Tokio or an object-storage client.
-  `tests/contract_boundary.rs` reads the resolved dependency graph and fails when one
-  appears. Put every new dependency of the server behind the `server` feature.
+- The `contract` feature builds without sqlx, Tokio or an object-storage client, and
+  the `client` feature without sqlx, the S3 SDK, core's store, Task runtime or audit
+  writer, or the server's HTTP stack. `tests/contract_boundary.rs` reads the resolved
+  dependency graph and fails when one appears. Put every new dependency of the server
+  behind the `server` feature.
+- Every served tool has one request type that implements the SDK's `ToolCall` in
+  `contract/calls.rs`, and `served_tools()` lists them; the MCP tests hold that list to
+  the tools the server serves.
+- `ArtifactClient` holds at most `parallelism` parts in memory and never the whole body
+  beyond one 16 MiB PUT. Its errors never carry a signed URL.
 - Owner, tenant, Work Context and provenance come from the forwarded identity. A tool
   argument never names them.
 - `artifact.effective_level` decides per-artifact access in SQL. A listing filters on
@@ -44,7 +51,8 @@ decisions; bytes move between clients and object storage through URLs the server
 - `cargo test -p veoveo-mcp-artifact` with the PostgreSQL 18 server programs and
   `rustfs` on `PATH`, as the `dev` image provides them.
 - `cargo test -p veoveo-mcp-artifact --no-default-features --features contract` checks
-  the contract alone.
+  the contract alone. `tests/client.rs` needs the `client` feature, so the gate runs
+  nextest with `--all-features`.
 - `tests/database_conformance.rs` runs core's database checks over every statement and
   the `artifact` schema; regenerate `.sqlx` before running it.
 - `docker build --target check .` runs the gate.
