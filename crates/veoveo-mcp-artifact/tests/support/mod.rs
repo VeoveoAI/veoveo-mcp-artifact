@@ -169,7 +169,7 @@ impl Who {
                 acting_server: self
                     .acting_server
                     .map(|slug| ServerSlug::parse(slug).unwrap()),
-                task: None,
+                acting_task: None,
             },
             audit,
         )

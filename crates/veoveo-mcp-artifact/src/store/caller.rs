@@ -4,8 +4,9 @@ use std::collections::BTreeSet;
 
 use veoveo_audit_contract::AuditContext;
 use veoveo_platform_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
+use veoveo_sdk_rust::OpaqueTaskId;
 use veoveo_types::{
-    AccessLevel, DataLabelId, GroupId, PrincipalId, ServerSlug, TaskId, TenantId, WorkContextId,
+    AccessLevel, DataLabelId, GroupId, PrincipalId, ServerSlug, TenantId, WorkContextId,
     WorkContextMembershipLevel,
 };
 
@@ -34,7 +35,7 @@ pub struct Caller {
     labels: BTreeSet<DataLabelId>,
     output_labels: BTreeSet<DataLabelId>,
     acting_server: Option<ServerSlug>,
-    task: Option<TaskId>,
+    acting_task: Option<OpaqueTaskId>,
     audit: AuditContext,
 }
 
@@ -48,7 +49,8 @@ pub struct CallerContext {
     /// classification and data labels.
     pub output_labels: BTreeSet<DataLabelId>,
     pub acting_server: Option<ServerSlug>,
-    pub task: Option<TaskId>,
+    /// The acting server's Task the call came from, when it named one.
+    pub acting_task: Option<OpaqueTaskId>,
 }
 
 impl Caller {
@@ -79,7 +81,7 @@ impl Caller {
             labels: context.labels,
             output_labels: context.output_labels,
             acting_server: context.acting_server,
-            task: context.task,
+            acting_task: context.acting_task,
             audit,
         })
     }
@@ -125,8 +127,8 @@ impl Caller {
         self.acting_server.as_ref()
     }
 
-    pub fn task(&self) -> Option<TaskId> {
-        self.task
+    pub fn acting_task(&self) -> Option<&OpaqueTaskId> {
+        self.acting_task.as_ref()
     }
 
     /// Who an idempotency key belongs to: the acting server when another server calls,

@@ -116,6 +116,7 @@ impl ArtifactStore {
                 access_request_id: record.access_request_id,
                 level: request.level,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -162,6 +163,7 @@ impl ArtifactStore {
                 artifact_id,
                 access_request_id,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -242,6 +244,7 @@ impl ArtifactStore {
                 level: requested.level,
                 decision,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -502,6 +505,7 @@ impl ArtifactStore {
                     level: Some(grant.level),
                     expires_at: grant.expires_at,
                     acting_server: caller.acting_server().cloned(),
+                    acting_task: caller.acting_task().cloned(),
                 },
                 Decided::Succeeded,
             )

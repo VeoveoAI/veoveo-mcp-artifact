@@ -5,8 +5,9 @@ use std::{borrow::Cow, collections::BTreeSet, fmt, num::NonZeroU32};
 use chrono::{DateTime, Utc};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use veoveo_sdk_rust::OpaqueTaskId;
 use veoveo_types::{
-    AccessLevel, AccessSubject, PrincipalId, ServerSlug, Sha256Digest, TaskId, WorkContextId,
+    AccessLevel, AccessSubject, PrincipalId, ServerSlug, Sha256Digest, WorkContextId,
 };
 
 use super::{
@@ -58,8 +59,8 @@ impl From<DerivedFrom> for BTreeSet<ArtifactId> {
 }
 
 /// Where an artifact came from. The server fills it from the forwarded identity: the
-/// caller, the server acting for the caller when another server called, and the Task the
-/// call ran in.
+/// caller, the server acting for the caller when another server called, and that
+/// server's Task when the call came from one, as the acting server identifies it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ArtifactProvenance {
@@ -67,7 +68,7 @@ pub struct ArtifactProvenance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task: Option<TaskId>,
+    pub task: Option<OpaqueTaskId>,
     #[serde(default, skip_serializing_if = "DerivedFrom::is_empty")]
     pub derived_from: DerivedFrom,
 }

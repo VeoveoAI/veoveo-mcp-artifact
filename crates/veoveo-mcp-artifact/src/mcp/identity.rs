@@ -52,9 +52,10 @@ pub fn caller(identity: &GatewayInternalIdentity) -> Result<Caller, McpError> {
             groups,
             labels: actor.data_labels.clone(),
             output_labels,
-            // A call another server made for the caller names that server.
+            // A call another server made for the caller names that server, and the
+            // server's Task when the call came from one.
             acting_server: identity.acting_server().cloned(),
-            task: None,
+            acting_task: identity.acting_task().cloned(),
         },
         audit,
     )

@@ -16,7 +16,7 @@ use sha2::{Digest as _, Sha256};
 use support::service::{Harness, with_service};
 use tokio_util::sync::CancellationToken;
 use veoveo_audit::AuditStore;
-use veoveo_audit_contract::{AuditPartition, AuditQuery, AuditReadScope};
+use veoveo_audit_contract::{AuditDetailType, AuditPartition, AuditQuery, AuditReadScope};
 use veoveo_mcp_artifact::{
     client::{ArtifactClient, ArtifactClientError, UploadBody},
     contract::{
@@ -29,8 +29,8 @@ use veoveo_mcp_artifact::{
 };
 use veoveo_sdk_rust::{
     AccessTokenSubject, ForwardedRequest, GatewayInternalTokenIssuer, GatewayProfileId,
-    GatewayRequestContext, IssuedGatewayInternalToken, OAuthClientId, ProtectedResourceId,
-    ServerSlug, TokenIssuer,
+    GatewayRequestContext, IssuedGatewayInternalToken, OAuthClientId, OpaqueTaskId,
+    ProtectedResourceId, ServerSlug, TokenIssuer,
     client::{CallError, GatewayClient},
     hosting::{
         ForwardedBearer, Hosted, ListenOnly, ServerCalls,
@@ -194,8 +194,9 @@ impl Mesh {
         ArtifactClient::new(calls, self.http.clone())
     }
 
-    /// Artifact for the caller of a Ledger Task that a request started and returned.
-    async fn for_task(&self) -> ArtifactClient {
+    /// Artifact for the caller of a Ledger Task that a request started and returned, and
+    /// that Task as Ledger identifies it.
+    async fn for_task(&self) -> (ArtifactClient, OpaqueTaskId) {
         let started = self
             .running
             .start_task("ledger", "tally", json!({"entries": 1}))
@@ -207,7 +208,10 @@ impl Mesh {
             TaskId::parse(task).unwrap(),
             &GatewayProfileId::parse(MESH_PROFILE).unwrap(),
         );
-        ArtifactClient::new(calls, self.http.clone())
+        (
+            ArtifactClient::new(calls, self.http.clone()),
+            OpaqueTaskId::parse(task).unwrap(),
+        )
     }
 }
 
@@ -273,6 +277,7 @@ async fn a_request_binding_uploads_and_downloads_for_its_caller() {
         assert_eq!(artifact.size, Some(ObjectSize::new(1000).unwrap()));
         assert_eq!(artifact.sha256, Some(sha256_of(1000)));
         assert_eq!(artifact.provenance.acting_server, Some(ledger_slug()));
+        assert_eq!(artifact.provenance.task, None);
         assert_eq!(artifact.provenance.caller, testing::principal().id);
         let whole = artifacts.download(artifact.artifact_id).await.unwrap();
         assert_eq!(whole.length, Some(1000));
@@ -323,7 +328,7 @@ async fn a_task_binding_uploads_after_its_request_returned() {
         let stop = CancellationToken::new();
         let worker = tokio::spawn(run_verifications(harness.service.clone(), stop.clone()));
         let mesh = Mesh::start(&harness, &full_access()).await;
-        let artifacts = mesh.for_task().await;
+        let (artifacts, task) = mesh.for_task().await;
 
         // A known size beyond one PUT streams in parts, two at a time, each one signed
         // and sent again on its own.
@@ -338,6 +343,7 @@ async fn a_task_binding_uploads_after_its_request_returned() {
         assert_eq!(artifact.state, ArtifactState::Available);
         assert_eq!(artifact.sha256, Some(sha256_of(length)));
         assert_eq!(artifact.provenance.acting_server, Some(ledger_slug()));
+        assert_eq!(artifact.provenance.task, Some(task));
         let head = artifacts
             .download(artifact.artifact_id)
             .range(0..=99)
@@ -368,48 +374,62 @@ async fn a_caller_without_the_write_permission_is_refused() {
     .await;
 }
 
+/// The details of every record of `T`'s class in the test user's tenant.
+async fn audit_details<T: AuditDetailType>(harness: &Harness) -> Vec<T> {
+    let registry = Arc::new(audit_registry().unwrap());
+    let reader = AuditStore::new(harness.db.connect().await, registry.clone());
+    let tenant: TenantId = testing::principal().tenant.unwrap();
+    let mut query = AuditQuery::new(AuditPartition::Tenant(tenant.clone()));
+    query.limit = 100;
+    reader
+        .page(&AuditReadScope::new(Some(tenant), false), &query)
+        .await
+        .unwrap()
+        .records
+        .iter()
+        .filter(|record| record.draft.class().to_string() == T::CLASS)
+        .map(|record| {
+            registry
+                .read(record.draft.class(), record.draft.detail())
+                .unwrap()
+        })
+        .collect()
+}
+
 #[tokio::test]
-async fn the_acting_server_is_named_in_the_audit_records() {
+async fn the_acting_server_and_its_task_are_named_in_the_audit_records() {
     with_service(|harness| async move {
         let mesh = Mesh::start(&harness, &full_access()).await;
-        let artifact = mesh
+        let direct = mesh
             .for_request()
             .upload(name("a.txt"), octets(), UploadBody::bytes("audited"))
             .await
             .unwrap();
-        let registry = Arc::new(audit_registry().unwrap());
-        let reader = AuditStore::new(harness.db.connect().await, registry.clone());
-        let tenant: TenantId = testing::principal().tenant.unwrap();
-        let mut query = AuditQuery::new(AuditPartition::Tenant(tenant.clone()));
-        query.limit = 100;
-        let records = reader
-            .page(&AuditReadScope::new(Some(tenant), false), &query)
+        let (from_task, task) = mesh.for_task().await;
+        let tasked = from_task
+            .upload(name("b.txt"), octets(), UploadBody::bytes("from a Task"))
             .await
-            .unwrap()
-            .records;
-        let created: Vec<UploadCreated> = records
-            .iter()
-            .filter(|record| record.draft.class().to_string() == "artifact.upload_created")
-            .map(|record| {
-                registry
-                    .read(record.draft.class(), record.draft.detail())
-                    .unwrap()
-            })
-            .collect();
-        assert_eq!(created.len(), 1, "{records:?}");
-        assert_eq!(created[0].artifact_id, artifact.artifact_id);
-        assert_eq!(created[0].acting_server, Some(ledger_slug()));
-        let completed: Vec<UploadCompleted> = records
-            .iter()
-            .filter(|record| record.draft.class().to_string() == "artifact.upload_completed")
-            .map(|record| {
-                registry
-                    .read(record.draft.class(), record.draft.detail())
-                    .unwrap()
-            })
-            .collect();
-        assert_eq!(completed.len(), 1, "{records:?}");
-        assert_eq!(completed[0].acting_server, Some(ledger_slug()));
+            .unwrap();
+        assert_eq!(tasked.provenance.task, Some(task.clone()));
+
+        let created: Vec<UploadCreated> = audit_details(&harness).await;
+        let completed: Vec<UploadCompleted> = audit_details(&harness).await;
+        for (artifact, acting_task) in [(&direct, None), (&tasked, Some(task))] {
+            let created: Vec<_> = created
+                .iter()
+                .filter(|detail| detail.artifact_id == artifact.artifact_id)
+                .collect();
+            assert_eq!(created.len(), 1, "{created:?}");
+            assert_eq!(created[0].acting_server, Some(ledger_slug()));
+            assert_eq!(created[0].acting_task, acting_task);
+            let completed: Vec<_> = completed
+                .iter()
+                .filter(|detail| detail.artifact_id == artifact.artifact_id)
+                .collect();
+            assert_eq!(completed.len(), 1, "{completed:?}");
+            assert_eq!(completed[0].acting_server, Some(ledger_slug()));
+            assert_eq!(completed[0].acting_task, acting_task);
+        }
     })
     .await;
 }

@@ -163,6 +163,7 @@ impl ArtifactStore {
                 release_state,
                 ended_share_links: u32::try_from(ended).unwrap_or(u32::MAX),
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -242,6 +243,7 @@ impl ArtifactStore {
                 expires_at: record.expires_at,
                 redemption_limit: record.redemption_limit,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -281,6 +283,7 @@ impl ArtifactStore {
                 artifact_id,
                 share_link_id,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )

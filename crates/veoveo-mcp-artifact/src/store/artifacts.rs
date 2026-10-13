@@ -200,6 +200,7 @@ impl ArtifactStore {
             &ArtifactDeleted {
                 artifact_id,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )

@@ -1,13 +1,15 @@
 //! Artifact's audit vocabulary: one class per decision, `artifact.<name>`, each with a
 //! closed detail type whose JSON Schema the server declares. A record's target is the
 //! artifact or upload resource it names, and a decision another server asked for on the
-//! caller's behalf names that server as `actingServer`.
+//! caller's behalf names that server as `actingServer` and, when the call came from one of
+//! its Tasks, that Task as `actingTask`.
 use std::num::NonZeroU32;
 
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use veoveo_audit_contract::{AuditDetailError, AuditDetailType, AuditRegistryBuilder};
+use veoveo_sdk_rust::OpaqueTaskId;
 use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, ServerSlug, Sha256Digest, TenantId};
 
 use super::{
@@ -26,6 +28,9 @@ pub struct UploadCreated {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for UploadCreated {
     const CLASS: &'static str = "artifact.upload_created";
@@ -42,6 +47,9 @@ pub struct UploadCompleted {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for UploadCompleted {
     const CLASS: &'static str = "artifact.upload_completed";
@@ -56,6 +64,9 @@ pub struct UploadAborted {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for UploadAborted {
     const CLASS: &'static str = "artifact.upload_aborted";
@@ -71,6 +82,9 @@ pub struct DownloadIssued {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for DownloadIssued {
     const CLASS: &'static str = "artifact.download_issued";
@@ -88,6 +102,9 @@ pub struct GrantChanged {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for GrantChanged {
     const CLASS: &'static str = "artifact.grant_changed";
@@ -104,6 +121,9 @@ pub struct ArtifactVerified {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ArtifactVerified {
     const CLASS: &'static str = "artifact.verified";
@@ -117,6 +137,9 @@ pub struct ArtifactDeleted {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ArtifactDeleted {
     const CLASS: &'static str = "artifact.deleted";
@@ -132,6 +155,9 @@ pub struct UploadLimitsSet {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for UploadLimitsSet {
     const CLASS: &'static str = "artifact.upload_limits_set";
@@ -149,6 +175,9 @@ pub struct ReleaseChanged {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ReleaseChanged {
     const CLASS: &'static str = "artifact.release_changed";
@@ -166,6 +195,9 @@ pub struct ShareLinkCreated {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ShareLinkCreated {
     const CLASS: &'static str = "artifact.share_link_created";
@@ -180,6 +212,9 @@ pub struct ShareLinkRevoked {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ShareLinkRevoked {
     const CLASS: &'static str = "artifact.share_link_revoked";
@@ -212,6 +247,9 @@ pub struct AccessRequested {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for AccessRequested {
     const CLASS: &'static str = "artifact.access_requested";
@@ -226,6 +264,9 @@ pub struct AccessRequestCancelled {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for AccessRequestCancelled {
     const CLASS: &'static str = "artifact.access_request_cancelled";
@@ -245,6 +286,9 @@ pub struct AccessRequestDecided {
     /// The server that made the call for the caller, when another server called.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acting_server: Option<ServerSlug>,
+    /// The calling server's Task the call ran in, when the call came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for AccessRequestDecided {
     const CLASS: &'static str = "artifact.access_request_decided";

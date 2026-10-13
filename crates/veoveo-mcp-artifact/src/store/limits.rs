@@ -113,6 +113,7 @@ impl ArtifactStore {
                 tenant: tenant.clone(),
                 limits: set.clone(),
                 acting_server: administrator.acting_server().cloned(),
+                acting_task: administrator.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -139,6 +140,7 @@ impl ArtifactStore {
                 artifact_id,
                 expires_at,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )

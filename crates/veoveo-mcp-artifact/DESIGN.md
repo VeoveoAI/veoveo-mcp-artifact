@@ -37,7 +37,7 @@ port         8801
 | [RFC 6266](https://www.rfc-editor.org/rfc/rfc6266) | Download responses carry an attachment disposition with the artifact's name as `filename*`. |
 | [RFC 6838](https://www.rfc-editor.org/rfc/rfc6838) media types | An artifact's media type is a bare `type/subtype` without parameters. |
 | SHA-256 | Every available artifact records its SHA-256 in the foundational `Sha256Digest` spelling, `sha256:` followed by 64 lowercase hexadecimal digits. |
-| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Gateway forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, which Artifact records as the acting server. `ArtifactClient` calls through a Gateway profile with a token the SDK obtains by exchange. |
+| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Gateway forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, and the server's Task when the call came from one, which Artifact records as the acting server and acting Task. `ArtifactClient` calls through a Gateway profile with a token the SDK obtains by exchange. |
 | [HTTP range requests, RFC 9110 §14](https://www.rfc-editor.org/rfc/rfc9110#name-range-requests) | `ArtifactClient` sends one `bytes=first-last` or `bytes=first-` range with a signed GET and expects `206 Partial Content`. |
 | [HTTP semantics, RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) `303 See Other` and `Cache-Control: no-store` ([RFC 9111](https://www.rfc-editor.org/rfc/rfc9111)) | The share route answers a live link with `303` to a signed GET, and every answer carries `no-store`. |
 | [Base64url, RFC 4648 §5](https://www.rfc-editor.org/rfc/rfc4648#section-5) | A share link's secret is 32 random bytes in unpadded canonical base64url, 43 characters. |
@@ -274,7 +274,10 @@ a token from token exchange. The token names the original caller and an `act` ch
 the calling server and the Gateway, and carries only the Artifact permissions the
 calling server declared and the caller holds. Artifact authorizes the call for the
 caller, records the acting server in the artifact's provenance, and names it as
-`actingServer` in the audit record of every decision the call makes.
+`actingServer` in the audit record of every decision the call makes. A call that one
+of the calling server's Tasks makes after its request returned also names that Task,
+as the calling server identifies it: in `provenance.task` and as `actingTask` in the
+same audit records.
 
 An idempotency key on `create_upload` is unique per tenant and acting identity. A
 repeated call with the same key returns the existing upload or artifact, so a Task
@@ -393,7 +396,8 @@ Artifact's contract declares a closed detail type for each class:
 
 Records about an artifact target its resource address; a limits record targets the
 server. Every detail names the acting server as `actingServer` when another server made
-the call for the caller. A record's actor, authority and request come from the Gateway's
+the call for the caller, and that server's Task as `actingTask` when the call came from
+one. A record's actor, authority and request come from the Gateway's
 signed request context, and a verification Task's records carry its owner and a background request.
 Startup declares the classes through the server's own login with core's
 `AuditStore::declare_as_server`, and each record goes through
@@ -445,7 +449,6 @@ header would void the signature.
 | Area | State |
 |---|---|
 | Inline content for a model without a sandbox (`write_artifact` and a content resource) | Open decision D27 |
-| The calling server's Task in provenance | Pending: the forwarded token names the acting server but not its Task, so `provenance.task` stays empty for calls from other servers |
 | Waiting for a large artifact's verification in `ArtifactClient` | Pending: an upload resolves with a `verifying` artifact, and the client offers no wait, because MCP resource reads are outside the SDK's `GatewayClient` |
 | The share route's secret in request telemetry | Pending in `veoveo-sdk-rust`: the hosted server's request span records the raw request path, which for the share route holds a link's secret. The route itself logs nothing within that span; the SDK fix records the matched route template instead |
 | The library App | Plan item M8 |
@@ -462,6 +465,6 @@ header would void the signature.
 | MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
 | Sharing | Database tests: returning to private ends only live links and releasing again revives none; links need an administrator and a released, available artifact without labels; twelve concurrent redemptions of a link limited to three count exactly three; expired, revoked, deleted and unknown links redeem nothing, and a dropped redemption counts nothing; share-link pages and their cursors. Access requests: an approval writes the requested grant and records each step, visibility and the held level bound a request, only the requester withdraws and only an administrator decides, an approval keeps a stronger grant, and listings page by role and state |
 | Share route | `tests/share_route.rs` through the hosted router and a private RustFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing |
-| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private RustFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned; a caller without the write permission is refused; the acting server is recorded in provenance and in the audit records; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
+| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private RustFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned; a caller without the write permission is refused; the acting server is recorded in provenance and in the audit records, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with its target, actor and detail, a redemption records no actor in the installation's partition, and a digest mismatch records a failed verification |
 | Acceptance | `tests/acceptance.rs` through a running installation's Gateway and RustFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |

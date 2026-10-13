@@ -166,7 +166,7 @@ impl ArtifactStore {
         let provenance = ArtifactProvenance {
             caller: caller.principal_key().clone(),
             acting_server: caller.acting_server().cloned(),
-            task: caller.task(),
+            task: caller.acting_task().cloned(),
             derived_from: request.derived_from.clone(),
         };
         let label_text: Vec<String> = labels.iter().map(ToString::to_string).collect();
@@ -220,6 +220,7 @@ impl ArtifactStore {
                 form: upload.form,
                 reserved: upload.reserved,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -328,6 +329,7 @@ impl ArtifactStore {
                     size: object.size,
                     state: ArtifactState::Failed,
                     acting_server: caller.acting_server().cloned(),
+                    acting_task: caller.acting_task().cloned(),
                 },
                 Decided::Failed(AuditReason::Conflict),
             )
@@ -359,6 +361,7 @@ impl ArtifactStore {
                 size: object.size,
                 state: artifact.state,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -415,6 +418,7 @@ impl ArtifactStore {
                 sha256: computed.clone(),
                 state,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             decided,
         )
@@ -460,6 +464,7 @@ impl ArtifactStore {
                 artifact_id: upload.artifact_id,
                 upload_id,
                 acting_server: caller.acting_server().cloned(),
+                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
