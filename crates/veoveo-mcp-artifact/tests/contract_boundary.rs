@@ -1,12 +1,7 @@
 //! A consumer of the `contract` feature compiles no database, runtime, HTTP or
 //! object-storage crate. The test resolves the crate with default features off and
-//! only `contract` on, then walks its normal and build dependencies.
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    process::Command,
-};
-
-use serde_json::Value;
+//! only `contract` on, over its normal and build dependencies.
+use std::{collections::BTreeSet, process::Command};
 
 /// Package names the contract feature must not reach: these families and their
 /// `-`-suffixed members, every AWS crate, and core's store and fixtures.
@@ -23,68 +18,39 @@ fn forbidden(name: &str) -> bool {
 
 #[test]
 fn the_contract_feature_reaches_no_server_dependency() {
+    // `cargo tree` without dev edges resolves features as a consumer's build does; the
+    // crate's own dev-dependencies, which enable the SDK's server, do not join in.
     let output = Command::new(option_env!("CARGO").unwrap_or("cargo"))
         .args([
-            "metadata",
-            "--format-version",
-            "1",
+            "tree",
             "--locked",
+            "--package",
+            "veoveo-mcp-artifact",
             "--no-default-features",
             "--features",
             "contract",
-            "--manifest-path",
-            concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"),
+            "--edges",
+            "normal,build",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
         ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
-        .expect("cargo metadata runs");
+        .expect("cargo tree runs");
     assert!(
         output.status.success(),
-        "cargo metadata failed: {}",
+        "cargo tree failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let metadata: Value = serde_json::from_slice(&output.stdout).expect("metadata is JSON");
-    let names: BTreeMap<&str, &str> = metadata["packages"]
-        .as_array()
-        .expect("packages")
-        .iter()
-        .map(|package| {
-            (
-                package["id"].as_str().expect("package id"),
-                package["name"].as_str().expect("package name"),
-            )
-        })
+    let tree = String::from_utf8(output.stdout).expect("cargo tree prints UTF-8");
+    let reached: BTreeSet<&str> = tree
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
         .collect();
-    let nodes: BTreeMap<&str, &Value> = metadata["resolve"]["nodes"]
-        .as_array()
-        .expect("resolve nodes")
-        .iter()
-        .map(|node| (node["id"].as_str().expect("node id"), node))
-        .collect();
-    let root = metadata["resolve"]["root"]
-        .as_str()
-        .expect("the crate is the root");
-
-    let mut reached = BTreeSet::new();
-    let mut pending = vec![root];
-    while let Some(id) = pending.pop() {
-        for dependency in nodes[id]["deps"].as_array().expect("deps") {
-            let normal_or_build = dependency["dep_kinds"]
-                .as_array()
-                .expect("dep kinds")
-                .iter()
-                .any(|kind| kind["kind"].is_null() || kind["kind"] == "build");
-            let package = dependency["pkg"].as_str().expect("dependency id");
-            if normal_or_build && reached.insert(package) {
-                pending.push(package);
-            }
-        }
-    }
-    let reached_names: BTreeSet<&str> = reached.iter().map(|id| names[id]).collect();
-    assert!(reached_names.contains("veoveo-types"), "{reached_names:?}");
-    let found: Vec<&str> = reached_names
-        .into_iter()
-        .filter(|name| forbidden(name))
-        .collect();
+    assert!(reached.contains("veoveo-types"), "{reached:?}");
+    let found: Vec<&str> = reached.into_iter().filter(|name| forbidden(name)).collect();
     assert!(
         found.is_empty(),
         "the contract feature reaches server dependencies: {found:?}"

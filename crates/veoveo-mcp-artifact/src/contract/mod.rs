@@ -2,7 +2,9 @@
 //! features = ["contract"]`, which builds without a database, runtime or object-storage
 //! dependency.
 
+mod audit;
 mod ids;
+mod permissions;
 mod records;
 mod resource;
 mod tools;
@@ -10,14 +12,17 @@ mod transfer;
 mod values;
 mod vocabulary;
 
+pub use audit::*;
 pub use ids::{AccessRequestId, ArtifactId, ArtifactIdentifierError, ShareLinkId, UploadId};
+pub use permissions::ArtifactScope;
 pub use records::{
     AccessRequestRecord, ActiveUploadLimit, AllowedMediaTypes, ArtifactGrant, ArtifactProvenance,
     ArtifactRecord, ByteCount, DerivedFrom, MAX_DERIVED_FROM, MAX_NOTE_BYTES, Note, PartNumber,
     PartSize, ShareLinkRecord, StorageUsage, UploadLimits, UploadRecord,
 };
 pub use resource::{
-    AccessRequestRole, ArtifactResource, ArtifactResourceError, ListCursor, MAX_CURSOR_BYTES,
+    AccessRequestRole, ArtifactDocument, ArtifactResource, ArtifactResourceError, ListCursor,
+    MAX_CURSOR_BYTES,
 };
 pub use tools::{
     AbortUploadResult, AccessRequestRef, AccessRequestResult, ArtifactRequest, ArtifactResult,

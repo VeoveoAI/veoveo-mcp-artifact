@@ -128,6 +128,12 @@ impl JsonSchema for ListCursor {
 /// cursor of its own family.
 #[veoveo_types::resource_address(routes(ArtifactAddresses), schema = derived, wire, parse = borrowed, display)]
 pub enum ArtifactResource {
+    #[resource(template = "artifact://docs")]
+    Docs,
+    #[resource(template = "artifact://docs/{doc_id}")]
+    Document(#[resource(variable = "doc_id", codec = ArtifactFieldCodec)] ArtifactDocument),
+    #[resource(template = "artifact://contract")]
+    Contract,
     #[resource(
         template = "artifact://artifacts{?work_context,owner,media_type,name,release_state,cursor}",
         route_error = listing_route_error
@@ -208,6 +214,7 @@ impl ArtifactResource {
             | Self::Uploads { cursor, .. }
             | Self::AccessRequests { cursor, .. } => cursor.is_none(),
             Self::Artifact(_) | Self::Grants(_) | Self::Upload(_) | Self::StorageUsage => true,
+            Self::Docs | Self::Document(_) | Self::Contract => false,
         }
     }
 }
@@ -226,7 +233,28 @@ fn listing_route_error(error: ResourceRouteError) -> ArtifactResourceError {
     }
 }
 
+/// A document the server embeds and serves under `artifact://docs/{doc_id}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, veoveo_types::Vocabulary)]
+pub enum ArtifactDocument {
+    /// The agent work manual, `AGENTS.md`.
+    Agents,
+    /// The design, `DESIGN.md`.
+    Design,
+}
+
 struct ArtifactFieldCodec;
+
+impl ResourceFieldCodec<ArtifactDocument> for ArtifactFieldCodec {
+    type Error = ArtifactResourceError;
+    fn parse(value: &str) -> Result<ArtifactDocument, Self::Error> {
+        value
+            .parse()
+            .map_err(|_| ArtifactResourceError::UnknownResource)
+    }
+    fn text(value: &ArtifactDocument) -> Cow<'_, str> {
+        value.as_str().into()
+    }
+}
 
 impl ResourceFieldCodec<MediaType> for ArtifactFieldCodec {
     type Error = ArtifactResourceError;

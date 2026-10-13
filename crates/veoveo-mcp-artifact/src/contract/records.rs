@@ -298,7 +298,12 @@ impl ActiveUploadLimit {
 
 /// The media types a tenant may upload: any, or a listed set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case", tag = "kind", content = "types")]
+#[serde(
+    rename_all = "snake_case",
+    tag = "kind",
+    content = "types",
+    deny_unknown_fields
+)]
 pub enum AllowedMediaTypes {
     Any,
     Listed(BTreeSet<MediaType>),

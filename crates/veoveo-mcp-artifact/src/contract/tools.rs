@@ -66,7 +66,10 @@ impl Check for CreateUploadRequest {
 pub struct CreateUploadResult {
     pub upload: UploadRecord,
     pub artifact: ArtifactRecord,
-    pub transfer: UploadTransfer,
+    /// Where the bytes go. Absent when a repeated idempotency key finds the upload
+    /// already ended; the artifact then holds its outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transfer: Option<UploadTransfer>,
 }
 
 /// One part a client asks to have signed, with its length and SHA-256 when it knows
