@@ -1,25 +1,43 @@
 //! A consumer of the `contract` feature compiles no database, runtime, HTTP or
-//! object-storage crate. The test resolves the crate with default features off and
-//! only `contract` on, over its normal and build dependencies.
+//! object-storage crate, and a consumer of the `client` feature compiles no database,
+//! object-storage SDK or server stack. Each test resolves the crate with default
+//! features off and one feature on, over its normal and build dependencies.
 use std::{collections::BTreeSet, process::Command};
 
 /// Package names the contract feature must not reach: these families and their
 /// `-`-suffixed members, every AWS crate, and core's store and fixtures.
 fn forbidden(name: &str) -> bool {
     const FAMILIES: [&str; 5] = ["sqlx", "tokio", "hyper", "reqwest", "rmcp"];
-    FAMILIES.iter().any(|family| {
+    in_family(name, &FAMILIES) || server_only(name)
+}
+
+/// Package names the client feature must not reach: the database, the object-storage
+/// SDK, core's store, Task runtime, audit writer and fixtures, and the server's HTTP and
+/// token stacks.
+fn forbidden_to_clients(name: &str) -> bool {
+    const FAMILIES: [&str; 4] = ["sqlx", "axum", "jsonwebtoken", "opentelemetry"];
+    in_family(name, &FAMILIES)
+        || server_only(name)
+        || matches!(name, "veoveo-task-runtime" | "veoveo-audit")
+}
+
+fn in_family(name: &str, families: &[&str]) -> bool {
+    families.iter().any(|family| {
         name == *family
             || name
                 .strip_prefix(family)
-                .is_some_and(|rest| rest.starts_with('-'))
-    }) || name.starts_with("aws-")
-        || matches!(name, "veoveo-platform-store" | "veoveo-test-fixtures")
+                .is_some_and(|rest| rest.starts_with('-') || rest.starts_with('_'))
+    })
 }
 
-#[test]
-fn the_contract_feature_reaches_no_server_dependency() {
-    // `cargo tree` without dev edges resolves features as a consumer's build does; the
-    // crate's own dev-dependencies, which enable the SDK's server, do not join in.
+fn server_only(name: &str) -> bool {
+    name.starts_with("aws-") || matches!(name, "veoveo-platform-store" | "veoveo-test-fixtures")
+}
+
+/// The packages the crate reaches with only `feature` on, as a consumer's build
+/// resolves them. The crate's own dev-dependencies, which enable the SDK's server, do
+/// not join in.
+fn reached(feature: &str) -> BTreeSet<String> {
     let output = Command::new(option_env!("CARGO").unwrap_or("cargo"))
         .args([
             "tree",
@@ -28,7 +46,7 @@ fn the_contract_feature_reaches_no_server_dependency() {
             "veoveo-mcp-artifact",
             "--no-default-features",
             "--features",
-            "contract",
+            feature,
             "--edges",
             "normal,build",
             "--prefix",
@@ -44,16 +62,38 @@ fn the_contract_feature_reaches_no_server_dependency() {
         "cargo tree failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let tree = String::from_utf8(output.stdout).expect("cargo tree prints UTF-8");
-    let reached: BTreeSet<&str> = tree
+    String::from_utf8(output.stdout)
+        .expect("cargo tree prints UTF-8")
         .lines()
         .filter_map(|line| line.split_whitespace().next())
-        .collect();
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn the_contract_feature_reaches_no_server_dependency() {
+    let reached = reached("contract");
     assert!(reached.contains("veoveo-types"), "{reached:?}");
-    let found: Vec<&str> = reached.into_iter().filter(|name| forbidden(name)).collect();
+    let found: Vec<&String> = reached.iter().filter(|name| forbidden(name)).collect();
     assert!(
         found.is_empty(),
         "the contract feature reaches server dependencies: {found:?}"
+    );
+}
+
+#[test]
+fn the_client_feature_reaches_no_database_storage_sdk_or_server_stack() {
+    let reached = reached("client");
+    for expected in ["veoveo-sdk-rust", "reqwest", "tokio"] {
+        assert!(reached.contains(expected), "{expected} in {reached:?}");
+    }
+    let found: Vec<&String> = reached
+        .iter()
+        .filter(|name| forbidden_to_clients(name))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "the client feature reaches server dependencies: {found:?}"
     );
 }
 
@@ -71,5 +111,23 @@ fn the_boundary_names_server_dependencies() {
     }
     for name in ["serde", "veoveo-types", "tokio2", "schemars"] {
         assert!(!forbidden(name), "{name}");
+    }
+    for name in [
+        "sqlx-postgres",
+        "aws-sdk-s3",
+        "axum",
+        "veoveo-task-runtime",
+        "veoveo-audit",
+        "opentelemetry_sdk",
+    ] {
+        assert!(forbidden_to_clients(name), "{name}");
+    }
+    for name in [
+        "reqwest",
+        "tokio",
+        "veoveo-audit-contract",
+        "veoveo-sdk-rust",
+    ] {
+        assert!(!forbidden_to_clients(name), "{name}");
     }
 }

@@ -116,6 +116,7 @@ veoveo-audit.workspace = true
 veoveo-audit-contract.workspace = true
 veoveo-platform-store.workspace = true
 veoveo-sdk-rust = { workspace = true, features = ["server", "testing"] }
+veoveo-sdk-rust-fixture.workspace = true
 veoveo-oauth-client.workspace = true
 # The acceptance tests call Artifact through the Gateway as an MCP client.
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
@@ -135,3 +136,7 @@ required-features = ["server"]
 [[test]]
 name = "acceptance"
 required-features = ["server"]
+
+[[test]]
+name = "client"
+required-features = ["server", "client"]
