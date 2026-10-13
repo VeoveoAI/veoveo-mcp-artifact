@@ -7,8 +7,12 @@ use chrono::Utc;
 use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
+use veoveo_audit_contract::{
+    AuditActor, AuditAuthority, AuditContext, AuditPrincipalKind, AuditRequest,
+};
 use veoveo_task_runtime::{
-    CreateTask, RecoveryClass, TaskFailure, TaskOwner, TaskSnapshot, TaskStatus, TaskTransition,
+    CreateTask, PrincipalKind, RecoveryClass, TaskFailure, TaskOwner, TaskSnapshot, TaskStatus,
+    TaskTransition,
 };
 use veoveo_types::{Sha256Digest, TaskId, TaskTypeName};
 
@@ -119,14 +123,35 @@ impl ArtifactService {
     }
 }
 
-/// The store caller of a Task's owner: its tenant, principal and Work Context.
+/// The store caller of a Task's owner: its tenant, principal and Work Context. The Task
+/// runs outside any request, so its records carry a background request of their own.
 fn owner_caller(owner: &TaskOwner) -> Result<Caller, ArtifactError> {
+    let audit = AuditContext {
+        actor: AuditActor {
+            principal: owner.principal_key.clone(),
+            kind: match owner.principal_kind {
+                PrincipalKind::User => AuditPrincipalKind::User,
+                PrincipalKind::Service => AuditPrincipalKind::Service,
+            },
+            tenant: owner.tenant_key.clone(),
+            oauth_client: None,
+            delegating_principal: None,
+        },
+        authority: AuditAuthority {
+            work_context: Some(owner.authority.work_context.clone()),
+            policy_revision: Some(owner.authority.policy_revision.clone()),
+            scopes: Default::default(),
+            data_labels: owner.data_labels.clone(),
+        },
+        request: AuditRequest::background(),
+    };
     Ok(Caller::new(
         owner.authority.tenant.clone(),
         owner.principal_key.clone(),
         owner.authority.work_context.clone(),
         owner.authority.membership,
         CallerContext::default(),
+        audit,
     )?)
 }
 

@@ -6,7 +6,7 @@ mod verification;
 
 use chrono::{DateTime, Utc};
 use veoveo_task_runtime::TaskRuntime;
-use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId};
+use veoveo_types::{AccessLevel, AccessSubject, TenantId};
 
 use crate::{
     contract::{
@@ -92,6 +92,9 @@ impl ArtifactService {
             .storage
             .sign_get(&key, &visible.record.name, &visible.record.media_type, now)
             .await?;
+        self.store
+            .record_download(caller, artifact_id, get.expires_at)
+            .await?;
         Ok(CreateDownloadResult {
             artifact: visible.record,
             get,
@@ -133,14 +136,14 @@ impl ArtifactService {
 
     pub async fn set_upload_limits(
         &self,
+        administrator: &Caller,
         tenant: &TenantId,
         limits: &UploadLimits,
-        administrator: &PrincipalId,
         now: DateTime<Utc>,
     ) -> Result<UploadLimits, ArtifactError> {
         Ok(self
             .store
-            .set_upload_limits(tenant, limits, administrator, now)
+            .set_upload_limits(administrator, tenant, limits, now)
             .await?)
     }
 

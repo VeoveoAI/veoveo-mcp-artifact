@@ -5,31 +5,101 @@ mod support;
 
 use std::sync::Arc;
 
+use chrono::{TimeDelta, Utc};
 use serde_json::{Value, json};
 use support::service::{Harness, with_service};
+use veoveo_audit_contract::AuditRequest;
 use veoveo_mcp_artifact::{
     contract::ArtifactPermission,
     mcp::{ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs},
 };
-use veoveo_sdk_rust::hosting::{
-    Hosted, ListenOnly,
-    testing::{self, TestGateway},
+use veoveo_sdk_rust::{
+    AccessTokenSubject, ForwardedRequest, GatewayInternalTokenIssuer, GatewayProfileId,
+    GatewayRequestContext, OAuthClientId, ProtectedResourceId, TokenIssuer,
+    hosting::{
+        Hosted, ListenOnly,
+        testing::{self, TestGateway},
+    },
+    registration::ResourceIndicator,
 };
+use veoveo_types::InvocationMode;
 
-fn gateway(harness: &Harness, granted: &[ArtifactPermission]) -> TestGateway {
+/// The test Gateway, and the permissions every call through it carries.
+struct Gateway {
+    inner: TestGateway,
+    granted: Vec<ArtifactPermission>,
+}
+
+impl Gateway {
+    /// Call `method` as the test user with a token that carries the Gateway's signed
+    /// request context, as every forwarded MCP request does.
+    async fn rpc(&self, method: &str, params: Value) -> Value {
+        let token = token(&self.granted);
+        self.inner.rpc_with(method, params, Some(&token)).await.1
+    }
+}
+
+/// A forwarded token for the test user with its request context.
+fn token(granted: &[ArtifactPermission]) -> String {
+    let principal = testing::principal();
+    let authority = testing::authority();
+    let now = Utc::now();
+    let context = GatewayRequestContext {
+        audit: AuditRequest::background(),
+        access_token: AccessTokenSubject {
+            issuer: principal.issuer.clone(),
+            subject: principal.subject.clone(),
+            oauth_client_id: OAuthClientId::parse(testing::TEST_CLIENT).unwrap(),
+            session_family: None,
+            audience: ProtectedResourceId::parse(testing::TEST_RESOURCE).unwrap(),
+            work_context: authority.work_context.clone(),
+            invocation_mode: InvocationMode::Direct,
+            initiator: Some(principal.id.clone()),
+            delegation_id: None,
+            scopes: principal.scopes.clone(),
+            jwt_id: None,
+            issued_at: now,
+            not_before: None,
+            expires_at: now + TimeDelta::minutes(5),
+        },
+        principal: principal.clone(),
+    };
+    GatewayInternalTokenIssuer::new(
+        TokenIssuer::parse(testing::TEST_ISSUER).unwrap(),
+        testing::signing_key(),
+    )
+    .unwrap()
+    .issue(ForwardedRequest {
+        profile: GatewayProfileId::parse("operations").unwrap(),
+        server: veoveo_mcp_artifact::server(),
+        audience: ResourceIndicator::parse(testing::TEST_RESOURCE).unwrap(),
+        client: OAuthClientId::parse(testing::TEST_CLIENT).unwrap(),
+        actor: principal,
+        authority,
+        permissions: granted.iter().map(|permission| permission.name()).collect(),
+        request_context: Some(context),
+        expires_at: now + TimeDelta::minutes(5),
+    })
+    .unwrap()
+    .bearer_token
+}
+
+fn gateway(harness: &Harness, granted: &[ArtifactPermission]) -> Gateway {
     let app = Arc::new(ArtifactApp {
         service: (*harness.service).clone(),
         hubs: Arc::new(TenantHubs::default()),
     });
-    TestGateway::new(
-        testing::for_domain::<ArtifactMcp>()
-            .handler(move || {
-                Hosted::new(ArtifactMcp::new(app.clone()))
-                    .with_tasks(ListenOnly::new(ArtifactSubscriptions::new(app.clone())))
-            })
-            .build(),
-    )
-    .granting(granted.iter().map(|permission| permission.name()))
+    Gateway {
+        inner: TestGateway::new(
+            testing::for_domain::<ArtifactMcp>()
+                .handler(move || {
+                    Hosted::new(ArtifactMcp::new(app.clone()))
+                        .with_tasks(ListenOnly::new(ArtifactSubscriptions::new(app.clone())))
+                })
+                .build(),
+        ),
+        granted: granted.to_vec(),
+    }
 }
 
 fn error_message(response: &Value) -> String {

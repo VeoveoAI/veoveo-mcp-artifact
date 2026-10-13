@@ -4,10 +4,11 @@ use chrono::{DateTime, Utc};
 use veoveo_platform_store::TenantId as StoredTenant;
 use veoveo_types::{AccessLevel, AccessSubject, GroupId, PrincipalId};
 
-use crate::contract::{ArtifactGrant, ArtifactId, GrantArtifactRequest};
+use crate::contract::{ArtifactGrant, ArtifactId, GrantArtifactRequest, GrantChanged};
 
 use super::{
     ArtifactStore, ArtifactStoreError, Caller,
+    audit::{Decided, artifact_target},
     caller::{level_from_text, level_text},
 };
 
@@ -101,6 +102,19 @@ impl ArtifactStore {
         )
         .fetch_one(&mut *tx)
         .await?;
+        self.record(
+            &mut tx,
+            caller,
+            artifact_target(request.artifact_id),
+            &GrantChanged {
+                artifact_id: request.artifact_id,
+                subject: request.subject.clone(),
+                level: Some(request.level),
+                expires_at: request.expires_at,
+            },
+            Decided::Succeeded,
+        )
+        .await?;
         tx.commit().await?;
         row.record(request.artifact_id)
     }
@@ -114,6 +128,7 @@ impl ArtifactStore {
         subject: &AccessSubject,
         now: DateTime<Utc>,
     ) -> Result<bool, ArtifactStoreError> {
+        let revoked_subject = subject.clone();
         let (kind, subject) = subject_columns(subject);
         let mut tx = self.pool().begin().await?;
         self.lock_artifact(&mut tx, caller, artifact_id, AccessLevel::Admin, now)
@@ -128,6 +143,19 @@ impl ArtifactStore {
         .fetch_optional(&mut *tx)
         .await?
         .is_some();
+        self.record(
+            &mut tx,
+            caller,
+            artifact_target(artifact_id),
+            &GrantChanged {
+                artifact_id,
+                subject: revoked_subject,
+                level: None,
+                expires_at: None,
+            },
+            Decided::Succeeded,
+        )
+        .await?;
         tx.commit().await?;
         Ok(revoked)
     }

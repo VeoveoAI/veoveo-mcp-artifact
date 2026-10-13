@@ -2,6 +2,7 @@
 //! as bind parameters, and `artifact.effective_level` decides each artifact from them.
 use std::collections::BTreeSet;
 
+use veoveo_audit_contract::AuditContext;
 use veoveo_platform_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
 use veoveo_types::{
     AccessLevel, DataLabelId, GroupId, PrincipalId, ServerSlug, TaskId, TenantId, WorkContextId,
@@ -19,7 +20,8 @@ pub struct GroupAccess {
 }
 
 /// Who calls, in which tenant and Work Context, with which groups and labels, and, when
-/// another server calls for the caller, which server and Task.
+/// another server calls for the caller, which server and Task. The audit context is the
+/// verified attribution every record of the caller's decisions carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
     tenant_key: TenantId,
@@ -33,6 +35,7 @@ pub struct Caller {
     output_labels: BTreeSet<DataLabelId>,
     acting_server: Option<ServerSlug>,
     task: Option<TaskId>,
+    audit: AuditContext,
 }
 
 /// The parts of a [`Caller`] beyond its tenant, principal and Work Context.
@@ -55,7 +58,11 @@ impl Caller {
         work_context: WorkContextId,
         membership: WorkContextMembershipLevel,
         context: CallerContext,
+        audit: AuditContext,
     ) -> Result<Self, ArtifactStoreError> {
+        if audit.actor.tenant.as_ref() != Some(&tenant) {
+            return Err(ArtifactStoreError::InvalidCaller);
+        }
         let stored_tenant = veoveo_platform_store::deterministic_tenant_id(tenant.as_str())
             .map_err(|_| ArtifactStoreError::InvalidCaller)?;
         let stored_principal =
@@ -73,7 +80,13 @@ impl Caller {
             output_labels: context.output_labels,
             acting_server: context.acting_server,
             task: context.task,
+            audit,
         })
+    }
+
+    /// The attribution of the caller's audit records.
+    pub fn audit(&self) -> &AuditContext {
+        &self.audit
     }
 
     pub fn tenant_key(&self) -> &TenantId {

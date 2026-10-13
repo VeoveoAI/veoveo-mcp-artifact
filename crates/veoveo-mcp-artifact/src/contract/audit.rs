@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use veoveo_audit_contract::{AuditDetailError, AuditDetailType, AuditRegistryBuilder};
-use veoveo_types::{AccessLevel, AccessSubject, TenantId};
+use veoveo_types::{AccessLevel, AccessSubject, Sha256Digest, TenantId};
 
 use super::{ArtifactId, ArtifactState, ObjectSize, UploadForm, UploadId, UploadLimits};
 
@@ -72,6 +72,19 @@ impl AuditDetailType for GrantChanged {
     const CLASS: &'static str = "artifact.grant_changed";
 }
 
+/// The server computed an artifact's SHA-256: class `artifact.verified`. The artifact is
+/// available, or failed when the digest differs from the one its upload declared.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArtifactVerified {
+    pub artifact_id: ArtifactId,
+    pub sha256: Sha256Digest,
+    pub state: ArtifactState,
+}
+impl AuditDetailType for ArtifactVerified {
+    const CLASS: &'static str = "artifact.verified";
+}
+
 /// An artifact was deleted: class `artifact.deleted`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -94,12 +107,20 @@ impl AuditDetailType for UploadLimitsSet {
     const CLASS: &'static str = "artifact.upload_limits_set";
 }
 
+/// A registry that holds the platform's declarations and Artifact's.
+pub fn audit_registry() -> Result<veoveo_audit_contract::AuditRegistry, AuditDetailError> {
+    let mut builder = veoveo_audit_contract::AuditRegistry::builder();
+    declare_audit_details(&mut builder)?;
+    Ok(builder.build())
+}
+
 /// Declare every Artifact audit class in `builder`.
 pub fn declare_audit_details(builder: &mut AuditRegistryBuilder) -> Result<(), AuditDetailError> {
     builder.declare::<UploadCreated>()?;
     builder.declare::<UploadCompleted>()?;
     builder.declare::<UploadAborted>()?;
     builder.declare::<DownloadIssued>()?;
+    builder.declare::<ArtifactVerified>()?;
     builder.declare::<GrantChanged>()?;
     builder.declare::<ArtifactDeleted>()?;
     builder.declare::<UploadLimitsSet>()?;
@@ -122,7 +143,7 @@ mod tests {
             .map(|declaration| declaration.class().to_string())
             .filter(|class| class.starts_with("artifact."))
             .collect();
-        assert_eq!(classes.len(), 7, "{classes:?}");
+        assert_eq!(classes.len(), 8, "{classes:?}");
         for declaration in registry
             .declarations()
             .filter(|declaration| declaration.class().to_string().starts_with("artifact."))

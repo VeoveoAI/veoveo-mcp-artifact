@@ -41,7 +41,11 @@ pub(crate) fn store_error(error: ArtifactStoreError) -> McpError {
         | ArtifactStoreError::QuotaExceeded { .. }
         | ArtifactStoreError::TooManyGrants(_)
         | ArtifactStoreError::InvalidCaller => McpError::invalid_request(error.to_string(), None),
-        ArtifactStoreError::Corrupt(_) | ArtifactStoreError::Database(_) => internal(&error),
+        ArtifactStoreError::Corrupt(_)
+        | ArtifactStoreError::AuditDetail(_)
+        | ArtifactStoreError::AuditDraft(_)
+        | ArtifactStoreError::AuditAppend(_)
+        | ArtifactStoreError::Database(_) => internal(&error),
     }
 }
 

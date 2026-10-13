@@ -10,6 +10,9 @@ pub mod service;
 use std::{collections::BTreeSet, future::Future, time::Duration};
 
 use chrono::{DateTime, TimeZone, Utc};
+use veoveo_audit_contract::{
+    AuditActor, AuditAuthority, AuditContext, AuditPrincipalKind, AuditRequest,
+};
 use veoveo_mcp_artifact::{
     contract::{
         ArtifactId, ArtifactLabels, ArtifactName, CreateUploadRequest, IdempotencyKey, MediaType,
@@ -40,12 +43,23 @@ where
     tokio::time::timeout(Duration::from_secs(60), async {
         let db = TestDb::new().await;
         db.migrate_server(&server(), migrator()).await;
-        let store = ArtifactStore::new(db.server_store(&server()).await);
+        let store = declared_store(db.server_store(&server()).await).await;
         test(store).await;
         drop(db);
     })
     .await
     .expect("the store test exceeded 60 seconds");
+}
+
+/// Artifact's store over a server login, with Artifact's audit classes declared through
+/// that login as the server declares them at startup.
+pub async fn declared_store(platform: veoveo_platform_store::PlatformStore) -> ArtifactStore {
+    let registry = std::sync::Arc::new(veoveo_mcp_artifact::contract::audit_registry().unwrap());
+    veoveo_audit::AuditStore::new(platform.clone(), registry.clone())
+        .declare_as_server(&server())
+        .await
+        .expect("declare Artifact's audit classes");
+    ArtifactStore::new(platform, registry)
 }
 
 /// A caller's identity, defaulting to a contributor in Work Context `ops` of `acme`
@@ -118,9 +132,27 @@ impl Who {
                 .map(|label| DataLabelId::parse(*label).unwrap())
                 .collect()
         };
+        let tenant = TenantId::parse(self.tenant).unwrap();
+        let principal = PrincipalId::parse(self.principal).unwrap();
+        let audit = AuditContext {
+            actor: AuditActor {
+                principal: principal.clone(),
+                kind: AuditPrincipalKind::User,
+                tenant: Some(tenant.clone()),
+                oauth_client: None,
+                delegating_principal: None,
+            },
+            authority: AuditAuthority {
+                work_context: Some(WorkContextId::parse(self.work_context).unwrap()),
+                policy_revision: None,
+                scopes: BTreeSet::new(),
+                data_labels: label_set(&self.labels),
+            },
+            request: AuditRequest::background(),
+        };
         Caller::new(
-            TenantId::parse(self.tenant).unwrap(),
-            PrincipalId::parse(self.principal).unwrap(),
+            tenant,
+            principal,
             WorkContextId::parse(self.work_context).unwrap(),
             self.membership,
             CallerContext {
@@ -139,6 +171,7 @@ impl Who {
                     .map(|slug| ServerSlug::parse(slug).unwrap()),
                 task: None,
             },
+            audit,
         )
         .unwrap()
     }

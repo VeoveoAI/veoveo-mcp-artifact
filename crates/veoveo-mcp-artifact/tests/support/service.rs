@@ -5,9 +5,7 @@
 use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
 
 use sha2::{Digest as _, Sha256};
-use veoveo_mcp_artifact::{
-    migrator, server, service::ArtifactService, storage::ObjectStorage, store::ArtifactStore,
-};
+use veoveo_mcp_artifact::{migrator, server, service::ArtifactService, storage::ObjectStorage};
 use veoveo_platform_store::Instance;
 use veoveo_task_runtime::{PrincipalKind, TaskOwner, TaskRuntime, TaskSurface};
 use veoveo_test_fixtures::store::TestDb;
@@ -41,11 +39,8 @@ where
         let tasks = TaskRuntime::new(platform.clone(), server(), instance);
         let rustfs = TestRustFs::start().await;
         let storage = rustfs.storage().await;
-        let service = Arc::new(ArtifactService::new(
-            ArtifactStore::new(platform),
-            storage.clone(),
-            tasks,
-        ));
+        let store = super::declared_store(platform).await;
+        let service = Arc::new(ArtifactService::new(store, storage.clone(), tasks));
         let harness = Arc::new(Harness {
             service,
             storage,

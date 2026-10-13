@@ -49,6 +49,12 @@ pub enum ArtifactStoreError {
     Cursor(#[from] CursorError),
     #[error("a stored {0} failed admission")]
     Corrupt(&'static str),
+    #[error("the audit record failed admission: {0}")]
+    AuditDetail(#[from] veoveo_audit_contract::AuditDetailError),
+    #[error("the audit record failed validation: {0}")]
+    AuditDraft(#[from] veoveo_audit_contract::AuditValidationError),
+    #[error("the audit record could not be appended: {0}")]
+    AuditAppend(#[from] veoveo_audit_contract::AuditAppendError),
     #[error(transparent)]
     Database(#[from] sqlx::Error),
 }

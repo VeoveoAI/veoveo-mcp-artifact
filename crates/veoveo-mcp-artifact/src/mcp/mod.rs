@@ -288,15 +288,11 @@ impl ArtifactMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let identity = require(&context, Target::Tool("set_upload_limits"))?;
+        let administrator = identity::caller(&identity)?;
         let limits = self
             .app
             .service
-            .set_upload_limits(
-                &request.tenant,
-                &request.limits,
-                &identity.actor.id,
-                Utc::now(),
-            )
+            .set_upload_limits(&administrator, &request.tenant, &request.limits, Utc::now())
             .await
             .map_err(tool_error)?;
         structured_result(

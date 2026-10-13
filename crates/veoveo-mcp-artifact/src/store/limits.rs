@@ -3,11 +3,19 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
 use veoveo_platform_store::TenantId as StoredTenant;
-use veoveo_types::{PrincipalId, TenantId};
+use veoveo_types::TenantId;
 
-use crate::contract::{ActiveUploadLimit, AllowedMediaTypes, MediaType, UploadLimits};
+use crate::contract::{
+    ActiveUploadLimit, AllowedMediaTypes, ArtifactId, DownloadIssued, MediaType, UploadLimits,
+    UploadLimitsSet,
+};
 
-use super::{ArtifactStore, ArtifactStoreError, rows::object_size, rows::size_column};
+use super::{
+    ArtifactStore, ArtifactStoreError, Caller,
+    audit::{Decided, artifact_target, server_target},
+    rows::object_size,
+    rows::size_column,
+};
 
 pub(crate) struct LimitsRow {
     pub quota_bytes: Option<i64>,
@@ -62,9 +70,9 @@ impl ArtifactStore {
     /// Replace a tenant's upload limits on an installation administrator's behalf.
     pub async fn set_upload_limits(
         &self,
+        administrator: &Caller,
         tenant: &TenantId,
         limits: &UploadLimits,
-        administrator: &PrincipalId,
         now: DateTime<Utc>,
     ) -> Result<UploadLimits, ArtifactStoreError> {
         let stored = veoveo_platform_store::deterministic_tenant_id(tenant.as_str())
@@ -82,7 +90,8 @@ impl ArtifactStore {
                     .map_err(|_| ArtifactStoreError::InvalidLimits("a quota fits in 63 bits"))
             })
             .transpose()?;
-        sqlx::query_file_as!(
+        let mut tx = self.pool().begin().await?;
+        let set = sqlx::query_file_as!(
             LimitsRow,
             "src/store/limits/set_upload_limits.sql",
             stored as StoredTenant,
@@ -90,11 +99,49 @@ impl ArtifactStore {
             size_column(limits.largest_object),
             allowed.as_deref(),
             i32::from(limits.active_uploads.get()),
-            administrator.as_str(),
+            administrator.principal_key().as_str(),
             now,
         )
-        .fetch_one(self.pool())
+        .fetch_one(&mut *tx)
         .await?
-        .limits()
+        .limits()?;
+        self.record(
+            &mut tx,
+            administrator,
+            server_target(),
+            &UploadLimitsSet {
+                tenant: tenant.clone(),
+                limits: set.clone(),
+            },
+            Decided::Succeeded,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(set)
+    }
+
+    /// Record that `caller` received a download URL for an artifact, valid until
+    /// `expires_at`. The service records it before it returns the URL, so a URL whose
+    /// record failed never reaches the caller.
+    pub async fn record_download(
+        &self,
+        caller: &Caller,
+        artifact_id: ArtifactId,
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), ArtifactStoreError> {
+        let mut tx = self.pool().begin().await?;
+        self.record(
+            &mut tx,
+            caller,
+            artifact_target(artifact_id),
+            &DownloadIssued {
+                artifact_id,
+                expires_at,
+            },
+            Decided::Succeeded,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
     }
 }

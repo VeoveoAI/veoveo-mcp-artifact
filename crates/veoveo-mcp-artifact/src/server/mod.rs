@@ -17,7 +17,10 @@ use veoveo_sdk_rust::{
 };
 use veoveo_task_runtime::{TaskRuntime, TaskRuntimeConfig};
 
+use veoveo_audit::AuditStore;
+
 use crate::{
+    contract::audit_registry,
     mcp::{self, ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs, watch_changes},
     service::{ArtifactService, run_verifications},
     storage::ObjectStorage,
@@ -93,8 +96,13 @@ async fn serve(
         .await
         .context("applying Artifact's migrations")?;
     let instance = tasks.instance().clone();
+    let registry = Arc::new(audit_registry().context("building Artifact's audit registry")?);
+    AuditStore::new(store.clone(), registry.clone())
+        .declare_as_server(&crate::server())
+        .await
+        .context("declaring Artifact's audit classes")?;
     let service = Arc::new(ArtifactService::new(
-        ArtifactStore::new(store.clone()),
+        ArtifactStore::new(store.clone(), registry),
         storage.clone(),
         tasks,
     ));

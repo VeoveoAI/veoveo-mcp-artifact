@@ -9,12 +9,13 @@ use veoveo_platform_store::{
 use veoveo_types::{AccessLevel, PrincipalId, WorkContextId};
 
 use crate::contract::{
-    ArtifactId, ArtifactMetadataMap, ArtifactProvenance, ArtifactState, ListCursor, MediaType,
-    NamePrefix, ReleaseState, StorageUsage,
+    ArtifactDeleted, ArtifactId, ArtifactMetadataMap, ArtifactProvenance, ArtifactState,
+    ListCursor, MediaType, NamePrefix, ReleaseState, StorageUsage,
 };
 
 use super::{
     ArtifactStore, ArtifactStoreError, Caller,
+    audit::{Decided, artifact_target},
     rows::{ArtifactRow, VisibleArtifact},
 };
 
@@ -191,6 +192,14 @@ impl ArtifactStore {
             now,
         )
         .fetch_one(&mut *tx)
+        .await?;
+        self.record(
+            &mut tx,
+            caller,
+            artifact_target(artifact_id),
+            &ArtifactDeleted { artifact_id },
+            Decided::Succeeded,
+        )
         .await?;
         tx.commit().await?;
         Ok(deleted.state)

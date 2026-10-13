@@ -3,6 +3,7 @@
 //! access is decided in SQL by `artifact.effective_level` from the caller's facts.
 
 mod artifacts;
+mod audit;
 mod caller;
 mod error;
 mod grants;
@@ -26,17 +27,27 @@ pub use uploads::{
     CompletedObject, CreatedUpload, MAX_UPLOADS_PER_PAGE, UploadPage, UploadPageSize,
 };
 
+use std::sync::Arc;
+
+use veoveo_audit_contract::AuditRegistry;
 use veoveo_platform_store::PlatformStore;
 
-/// The Artifact server's persistence over the pool its registration login opened.
+/// The Artifact server's persistence over the pool its registration login opened, and
+/// the audit registry that admits its records.
 #[derive(Clone)]
 pub struct ArtifactStore {
     store: PlatformStore,
+    registry: Arc<AuditRegistry>,
 }
 
 impl ArtifactStore {
-    pub fn new(store: PlatformStore) -> Self {
-        Self { store }
+    /// `registry` must hold Artifact's detail types, which the server declared.
+    pub fn new(store: PlatformStore, registry: Arc<AuditRegistry>) -> Self {
+        Self { store, registry }
+    }
+
+    pub fn audit_registry(&self) -> &Arc<AuditRegistry> {
+        &self.registry
     }
 
     pub fn platform(&self) -> &PlatformStore {

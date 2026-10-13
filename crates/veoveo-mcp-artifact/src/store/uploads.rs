@@ -13,8 +13,13 @@ use crate::contract::{
     UploadRecord, UploadState,
 };
 
+use veoveo_audit_contract::AuditReason;
+
+use crate::contract::{ArtifactVerified, UploadAborted, UploadCompleted, UploadCreated};
+
 use super::{
     ArtifactStore, ArtifactStoreError, Caller, UPLOAD_LIFETIME, UploadPlan,
+    audit::{Decided, artifact_target},
     limits::LimitsRow,
     rows::{ArtifactRow, UploadRow, size_column},
 };
@@ -204,9 +209,23 @@ impl ArtifactStore {
         )
         .fetch_one(&mut *tx)
         .await?;
+        let upload = upload.record()?;
+        self.record(
+            &mut tx,
+            caller,
+            artifact_target(artifact_id),
+            &UploadCreated {
+                artifact_id,
+                upload_id: upload.upload_id,
+                form: upload.form,
+                reserved: upload.reserved,
+            },
+            Decided::Succeeded,
+        )
+        .await?;
         tx.commit().await?;
         Ok(CreatedUpload {
-            upload: upload.record()?,
+            upload,
             artifact: artifact.record()?,
             object_upload: None,
             repeated: false,
@@ -298,6 +317,19 @@ impl ArtifactStore {
             )
             .fetch_one(&mut *tx)
             .await?;
+            self.record(
+                &mut tx,
+                caller,
+                artifact_target(upload.artifact_id),
+                &UploadCompleted {
+                    artifact_id: upload.artifact_id,
+                    upload_id,
+                    size: object.size,
+                    state: ArtifactState::Failed,
+                },
+                Decided::Failed(AuditReason::Conflict),
+            )
+            .await?;
             tx.commit().await?;
             return Err(ArtifactStoreError::SizeMismatch {
                 received: object.size.bytes(),
@@ -314,8 +346,22 @@ impl ArtifactStore {
         )
         .fetch_one(&mut *tx)
         .await?;
+        let artifact = artifact.record()?;
+        self.record(
+            &mut tx,
+            caller,
+            artifact_target(artifact.artifact_id),
+            &UploadCompleted {
+                artifact_id: artifact.artifact_id,
+                upload_id,
+                size: object.size,
+                state: artifact.state,
+            },
+            Decided::Succeeded,
+        )
+        .await?;
         tx.commit().await?;
-        artifact.record()
+        Ok(artifact)
     }
 
     /// Record the SHA-256 the server computed for a verifying artifact. A digest that
@@ -329,29 +375,48 @@ impl ArtifactStore {
         now: DateTime<Utc>,
     ) -> Result<ArtifactState, ArtifactStoreError> {
         let tenant = caller.tenant();
-        if declared.is_some_and(|declared| declared != computed) {
+        let mut tx = self.pool().begin().await?;
+        let (state, decided) = if declared.is_some_and(|declared| declared != computed) {
             sqlx::query_file_scalar!(
                 "src/store/uploads/fail_artifact.sql",
                 tenant as StoredTenant,
                 artifact_id as ArtifactId,
                 now,
             )
-            .fetch_optional(self.pool())
+            .fetch_optional(&mut *tx)
             .await?
             .ok_or(ArtifactStoreError::ArtifactNotFound)?;
-            return Ok(ArtifactState::Failed);
-        }
-        sqlx::query_file_scalar!(
-            "src/store/uploads/record_digest.sql",
-            tenant as StoredTenant,
-            artifact_id as ArtifactId,
-            computed.as_str(),
-            now,
+            (
+                ArtifactState::Failed,
+                Decided::Failed(AuditReason::Conflict),
+            )
+        } else {
+            sqlx::query_file_scalar!(
+                "src/store/uploads/record_digest.sql",
+                tenant as StoredTenant,
+                artifact_id as ArtifactId,
+                computed.as_str(),
+                now,
+            )
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(ArtifactStoreError::ArtifactNotFound)?;
+            (ArtifactState::Available, Decided::Succeeded)
+        };
+        self.record(
+            &mut tx,
+            caller,
+            artifact_target(artifact_id),
+            &ArtifactVerified {
+                artifact_id,
+                sha256: computed.clone(),
+                state,
+            },
+            decided,
         )
-        .fetch_optional(self.pool())
-        .await?
-        .ok_or(ArtifactStoreError::ArtifactNotFound)?;
-        Ok(ArtifactState::Available)
+        .await?;
+        tx.commit().await?;
+        Ok(state)
     }
 
     /// Abort the caller's open upload and fail its artifact. Triggers release the
@@ -382,6 +447,17 @@ impl ArtifactStore {
             now,
         )
         .fetch_optional(&mut *tx)
+        .await?;
+        self.record(
+            &mut tx,
+            caller,
+            artifact_target(upload.artifact_id),
+            &UploadAborted {
+                artifact_id: upload.artifact_id,
+                upload_id,
+            },
+            Decided::Succeeded,
+        )
         .await?;
         tx.commit().await?;
         Ok((ended.record()?, ended.object_upload))

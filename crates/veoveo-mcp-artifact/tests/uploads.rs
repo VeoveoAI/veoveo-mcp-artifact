@@ -15,14 +15,14 @@ use veoveo_mcp_artifact::{
     store::{ArtifactStoreError, CompletedObject},
 };
 use veoveo_platform_store::MaintenanceBatch;
-use veoveo_types::{Checked, PrincipalId, TenantId};
+use veoveo_types::{Checked, TenantId};
 
 async fn set_limits(store: &veoveo_mcp_artifact::store::ArtifactStore, limits: UploadLimits) {
     store
         .set_upload_limits(
+            &Who::new("admin").caller(),
             &TenantId::parse("acme").unwrap(),
             &limits,
-            &PrincipalId::parse("admin").unwrap(),
             now(),
         )
         .await

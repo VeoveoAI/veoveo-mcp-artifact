@@ -38,6 +38,11 @@ pub fn caller(identity: &GatewayInternalIdentity) -> Result<Caller, McpError> {
         .chain(&policy.data_labels)
         .cloned()
         .collect();
+    // The Gateway forwards every MCP request with its signed request context, which
+    // carries the attribution of the caller's audit records.
+    let audit = identity.audit_context().map_err(|_| {
+        McpError::invalid_request("the Gateway forwarded no valid request context", None)
+    })?;
     Caller::new(
         authority.tenant.clone(),
         actor.id.clone(),
@@ -52,6 +57,7 @@ pub fn caller(identity: &GatewayInternalIdentity) -> Result<Caller, McpError> {
             acting_server: None,
             task: None,
         },
+        audit,
     )
     .map_err(|_| McpError::invalid_request("the forwarded identity names no stored tenant", None))
 }
