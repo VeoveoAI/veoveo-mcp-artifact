@@ -242,13 +242,13 @@ may read.
 
 | Table in `artifact` | Holds | Retention |
 |---|---|---|
-| `artifact` | ID, tenant, Work Context, owner, name, media type, size, SHA-256, labels, release state, provenance, metadata, retention and state (`uploading`, `verifying`, `available`, `failed`, `deleting`) | Until deleted or its retention passes |
+| `artifact` | ID, tenant, Work Context, owner, name, media type, size, SHA-256, labels, release state, provenance, metadata, retention and state (`uploading`, `verifying`, `available`, `failed`, `deleting`) | Until deleted or its retention passes; a failed artifact, which holds no object, 7 days after it failed |
 | `grant` | Artifact, subject kind and ID, level, expiry and grantor | With the artifact, or at expiry |
 | `upload` | Artifact, creator, acting identity, idempotency key, form, declared size and SHA-256, maximum size, S3 upload ID, part size, state and expiry | 7 days after it ends |
 | `share_link` | Artifact, secret digest, expiry, redemption limit and count, and revocation | 30 days after expiry or revocation |
 | `access_request` | Artifact, requester, level, justification, state, decider and note | 90 days after a decision |
 | `storage_usage` | Per tenant: stored and reserved bytes | With the tenant |
-| `upload_limits` | Per tenant: quota, largest object, allowed media types and active-upload limit | With the tenant |
+| `upload_limits` | Per tenant: quota, largest object, allowed media types and active-upload limit. A tenant without a row has no quota, objects up to 5 TiB, any media type and 64 open uploads | With the tenant |
 
 Triggers keep `storage_usage` current as uploads reserve, complete and end and as
 artifacts are deleted. `create_upload` locks the tenant's usage row while it reserves,
@@ -256,10 +256,20 @@ so two uploads cannot both take the last of a quota. A caller without a declared
 reserves its maximum size, or the tenant's largest object when it gives none, and
 completion settles the reservation to the real size.
 
-Deleting an artifact marks it `deleting` in the transaction that removes its grants
-and links. The sweep then deletes the object and the row. The same sweep ends expired
-uploads and artifacts whose retention passed, in short transactions of at most 500
-rows.
+An artifact counts toward stored bytes from completion until its row goes, so a size
+exists only in the `verifying`, `available` and `deleting` states. Deleting an artifact
+marks it `deleting`, and `artifact.effective_level` hides it from every caller at once.
+The sweep then claims a batch of deleted artifacts, deletes each object and then each
+row, and commits. The row's grants, uploads, share links and access requests go with it
+through foreign-key cascades. The same sweep ends expired uploads and fails their
+artifacts, marks artifacts whose retention passed as deleting, and prunes rows past
+their retention, each in short batches that `FOR UPDATE SKIP LOCKED` divides between
+replicas.
+
+Listings hold `verifying` and `available` artifacts. An upload's progress is read
+through the uploads resource. An artifact holds at most 256 grants, and its name holds
+no Unicode noncharacters, so a prefix followed by U+10FFFF bounds every name that starts
+with it.
 
 ## Audit And Notifications
 
