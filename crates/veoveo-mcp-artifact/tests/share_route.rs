@@ -256,3 +256,74 @@ async fn a_head_request_is_refused_without_counting_a_redemption() {
     })
     .await;
 }
+
+/// Trace output written to memory, so a test can read what the request spans recorded.
+#[derive(Clone, Default)]
+struct CapturedTrace(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for CapturedTrace {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl CapturedTrace {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+#[tokio::test]
+async fn request_spans_record_the_share_route_template_never_its_secret() {
+    use tracing::instrument::WithSubscriber as _;
+
+    with_service(|harness| async move {
+        let artifact = uploaded(&harness, "traced.txt", b"traced").await;
+        let (token, _) = shared(&harness, artifact, TimeDelta::zero(), 1, None).await;
+        let router = router(&harness);
+        let captured = CapturedTrace::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .without_time()
+            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::FULL)
+            .with_writer(move || writer.clone())
+            .finish();
+        let (redirected, refused) = async {
+            (
+                redeem(&router, &token).await,
+                redeem(&router, &format!("{token}x")).await,
+            )
+        }
+        .with_subscriber(subscriber)
+        .await;
+        assert_eq!(redirected.status(), StatusCode::SEE_OTHER);
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+        let location = redirected.headers()[header::LOCATION].to_str().unwrap();
+        let signature = location
+            .split(['?', '&'])
+            .find_map(|pair| pair.strip_prefix("X-Amz-Signature="))
+            .expect("the redirect is a signed GET");
+
+        let trace = captured.text();
+        assert!(
+            trace.contains("http.route=/artifact/shares/{token}"),
+            "the span lacks the share route's template: {trace}"
+        );
+        assert!(
+            !trace.contains(&token),
+            "a request span recorded the link's secret"
+        );
+        assert!(
+            !trace.contains(signature),
+            "a request span recorded the signed GET"
+        );
+    })
+    .await;
+}

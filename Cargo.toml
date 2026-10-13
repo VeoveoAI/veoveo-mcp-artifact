@@ -53,6 +53,7 @@ tokio-util = "0.7.20"
 # The share route's tests send requests to the router in process.
 tower = { version = "0.5.3", default-features = false }
 tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false }
 url = "=2.5.8"
 
 # Date and time without a clock in the contract; the server enables `clock`. The exact

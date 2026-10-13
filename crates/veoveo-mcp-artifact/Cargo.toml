@@ -129,6 +129,9 @@ veoveo-test-fixtures = { workspace = true, features = ["store", "database-confor
 reqwest = { workspace = true, features = ["rustls-no-provider"] }
 tokio = { workspace = true, features = ["full"] }
 tower = { workspace = true, features = ["util"] }
+# The share route test captures the hosted server's request spans.
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [[bin]]
 name = "veoveo-mcp-artifact"
