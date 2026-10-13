@@ -30,10 +30,11 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use veoveo_mcp_artifact::contract::{
-    AbortUploadResult, ArtifactEntry, ArtifactId, ArtifactState, CompleteUploadResult,
-    CreateDownloadResult, CreateUploadResult, DeleteArtifactResult, GrantArtifactResult,
-    GrantListing, RevokeArtifactGrantResult, SignedTransfer, StorageUsage, UploadLimits,
-    UploadLimitsResult, UploadTransfer,
+    AbortUploadResult, AccessRequestListing, AccessRequestResult, AccessRequestState,
+    ArtifactEntry, ArtifactId, ArtifactResult, ArtifactState, CompleteUploadResult,
+    CreateDownloadResult, CreateShareLinkResult, CreateUploadResult, DeleteArtifactResult,
+    GrantArtifactResult, GrantListing, ReleaseState, RevokeArtifactGrantResult, ShareLinkListing,
+    SignedTransfer, StorageUsage, UploadLimits, UploadLimitsResult, UploadTransfer,
 };
 use veoveo_oauth_client::{ClientAssertionKeyId, ClientAssertionSigner};
 use veoveo_types::{AccessLevel, AccessSubject, OAuthClientId};
@@ -329,15 +330,21 @@ async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_res
         };
         let risk_free = [
             "abort_upload",
+            "cancel_access_request",
             "complete_upload",
             "create_download",
             "create_upload",
+            "request_artifact_access",
+            "set_release_state",
             "sign_upload_parts",
         ];
         let risky = [
+            "create_share_link",
+            "decide_access_request",
             "delete_artifact",
             "grant_artifact",
             "revoke_artifact_grant",
+            "revoke_share_link",
             "set_upload_limits",
         ];
         let seen = listed(member.list_all_tools().await?);
@@ -364,6 +371,13 @@ async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_res
         )
         .await
         .context("the member deleted an artifact")?;
+        refused(
+            &member,
+            "create_share_link",
+            json!({"artifactId": artifact_id, "expiresInDays": 1}),
+        )
+        .await
+        .context("the member created a share link")?;
         refused(
             &member,
             "set_upload_limits",
@@ -677,6 +691,135 @@ async fn the_admins_quota_refuses_an_upload_that_would_exceed_it() -> Result<()>
         )
         .await?;
         Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires a running local installation"]
+async fn a_share_link_redeems_through_the_share_route_until_its_limit() -> Result<()> {
+    bounded(120, async {
+        let installation = Installation::from_env()?;
+        let admin = installation.connect(ADMIN).await?;
+        let body = part_bytes(4, 4096);
+        let artifact_id = upload_declared(&admin, "shared.bin", &body).await?;
+        let released: ArtifactResult = call(
+            &admin,
+            "set_release_state",
+            json!({"artifactId": artifact_id, "releaseState": "released"}),
+        )
+        .await?;
+        ensure!(
+            released.artifact.release_state == ReleaseState::Released,
+            "the artifact is {:?}",
+            released.artifact.release_state
+        );
+        let link: CreateShareLinkResult = call(
+            &admin,
+            "create_share_link",
+            json!({"artifactId": artifact_id, "expiresInDays": 1, "redemptionLimit": 1}),
+        )
+        .await?;
+        // Someone without an account opens the link: Artifact answers a redirect to a
+        // signed GET at the object store, which serves the bytes.
+        let browser = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let redirected = browser.get(link.url.expose()).send().await?;
+        ensure!(
+            redirected.status() == reqwest::StatusCode::SEE_OTHER,
+            "the share route answered {}",
+            redirected.status()
+        );
+        let location = redirected
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .context("the redirect names no location")?
+            .to_str()?
+            .to_owned();
+        let fetched = browser.get(location).send().await?;
+        ensure!(
+            fetched.status().is_success(),
+            "the signed GET answered {}",
+            fetched.status()
+        );
+        ensure!(
+            fetched.bytes().await?.as_ref() == body,
+            "the link serves other bytes"
+        );
+        let spent = browser.get(link.url.expose()).send().await?;
+        ensure!(
+            spent.status() == reqwest::StatusCode::NOT_FOUND,
+            "a spent link answered {}",
+            spent.status()
+        );
+        let listed: ShareLinkListing = read(
+            &admin,
+            &format!("{}/share-links", artifact_uri(artifact_id)),
+        )
+        .await?;
+        ensure!(
+            listed.share_links.iter().any(|listed| listed.share_link_id
+                == link.share_link.share_link_id
+                && listed.redemptions == 1),
+            "the listing shows {:?}",
+            listed.share_links
+        );
+        delete(&admin, artifact_id).await
+    })
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires a running local installation"]
+async fn the_admin_approves_the_members_request_for_more_access() -> Result<()> {
+    bounded(120, async {
+        let installation = Installation::from_env()?;
+        let admin = installation.connect(ADMIN).await?;
+        let member = installation.connect(MEMBER).await?;
+        let artifact_id = upload_declared(&admin, "requested.bin", &part_bytes(5, 1024)).await?;
+        // The member writes through the Work Context and asks to administer.
+        let requested: AccessRequestResult = call(
+            &member,
+            "request_artifact_access",
+            json!({
+                "artifactId": artifact_id,
+                "level": "admin",
+                "justification": "I curate this Work Context's reports"
+            }),
+        )
+        .await?;
+        let request_id = requested.access_request.access_request_id;
+        let pending: AccessRequestListing = read(
+            &admin,
+            "artifact://access-requests?role=decider&state=pending",
+        )
+        .await?;
+        ensure!(
+            pending
+                .access_requests
+                .iter()
+                .any(|request| request.access_request_id == request_id),
+            "the admin cannot decide the request"
+        );
+        let decided: AccessRequestResult = call(
+            &admin,
+            "decide_access_request",
+            json!({"accessRequestId": request_id, "decision": "approve", "note": "granted"}),
+        )
+        .await?;
+        ensure!(
+            decided.access_request.state == AccessRequestState::Approved
+                && decided.grant.as_ref().map(|grant| grant.level) == Some(AccessLevel::Admin),
+            "the decision is {decided:?}"
+        );
+        let seen: ArtifactEntry = read(&member, &artifact_uri(artifact_id)).await?;
+        ensure!(
+            seen.level == AccessLevel::Admin,
+            "the member reads at {:?}",
+            seen.level
+        );
+        delete(&admin, artifact_id).await
     })
     .await
 }
