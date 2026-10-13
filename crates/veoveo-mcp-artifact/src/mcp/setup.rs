@@ -114,6 +114,17 @@ fn resources() -> Result<Vec<McpResource<ArtifactResource>>, McpSetupError> {
         "application/json",
     )?);
     resources.push(described(
+        ArtifactResource::AccessRequests {
+            role: None,
+            state: None,
+            cursor: None,
+        },
+        "Access requests",
+        "The first page of up to 50 access requests you made or can decide, newest first. \
+         Filter by role (`requester` or `decider`) and state.",
+        "application/json",
+    )?);
+    resources.push(described(
         ArtifactResource::StorageUsage,
         "Storage usage",
         "Your tenant's stored and reserved bytes against its quota.",
@@ -149,6 +160,12 @@ fn resource_templates() -> Result<Vec<McpResourceTemplate>, McpSetupError> {
             "application/json",
         ),
         (
+            "artifact://artifacts/{artifact_id}/share-links{?cursor}",
+            "Artifact share links",
+            "A page of the share links of one artifact you administer, without their secrets.",
+            "application/json",
+        ),
+        (
             "artifact://uploads{?state,cursor}",
             "Your uploads",
             "A page of your uploads, optionally in one state.",
@@ -158,6 +175,12 @@ fn resource_templates() -> Result<Vec<McpResourceTemplate>, McpSetupError> {
             "artifact://uploads/{upload_id}",
             "Upload",
             "One of your uploads.",
+            "application/json",
+        ),
+        (
+            "artifact://access-requests{?role,state,cursor}",
+            "Access requests",
+            "A page of the access requests you made or can decide, by role and state.",
             "application/json",
         ),
     ]
@@ -179,6 +202,7 @@ fn server_config() -> ServerConfig {
         .enable_tools()
         .enable_resources()
         .enable_resources_subscribe()
+        .enable_prompts()
         .enable_completions()
         .build();
     if let Some(registration) = super::declarations::REGISTRATION.get() {
@@ -195,7 +219,10 @@ fn server_config() -> ServerConfig {
         "Files for your tenant. To store a file, call `create_upload` with its name and media \
          type (and its size and SHA-256 when you know them), send the bytes to the signed URLs \
          it returns, then call `complete_upload`. To read a file, call `create_download` and \
-         fetch the signed URL. Bytes never travel through MCP."
+         fetch the signed URL. Bytes never travel through MCP. To share a file with someone \
+         without an account, release it with `set_release_state` and call \
+         `create_share_link`; to reach a higher level on a file you can read, call \
+         `request_artifact_access`."
             .to_owned(),
     );
     info
@@ -206,7 +233,7 @@ mod tests {
     #[test]
     fn the_setup_round_trips_every_resource_and_template() {
         let setup = &*super::SERVER_SETUP;
-        assert_eq!(setup.resources().len(), 7);
-        assert_eq!(setup.resource_templates().len(), 6);
+        assert_eq!(setup.resources().len(), 8);
+        assert_eq!(setup.resource_templates().len(), 8);
     }
 }

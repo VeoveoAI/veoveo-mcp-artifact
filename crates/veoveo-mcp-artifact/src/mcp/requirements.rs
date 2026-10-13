@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use rmcp::{ErrorData as McpError, RoleServer, service::RequestContext};
 use veoveo_sdk_rust::{
-    GatewayInternalIdentity, LocalToolName,
+    GatewayInternalIdentity, LocalToolName, PromptName,
     hosting::gateway_identity,
     registration::{
         AuthorizationBuilder, AuthorizationDeclaration, DeclarationError, RequirementTarget,
@@ -26,6 +26,12 @@ pub(crate) const TOOLS: &[(&str, ArtifactPermission)] = &[
     ("create_download", ArtifactsRead),
     ("grant_artifact", GrantsWrite),
     ("revoke_artifact_grant", GrantsWrite),
+    ("set_release_state", ReleasesWrite),
+    ("create_share_link", ShareLinksWrite),
+    ("revoke_share_link", ShareLinksWrite),
+    ("request_artifact_access", AccessRequestsWrite),
+    ("cancel_access_request", AccessRequestsWrite),
+    ("decide_access_request", GrantsWrite),
     ("delete_artifact", ArtifactsDelete),
     ("set_upload_limits", UploadLimitsAdminister),
 ];
@@ -37,18 +43,26 @@ pub(crate) const RESOURCES: &[(&str, ArtifactPermission)] = &[
     ("artifact://contract", ArtifactsRead),
     ("artifact://artifacts", ArtifactsRead),
     ("artifact://uploads", ArtifactsRead),
+    ("artifact://access-requests", ArtifactsRead),
     ("artifact://storage-usage", ArtifactsRead),
 ];
 
 /// Every parameterized resource, as simple templates that match the concrete URIs the
 /// server reads. A trailing variable takes the rest of the URI, so
-/// `artifact://artifacts/{artifact_id}` also covers the artifact's grants.
+/// `artifact://artifacts/{artifact_id}` also covers the artifact's grants and share links.
 pub(crate) const RESOURCE_TEMPLATES: &[(&str, ArtifactPermission)] = &[
     ("artifact://docs/{doc_id}", ArtifactsRead),
     ("artifact://artifacts?{query}", ArtifactsRead),
     ("artifact://artifacts/{artifact_id}", ArtifactsRead),
     ("artifact://uploads?{query}", ArtifactsRead),
     ("artifact://uploads/{upload_id}", ArtifactsRead),
+    ("artifact://access-requests?{query}", ArtifactsRead),
+];
+
+/// Every prompt reads through resources, so each requires reading artifacts.
+pub(crate) const PROMPTS: &[(&str, ArtifactPermission)] = &[
+    ("review-artifact-sharing", ArtifactsRead),
+    ("review-access-requests", ArtifactsRead),
 ];
 
 /// Artifact's authorization declaration, checked against its namespace as the Gateway
@@ -81,6 +95,12 @@ pub(crate) fn declaration() -> Result<AuthorizationDeclaration, DeclarationError
             *permission,
         );
     }
+    for (prompt, permission) in PROMPTS {
+        builder = builder.prompt(
+            PromptName::parse(*prompt).map_err(|_| invalid("prompt"))?,
+            *permission,
+        );
+    }
     builder.build(&ArtifactContract::slug(), &ArtifactContract::scheme())
 }
 
@@ -89,6 +109,7 @@ pub(crate) fn declaration() -> Result<AuthorizationDeclaration, DeclarationError
 pub(crate) enum Target<'a> {
     Tool(&'a str),
     Resource(&'a str),
+    Prompt(&'a str),
 }
 
 /// The verified Gateway identity, when it grants the permission `target` requires.
@@ -136,6 +157,12 @@ pub(crate) fn required(target: Target<'_>) -> Result<PermissionName, McpError> {
             let uri = ResourceUri::new(uri).map_err(|_| undeclared())?;
             AUTHORIZATION
                 .required(RequirementTarget::Resource(&uri))
+                .cloned()
+        }
+        Target::Prompt(prompt) => {
+            let prompt = PromptName::parse(prompt).map_err(|_| undeclared())?;
+            AUTHORIZATION
+                .required(RequirementTarget::Prompt(&prompt))
                 .cloned()
         }
     };
@@ -189,6 +216,10 @@ mod tests {
             format!("artifact://artifacts/{artifact}/grants"),
             "artifact://uploads?state=open".to_owned(),
             format!("artifact://uploads/{upload}"),
+            format!("artifact://artifacts/{artifact}/share-links"),
+            format!("artifact://artifacts/{artifact}/share-links?cursor=abc"),
+            "artifact://access-requests".to_owned(),
+            "artifact://access-requests?role=decider&state=pending".to_owned(),
             "artifact://storage-usage".to_owned(),
         ] {
             assert_eq!(
@@ -197,8 +228,14 @@ mod tests {
                 "{concrete}"
             );
         }
-        assert!(required(Target::Tool("set_release_state")).is_err());
-        assert!(required(Target::Resource("artifact://access-requests")).is_err());
+        for prompt in super::super::prompts::ArtifactPrompt::ALL {
+            assert_eq!(
+                required(Target::Prompt(prompt.name())).unwrap(),
+                ArtifactsRead.name()
+            );
+        }
+        assert!(required(Target::Tool("write_artifact")).is_err());
+        assert!(required(Target::Prompt("unknown-prompt")).is_err());
         assert!(required(Target::Resource("time://events")).is_err());
     }
 

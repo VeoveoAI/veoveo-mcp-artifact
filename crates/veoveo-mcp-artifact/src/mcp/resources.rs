@@ -9,7 +9,8 @@ use veoveo_sdk_rust::hosting::{DomainRead, json_read, served_by_host};
 
 use crate::{
     contract::{
-        ArtifactEntry, ArtifactListing, ArtifactResource, GrantListing, ListCursor, UploadListing,
+        AccessRequestListing, ArtifactEntry, ArtifactListing, ArtifactResource, GrantListing,
+        ListCursor, ShareLinkListing, UploadListing,
     },
     store::ArtifactFilter,
 };
@@ -143,11 +144,56 @@ pub(super) async fn read(
             let usage = store.storage_usage(&caller).await.map_err(store_error)?;
             json_read(uri, &usage)?
         }
-        ArtifactResource::ShareLinks { .. } | ArtifactResource::AccessRequests { .. } => {
-            return Err(McpError::invalid_request(
-                "share links and access requests are not served yet",
-                None,
-            ));
+        ArtifactResource::ShareLinks {
+            artifact_id,
+            cursor,
+        } => {
+            let identity = require(context, Target::Resource(uri))?;
+            let caller = identity::caller(&identity)?;
+            let page = store
+                .share_links_page(
+                    &caller,
+                    artifact_id,
+                    cursor.as_ref(),
+                    page_size::<{ crate::store::MAX_SHARE_LINKS_PER_PAGE }>(),
+                    now,
+                )
+                .await
+                .map_err(store_error)?;
+            json_read(
+                uri,
+                &ShareLinkListing {
+                    artifact_id,
+                    share_links: page.items,
+                    next_cursor: page.next,
+                },
+            )?
+        }
+        ArtifactResource::AccessRequests {
+            role,
+            state,
+            cursor,
+        } => {
+            let identity = require(context, Target::Resource(uri))?;
+            let caller = identity::caller(&identity)?;
+            let page = store
+                .access_requests_page(
+                    &caller,
+                    role,
+                    state,
+                    cursor.as_ref(),
+                    page_size::<{ crate::store::MAX_ACCESS_REQUESTS_PER_PAGE }>(),
+                    now,
+                )
+                .await
+                .map_err(store_error)?;
+            json_read(
+                uri,
+                &AccessRequestListing {
+                    access_requests: page.items,
+                    next_cursor: page.next,
+                },
+            )?
         }
     };
     Ok(DomainRead::no_store(result))

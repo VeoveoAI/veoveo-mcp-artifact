@@ -5,13 +5,20 @@ mod support;
 
 use std::sync::Arc;
 
+use axum::http::{StatusCode, header};
 use chrono::{TimeDelta, Utc};
 use serde_json::{Value, json};
+use support::rustfs::send;
 use support::service::{Harness, with_service};
+use tower::ServiceExt as _;
 use veoveo_audit_contract::AuditRequest;
 use veoveo_mcp_artifact::{
-    contract::ArtifactPermission,
+    contract::{
+        AccessRequestId, AccessRequestListing, ArtifactId, ArtifactPermission,
+        CreateShareLinkResult, ShareLinkId, ShareLinkListing, SignedTransfer,
+    },
     mcp::{ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs},
+    share,
 };
 use veoveo_sdk_rust::{
     AccessTokenSubject, ForwardedRequest, GatewayInternalTokenIssuer, GatewayProfileId,
@@ -126,12 +133,18 @@ async fn discovery_lists_every_tool_and_resource() {
             names,
             [
                 "abort_upload",
+                "cancel_access_request",
                 "complete_upload",
                 "create_download",
+                "create_share_link",
                 "create_upload",
+                "decide_access_request",
                 "delete_artifact",
                 "grant_artifact",
+                "request_artifact_access",
                 "revoke_artifact_grant",
+                "revoke_share_link",
+                "set_release_state",
                 "set_upload_limits",
                 "sign_upload_parts",
             ]
@@ -150,11 +163,20 @@ async fn discovery_lists_every_tool_and_resource() {
         for expected in [
             "artifact://artifacts",
             "artifact://uploads",
+            "artifact://access-requests",
             "artifact://storage-usage",
             "artifact://contract",
         ] {
             assert!(uris.contains(&expected), "{expected} in {uris:?}");
         }
+        let prompts = gateway.rpc("prompts/list", json!({})).await;
+        let names: Vec<&str> = prompts["result"]["prompts"]
+            .as_array()
+            .expect("prompts")
+            .iter()
+            .filter_map(|prompt| prompt["name"].as_str())
+            .collect();
+        assert_eq!(names, ["review-access-requests", "review-artifact-sharing"]);
     })
     .await;
 }
@@ -291,6 +313,271 @@ async fn upload_limits_need_the_administer_permission() {
             )
             .await;
         assert!(error_message(&too_large).contains("largest object"), "{too_large}");
+    })
+    .await;
+}
+
+/// The hosted router with the share route, as the binary serves it: a request reaches
+/// `/artifact/shares/{token}` on the test host without Gateway authentication.
+fn hosted_router(harness: &Harness) -> axum::Router {
+    let app = Arc::new(ArtifactApp {
+        service: (*harness.service).clone(),
+        hubs: Arc::new(TenantHubs::default()),
+    });
+    testing::for_domain::<ArtifactMcp>()
+        .handler(move || {
+            Hosted::new(ArtifactMcp::new(app.clone()))
+                .with_tasks(ListenOnly::new(ArtifactSubscriptions::new(app.clone())))
+        })
+        .public_routes(share::routes(harness.service.clone()))
+        .build()
+        .into_router()
+}
+
+fn structured(response: &Value) -> &Value {
+    let result = &response["result"]["structuredContent"];
+    assert!(result.is_object(), "{response}");
+    result
+}
+
+/// Upload `body` through the tools and a signed PUT, and return the artifact's ID.
+async fn upload(gateway: &Gateway, name: &str, body: &[u8]) -> String {
+    let created = gateway
+        .rpc(
+            "tools/call",
+            json!({
+                "name": "create_upload",
+                "arguments": {"name": name, "mediaType": "text/plain", "size": body.len()}
+            }),
+        )
+        .await;
+    let created = structured(&created);
+    let put: SignedTransfer = serde_json::from_value(created["transfer"]["put"].clone()).unwrap();
+    assert!(send(&put, body.to_vec(), &[]).await.status().is_success());
+    let completed = gateway
+        .rpc(
+            "tools/call",
+            json!({
+                "name": "complete_upload",
+                "arguments": {"uploadId": created["upload"]["uploadId"]}
+            }),
+        )
+        .await;
+    assert_eq!(structured(&completed)["artifact"]["state"], "available");
+    created["artifact"]["artifactId"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn redeem(router: &axum::Router, token: &str) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/artifact/shares/{token}"))
+                .header("host", testing::TEST_HOST)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn sharing_tools_need_their_permissions() {
+    with_service(|harness| async move {
+        let reader = gateway(&harness, &[ArtifactPermission::ArtifactsRead]);
+        let artifact = ArtifactId::new();
+        for (tool, arguments, permission) in [
+            (
+                "set_release_state",
+                json!({"artifactId": artifact, "releaseState": "released"}),
+                "artifact.releases.write",
+            ),
+            (
+                "create_share_link",
+                json!({"artifactId": artifact, "expiresInDays": 1}),
+                "artifact.share-links.write",
+            ),
+            (
+                "revoke_share_link",
+                json!({"artifactId": artifact, "shareLinkId": ShareLinkId::new()}),
+                "artifact.share-links.write",
+            ),
+            (
+                "request_artifact_access",
+                json!({"artifactId": artifact, "level": "write", "justification": "review"}),
+                "artifact.access-requests.write",
+            ),
+            (
+                "cancel_access_request",
+                json!({"accessRequestId": AccessRequestId::new()}),
+                "artifact.access-requests.write",
+            ),
+            (
+                "decide_access_request",
+                json!({"accessRequestId": AccessRequestId::new(), "decision": "approve"}),
+                "artifact.grants.write",
+            ),
+        ] {
+            let refused = reader
+                .rpc("tools/call", json!({"name": tool, "arguments": arguments}))
+                .await;
+            assert!(
+                error_message(&refused).contains(permission),
+                "{tool}: {refused}"
+            );
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_owner_releases_shares_and_the_link_redeems_through_the_share_route() {
+    with_service(|harness| async move {
+        let owner = gateway(
+            &harness,
+            &[
+                ArtifactPermission::ArtifactsRead,
+                ArtifactPermission::ArtifactsWrite,
+                ArtifactPermission::ReleasesWrite,
+                ArtifactPermission::ShareLinksWrite,
+            ],
+        );
+        let body = b"a shared report".to_vec();
+        let artifact = upload(&owner, "shared.txt", &body).await;
+
+        // A private artifact takes no share link.
+        let private = owner
+            .rpc(
+                "tools/call",
+                json!({"name": "create_share_link", "arguments": {"artifactId": artifact, "expiresInDays": 1}}),
+            )
+            .await;
+        assert!(error_message(&private).contains("released"), "{private}");
+
+        let released = owner
+            .rpc(
+                "tools/call",
+                json!({"name": "set_release_state", "arguments": {"artifactId": artifact, "releaseState": "released"}}),
+            )
+            .await;
+        assert_eq!(
+            structured(&released)["artifact"]["releaseState"],
+            "released"
+        );
+        let created = owner
+            .rpc(
+                "tools/call",
+                json!({
+                    "name": "create_share_link",
+                    "arguments": {"artifactId": artifact, "expiresInDays": 7, "redemptionLimit": 1}
+                }),
+            )
+            .await;
+        let created: CreateShareLinkResult =
+            serde_json::from_value(structured(&created).clone()).unwrap();
+        let prefix = format!("{}/artifact/shares/", support::service::SHARE_ORIGIN);
+        let token = created
+            .url
+            .expose()
+            .strip_prefix(&prefix)
+            .expect("the link names the share route under the share origin")
+            .to_owned();
+
+        // The administrators' listing shows the link without its secret.
+        let listing = owner
+            .rpc(
+                "resources/read",
+                json!({"uri": format!("artifact://artifacts/{artifact}/share-links")}),
+            )
+            .await;
+        let text = listing["result"]["contents"][0]["text"]
+            .as_str()
+            .expect("share links");
+        assert!(!text.contains(&token), "the listing holds no secret");
+        let listing: ShareLinkListing = serde_json::from_str(text).unwrap();
+        assert_eq!(listing.share_links.len(), 1);
+
+        let router = hosted_router(&harness);
+        let redirected = redeem(&router, &token).await;
+        assert_eq!(redirected.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            redirected.headers()[header::CACHE_CONTROL],
+            "no-store",
+            "the redirect is not cached"
+        );
+        let location = redirected.headers()[header::LOCATION].to_str().unwrap();
+        let fetched = reqwest::get(location).await.unwrap();
+        assert!(fetched.status().is_success());
+        assert_eq!(fetched.bytes().await.unwrap().as_ref(), body.as_slice());
+
+        // The limit of one is spent, and every refusal looks alike.
+        let spent = redeem(&router, &token).await;
+        assert_eq!(spent.status(), StatusCode::NOT_FOUND);
+        let malformed = redeem(&router, "not-a-token").await;
+        assert_eq!(malformed.status(), StatusCode::NOT_FOUND);
+        let spent_body = axum::body::to_bytes(spent.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let malformed_body = axum::body::to_bytes(malformed.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(spent_body, malformed_body);
+
+        let review = owner
+            .rpc(
+                "prompts/get",
+                json!({"name": "review-artifact-sharing", "arguments": {"artifact_id": artifact}}),
+            )
+            .await;
+        assert!(
+            review["result"]["messages"][0]["content"]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("share-links")),
+            "{review}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_owner_holds_every_level_and_cannot_request_more() {
+    with_service(|harness| async move {
+        let owner = gateway(
+            &harness,
+            &[
+                ArtifactPermission::ArtifactsRead,
+                ArtifactPermission::ArtifactsWrite,
+                ArtifactPermission::AccessRequestsWrite,
+            ],
+        );
+        let artifact = upload(&owner, "mine.txt", b"mine").await;
+        let refused = owner
+            .rpc(
+                "tools/call",
+                json!({
+                    "name": "request_artifact_access",
+                    "arguments": {"artifactId": artifact, "level": "admin", "justification": "more"}
+                }),
+            )
+            .await;
+        assert!(
+            error_message(&refused).contains("already holds"),
+            "{refused}"
+        );
+        let requests = owner
+            .rpc(
+                "resources/read",
+                json!({"uri": "artifact://access-requests?role=requester"}),
+            )
+            .await;
+        let text = requests["result"]["contents"][0]["text"]
+            .as_str()
+            .expect("access requests");
+        let listing: AccessRequestListing = serde_json::from_str(text).unwrap();
+        assert!(listing.access_requests.is_empty());
     })
     .await;
 }

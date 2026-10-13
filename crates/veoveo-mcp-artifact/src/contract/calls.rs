@@ -6,11 +6,14 @@ use veoveo_sdk_rust::calls::{ProviderContract, ToolCall};
 use veoveo_types::ServerSlug;
 
 use super::{
-    AbortUploadRequest, AbortUploadResult, CompleteUploadRequest, CompleteUploadResult,
-    CreateDownloadRequest, CreateDownloadResult, CreateUploadRequest, CreateUploadResult,
-    DeleteArtifactRequest, DeleteArtifactResult, GrantArtifactRequest, GrantArtifactResult,
-    RevokeArtifactGrantRequest, RevokeArtifactGrantResult, SetUploadLimitsRequest,
-    SignUploadPartsRequest, SignUploadPartsResult, UploadLimitsResult,
+    AbortUploadRequest, AbortUploadResult, AccessRequestResult, ArtifactResult,
+    CancelAccessRequestRequest, CompleteUploadRequest, CompleteUploadResult, CreateDownloadRequest,
+    CreateDownloadResult, CreateShareLinkRequest, CreateShareLinkResult, CreateUploadRequest,
+    CreateUploadResult, DecideAccessRequestRequest, DeleteArtifactRequest, DeleteArtifactResult,
+    GrantArtifactRequest, GrantArtifactResult, RequestArtifactAccessRequest,
+    RevokeArtifactGrantRequest, RevokeArtifactGrantResult, RevokeShareLinkRequest,
+    SetReleaseStateRequest, SetUploadLimitsRequest, ShareLinkResult, SignUploadPartsRequest,
+    SignUploadPartsResult, UploadLimitsResult,
 };
 
 /// The Artifact server, the provider these calls reach.
@@ -65,6 +68,42 @@ impl ToolCall for RevokeArtifactGrantRequest {
     const TOOL: &'static str = "revoke_artifact_grant";
 }
 
+impl ToolCall for SetReleaseStateRequest {
+    type Provider = ArtifactProvider;
+    type Output = ArtifactResult;
+    const TOOL: &'static str = "set_release_state";
+}
+
+impl ToolCall for CreateShareLinkRequest {
+    type Provider = ArtifactProvider;
+    type Output = CreateShareLinkResult;
+    const TOOL: &'static str = "create_share_link";
+}
+
+impl ToolCall for RevokeShareLinkRequest {
+    type Provider = ArtifactProvider;
+    type Output = ShareLinkResult;
+    const TOOL: &'static str = "revoke_share_link";
+}
+
+impl ToolCall for RequestArtifactAccessRequest {
+    type Provider = ArtifactProvider;
+    type Output = AccessRequestResult;
+    const TOOL: &'static str = "request_artifact_access";
+}
+
+impl ToolCall for CancelAccessRequestRequest {
+    type Provider = ArtifactProvider;
+    type Output = AccessRequestResult;
+    const TOOL: &'static str = "cancel_access_request";
+}
+
+impl ToolCall for DecideAccessRequestRequest {
+    type Provider = ArtifactProvider;
+    type Output = AccessRequestResult;
+    const TOOL: &'static str = "decide_access_request";
+}
+
 impl ToolCall for DeleteArtifactRequest {
     type Provider = ArtifactProvider;
     type Output = DeleteArtifactResult;
@@ -79,7 +118,7 @@ impl ToolCall for SetUploadLimitsRequest {
 
 /// The tool of every request type above, in the order the server serves them. The
 /// server's tests hold this list to the tools it lists.
-pub fn served_tools() -> [&'static str; 9] {
+pub fn served_tools() -> [&'static str; 15] {
     [
         CreateUploadRequest::TOOL,
         SignUploadPartsRequest::TOOL,
@@ -88,6 +127,12 @@ pub fn served_tools() -> [&'static str; 9] {
         CreateDownloadRequest::TOOL,
         GrantArtifactRequest::TOOL,
         RevokeArtifactGrantRequest::TOOL,
+        SetReleaseStateRequest::TOOL,
+        CreateShareLinkRequest::TOOL,
+        RevokeShareLinkRequest::TOOL,
+        RequestArtifactAccessRequest::TOOL,
+        CancelAccessRequestRequest::TOOL,
+        DecideAccessRequestRequest::TOOL,
         DeleteArtifactRequest::TOOL,
         SetUploadLimitsRequest::TOOL,
     ]

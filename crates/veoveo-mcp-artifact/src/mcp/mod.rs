@@ -4,6 +4,7 @@
 mod declarations;
 mod errors;
 pub mod identity;
+mod prompts;
 mod requirements;
 mod resources;
 mod setup;
@@ -15,22 +16,27 @@ use chrono::Utc;
 use rmcp::{
     ErrorData as McpError, RoleServer,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, ReadResourceRequestParams},
+    model::{
+        CallToolResult, GetPromptRequestParams, GetPromptResult, Prompt, ReadResourceRequestParams,
+    },
     service::RequestContext,
     tool, tool_router,
 };
 use veoveo_sdk_rust::{
-    hosting::{DomainAddress, DomainRead, DomainServer, structured_result},
+    hosting::{DomainAddress, DomainRead, DomainServer, structured_result, unknown_prompt},
     server_contract::McpServerSetup,
 };
 use veoveo_types::Checked;
 
 use crate::{
     contract::{
-        AbortUploadRequest, AbortUploadResult, CompleteUploadRequest, CompleteUploadResult,
-        CreateDownloadRequest, CreateDownloadResult, CreateUploadRequest, CreateUploadResult,
-        DeleteArtifactRequest, DeleteArtifactResult, GrantArtifactRequest, GrantArtifactResult,
-        RevokeArtifactGrantRequest, RevokeArtifactGrantResult, SetUploadLimitsRequest,
+        AbortUploadRequest, AbortUploadResult, AccessRequestResult, ArtifactResult,
+        CancelAccessRequestRequest, CompleteUploadRequest, CompleteUploadResult,
+        CreateDownloadRequest, CreateDownloadResult, CreateShareLinkRequest, CreateShareLinkResult,
+        CreateUploadRequest, CreateUploadResult, DecideAccessRequestRequest, DeleteArtifactRequest,
+        DeleteArtifactResult, GrantArtifactRequest, GrantArtifactResult,
+        RequestArtifactAccessRequest, RevokeArtifactGrantRequest, RevokeArtifactGrantResult,
+        RevokeShareLinkRequest, SetReleaseStateRequest, SetUploadLimitsRequest, ShareLinkResult,
         SignUploadPartsRequest, SignUploadPartsResult, UploadLimitsResult,
     },
     service::ArtifactService,
@@ -255,8 +261,189 @@ impl ArtifactMcp {
     }
 
     #[tool(
+        title = "Set an artifact's release state",
+        description = "Move an available artifact you administer between `private` and `released`. A released artifact may be shared through share links; returning it to private ends its live links at once.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<ArtifactResult>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn set_release_state(
+        &self,
+        Parameters(request): Parameters<SetReleaseStateRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let identity = require(&context, Target::Tool("set_release_state"))?;
+        let caller = identity::caller(&identity)?;
+        let artifact = self
+            .app
+            .service
+            .set_release_state(
+                &caller,
+                request.artifact_id,
+                request.release_state,
+                Utc::now(),
+            )
+            .await
+            .map_err(tool_error)?;
+        structured_result(
+            format!(
+                "artifact {} is {}",
+                artifact.artifact_id, artifact.release_state
+            ),
+            &ArtifactResult { artifact },
+        )
+    }
+
+    #[tool(
+        title = "Create a share link",
+        description = "Issue an anonymous read link for a released, available artifact without data labels that you administer. The link lives 1 to 30 days and may carry a redemption limit. The URL holds the link's secret and is returned only now; anyone holding it receives a fresh download URL each time they open it.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<CreateShareLinkResult>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn create_share_link(
+        &self,
+        Parameters(request): Parameters<CreateShareLinkRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let identity = require(&context, Target::Tool("create_share_link"))?;
+        let caller = identity::caller(&identity)?;
+        let result = self
+            .app
+            .service
+            .create_share_link(&caller, &request, Utc::now())
+            .await
+            .map_err(tool_error)?;
+        structured_result(
+            format!(
+                "share link {} valid until {}",
+                result.share_link.share_link_id, result.share_link.expires_at
+            ),
+            &result,
+        )
+    }
+
+    #[tool(
+        title = "Revoke a share link",
+        description = "Revoke one of the share links of an artifact you administer. It stops working at once; a download URL it already issued expires within 5 minutes.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<ShareLinkResult>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn revoke_share_link(
+        &self,
+        Parameters(request): Parameters<RevokeShareLinkRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let identity = require(&context, Target::Tool("revoke_share_link"))?;
+        let caller = identity::caller(&identity)?;
+        let share_link = self
+            .app
+            .service
+            .revoke_share_link(
+                &caller,
+                request.artifact_id,
+                request.share_link_id,
+                Utc::now(),
+            )
+            .await
+            .map_err(tool_error)?;
+        structured_result(
+            format!("share link {} revoked", share_link.share_link_id),
+            &ShareLinkResult { share_link },
+        )
+    }
+
+    #[tool(
+        title = "Request access to an artifact",
+        description = "Ask the administrators of an artifact you can read for a higher level: write or admin, with a justification. You hold at most one pending request per artifact.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<AccessRequestResult>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn request_artifact_access(
+        &self,
+        Parameters(request): Parameters<RequestArtifactAccessRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let identity = require(&context, Target::Tool("request_artifact_access"))?;
+        let caller = identity::caller(&identity)?;
+        let access_request = self
+            .app
+            .service
+            .request_access(&caller, &request, Utc::now())
+            .await
+            .map_err(tool_error)?;
+        structured_result(
+            format!(
+                "access request {} is pending",
+                access_request.access_request_id
+            ),
+            &AccessRequestResult {
+                access_request,
+                grant: None,
+            },
+        )
+    }
+
+    #[tool(
+        title = "Cancel an access request",
+        description = "Withdraw your own pending access request.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<AccessRequestResult>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn cancel_access_request(
+        &self,
+        Parameters(request): Parameters<CancelAccessRequestRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let identity = require(&context, Target::Tool("cancel_access_request"))?;
+        let caller = identity::caller(&identity)?;
+        let access_request = self
+            .app
+            .service
+            .cancel_access_request(&caller, request.access_request_id, Utc::now())
+            .await
+            .map_err(tool_error)?;
+        structured_result(
+            format!(
+                "access request {} cancelled",
+                access_request.access_request_id
+            ),
+            &AccessRequestResult {
+                access_request,
+                grant: None,
+            },
+        )
+    }
+
+    #[tool(
+        title = "Decide an access request",
+        description = "Approve or deny a pending request on an artifact you administer, with an optional note. Approval gives the requester the level it asked for.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<AccessRequestResult>(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn decide_access_request(
+        &self,
+        Parameters(request): Parameters<DecideAccessRequestRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let identity = require(&context, Target::Tool("decide_access_request"))?;
+        let caller = identity::caller(&identity)?;
+        let result = self
+            .app
+            .service
+            .decide_access_request(&caller, &request, Utc::now())
+            .await
+            .map_err(tool_error)?;
+        structured_result(
+            format!(
+                "access request {} is {}",
+                result.access_request.access_request_id, result.access_request.state
+            ),
+            &result,
+        )
+    }
+
+    #[tool(
         title = "Delete an artifact",
-        description = "Delete an artifact you administer, with its grants. Its bytes are removed shortly after.",
+        description = "Delete an artifact you administer, with its grants, share links and access requests. Its bytes are removed shortly after.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<DeleteArtifactResult>(),
         annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
@@ -323,6 +510,24 @@ impl DomainServer for ArtifactMcp {
         context: &RequestContext<RoleServer>,
     ) -> Result<DomainRead, McpError> {
         resources::read(&self.app, address, request, context).await
+    }
+
+    fn prompts(&self) -> Vec<Prompt> {
+        prompts::ArtifactPrompt::ALL
+            .into_iter()
+            .map(prompts::ArtifactPrompt::definition)
+            .collect()
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        require(&context, Target::Prompt(&request.name))?;
+        prompts::ArtifactPrompt::by_name(&request.name)
+            .ok_or_else(|| unknown_prompt(&request.name))?
+            .render(request.arguments)
     }
 }
 

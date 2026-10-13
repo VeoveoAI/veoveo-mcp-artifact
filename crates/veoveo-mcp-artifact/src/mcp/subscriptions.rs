@@ -192,13 +192,26 @@ impl SubscriptionListener for ArtifactSubscriptions {
         let store = self.app.service.store();
         let now = chrono::Utc::now();
         for address in &addresses {
-            if let ArtifactResource::Artifact(artifact_id) | ArtifactResource::Grants(artifact_id) =
-                address
-            {
-                store
-                    .artifact(&caller, *artifact_id, now)
-                    .await
-                    .map_err(super::errors::store_error)?;
+            match address {
+                ArtifactResource::Artifact(artifact_id) | ArtifactResource::Grants(artifact_id) => {
+                    store
+                        .artifact(&caller, *artifact_id, now)
+                        .await
+                        .map_err(super::errors::store_error)?;
+                }
+                // Share links are for the artifact's administrators.
+                ArtifactResource::ShareLinks { artifact_id, .. } => {
+                    store
+                        .artifact_requiring(
+                            &caller,
+                            *artifact_id,
+                            veoveo_types::AccessLevel::Admin,
+                            now,
+                        )
+                        .await
+                        .map_err(super::errors::store_error)?;
+                }
+                _ => {}
             }
         }
         let hub = self.app.hubs.hub(caller.tenant());
@@ -263,7 +276,22 @@ mod tests {
                 cursor: None,
             }
         ));
+        assert!(affects(
+            &change,
+            &ArtifactResource::ShareLinks {
+                artifact_id: changed,
+                cursor: None,
+            }
+        ));
         assert!(!affects(&change, &ArtifactResource::StorageUsage));
+        assert!(affects(
+            &ArtifactChange::AccessRequests,
+            &ArtifactResource::AccessRequests {
+                role: None,
+                state: None,
+                cursor: None,
+            }
+        ));
         assert!(affects(
             &ArtifactChange::Everything,
             &ArtifactResource::StorageUsage
