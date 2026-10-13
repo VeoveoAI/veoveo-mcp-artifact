@@ -2,13 +2,18 @@
 //! closed detail type whose JSON Schema the server declares. A record's target is the
 //! artifact or upload resource it names, and a decision another server asked for on the
 //! caller's behalf names that server as `actingServer`.
+use std::num::NonZeroU32;
+
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use veoveo_audit_contract::{AuditDetailError, AuditDetailType, AuditRegistryBuilder};
-use veoveo_types::{AccessLevel, AccessSubject, ServerSlug, Sha256Digest, TenantId};
+use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, ServerSlug, Sha256Digest, TenantId};
 
-use super::{ArtifactId, ArtifactState, ObjectSize, UploadForm, UploadId, UploadLimits};
+use super::{
+    AccessRequestDecision, AccessRequestId, ArtifactId, ArtifactState, ObjectSize, ReleaseState,
+    ShareLinkId, UploadForm, UploadId, UploadLimits,
+};
 
 /// An upload reserved an artifact and its bytes: class `artifact.upload_created`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -132,6 +137,119 @@ impl AuditDetailType for UploadLimitsSet {
     const CLASS: &'static str = "artifact.upload_limits_set";
 }
 
+/// An administrator moved an artifact between private and released: class
+/// `artifact.release_changed`. Returning it to private ends its live share links.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReleaseChanged {
+    pub artifact_id: ArtifactId,
+    pub release_state: ReleaseState,
+    /// How many live share links the change ended.
+    pub ended_share_links: u32,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
+}
+impl AuditDetailType for ReleaseChanged {
+    const CLASS: &'static str = "artifact.release_changed";
+}
+
+/// An administrator created a share link: class `artifact.share_link_created`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShareLinkCreated {
+    pub artifact_id: ArtifactId,
+    pub share_link_id: ShareLinkId,
+    pub expires_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redemption_limit: Option<NonZeroU32>,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
+}
+impl AuditDetailType for ShareLinkCreated {
+    const CLASS: &'static str = "artifact.share_link_created";
+}
+
+/// An administrator revoked a share link: class `artifact.share_link_revoked`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShareLinkRevoked {
+    pub artifact_id: ArtifactId,
+    pub share_link_id: ShareLinkId,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
+}
+impl AuditDetailType for ShareLinkRevoked {
+    const CLASS: &'static str = "artifact.share_link_revoked";
+}
+
+/// Someone holding a share link received a download URL, valid until `expires_at`:
+/// class `artifact.share_link_redeemed`. The holder has no account, so the record names
+/// no actor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShareLinkRedeemed {
+    pub artifact_id: ArtifactId,
+    pub share_link_id: ShareLinkId,
+    /// The link's redemptions, this one included.
+    pub redemptions: u32,
+    pub expires_at: DateTime<Utc>,
+}
+impl AuditDetailType for ShareLinkRedeemed {
+    const CLASS: &'static str = "artifact.share_link_redeemed";
+}
+
+/// A caller asked an artifact's administrators for a level: class
+/// `artifact.access_requested`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessRequested {
+    pub artifact_id: ArtifactId,
+    pub access_request_id: AccessRequestId,
+    pub level: AccessLevel,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
+}
+impl AuditDetailType for AccessRequested {
+    const CLASS: &'static str = "artifact.access_requested";
+}
+
+/// A requester withdrew a pending request: class `artifact.access_request_cancelled`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessRequestCancelled {
+    pub artifact_id: ArtifactId,
+    pub access_request_id: AccessRequestId,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
+}
+impl AuditDetailType for AccessRequestCancelled {
+    const CLASS: &'static str = "artifact.access_request_cancelled";
+}
+
+/// An administrator approved or denied a request: class
+/// `artifact.access_request_decided`. An approval also records the grant it wrote as
+/// `artifact.grant_changed`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessRequestDecided {
+    pub artifact_id: ArtifactId,
+    pub access_request_id: AccessRequestId,
+    pub requester: PrincipalId,
+    pub level: AccessLevel,
+    pub decision: AccessRequestDecision,
+    /// The server that made the call for the caller, when another server called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_server: Option<ServerSlug>,
+}
+impl AuditDetailType for AccessRequestDecided {
+    const CLASS: &'static str = "artifact.access_request_decided";
+}
+
 /// A registry that holds the platform's declarations and Artifact's.
 pub fn audit_registry() -> Result<veoveo_audit_contract::AuditRegistry, AuditDetailError> {
     let mut builder = veoveo_audit_contract::AuditRegistry::builder();
@@ -149,6 +267,13 @@ pub fn declare_audit_details(builder: &mut AuditRegistryBuilder) -> Result<(), A
     builder.declare::<GrantChanged>()?;
     builder.declare::<ArtifactDeleted>()?;
     builder.declare::<UploadLimitsSet>()?;
+    builder.declare::<ReleaseChanged>()?;
+    builder.declare::<ShareLinkCreated>()?;
+    builder.declare::<ShareLinkRevoked>()?;
+    builder.declare::<ShareLinkRedeemed>()?;
+    builder.declare::<AccessRequested>()?;
+    builder.declare::<AccessRequestCancelled>()?;
+    builder.declare::<AccessRequestDecided>()?;
     Ok(())
 }
 
@@ -168,7 +293,7 @@ mod tests {
             .map(|declaration| declaration.class().to_string())
             .filter(|class| class.starts_with("artifact."))
             .collect();
-        assert_eq!(classes.len(), 8, "{classes:?}");
+        assert_eq!(classes.len(), 15, "{classes:?}");
         for declaration in registry
             .declarations()
             .filter(|declaration| declaration.class().to_string().starts_with("artifact."))

@@ -193,6 +193,73 @@ pub struct ShareLinkRecord {
     pub created_at: DateTime<Utc>,
 }
 
+/// The most bytes a share link's URL holds.
+pub const MAX_SHARE_LINK_URL_BYTES: usize = 2048;
+
+/// The URL of a share link: an absolute `http` or `https` URL whose last path segment is
+/// the link's secret. Anyone holding it reads the artifact while the link lives, so the
+/// server returns it once and stores only the secret's SHA-256.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ShareLinkUrl(String);
+
+impl ShareLinkUrl {
+    pub fn parse(value: impl Into<String>) -> Result<Self, ValueError> {
+        let value = value.into();
+        let absolute = value.starts_with("https://") || value.starts_with("http://");
+        if !absolute
+            || value.len() > MAX_SHARE_LINK_URL_BYTES
+            || value
+                .chars()
+                .any(|character| character.is_control() || character.is_whitespace())
+        {
+            return Err(ValueError::from_static(
+                "a share link URL is an absolute http or https URL of at most 2048 bytes",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    /// The URL, secret included. Hand it only to the people the link is for.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The URL carries the link's secret, so its debug form names only its kind.
+impl fmt::Debug for ShareLinkUrl {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ShareLinkUrl(..)")
+    }
+}
+
+impl TryFrom<String> for ShareLinkUrl {
+    type Error = ValueError;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(value)
+    }
+}
+
+impl From<ShareLinkUrl> for String {
+    fn from(value: ShareLinkUrl) -> Self {
+        value.0
+    }
+}
+
+impl JsonSchema for ShareLinkUrl {
+    fn schema_name() -> Cow<'static, str> {
+        "ShareLinkUrl".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "format": "uri",
+            "maxLength": MAX_SHARE_LINK_URL_BYTES,
+            "description": "The share link's URL, which carries its secret."
+        })
+    }
+}
+
 /// A justification or a decision note: 1 to 1000 bytes. Line breaks are allowed; other
 /// control characters are not.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -445,4 +512,21 @@ pub struct UploadListing {
 pub struct GrantListing {
     pub artifact_id: ArtifactId,
     pub grants: Vec<ArtifactGrant>,
+}
+
+/// A page of one artifact's share links, newest first, without their secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShareLinkListing {
+    pub artifact_id: ArtifactId,
+    pub share_links: Vec<ShareLinkRecord>,
+    pub next_cursor: Option<super::ListCursor>,
+}
+
+/// A page of access requests, newest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessRequestListing {
+    pub access_requests: Vec<AccessRequestRecord>,
+    pub next_cursor: Option<super::ListCursor>,
 }

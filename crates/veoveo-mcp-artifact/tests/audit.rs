@@ -270,7 +270,7 @@ async fn every_decision_records_its_declared_class() {
             .filter(|class| class.starts_with("artifact."))
             .collect();
         assert!(classes.iter().all(|class| declared.contains(class)));
-        assert_eq!(declared.len(), 8);
+        assert_eq!(declared.len(), 15);
 
         // Every detail reads back as its type, and names the artifact it is about.
         let draft = |index: usize| &records[index].draft;

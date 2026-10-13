@@ -11,7 +11,7 @@ use super::{
     AccessRequestDecision, AccessRequestId, AccessRequestRecord, ArtifactGrant, ArtifactId,
     ArtifactLabels, ArtifactMetadataMap, ArtifactName, ArtifactRecord, ArtifactState, DerivedFrom,
     IdempotencyKey, MediaType, Note, ObjectSize, PartNumber, ReleaseState, RetentionDays,
-    ShareLinkId, ShareLinkRecord, SignedPart, SignedTransfer, SignedUrl, UploadId, UploadLimits,
+    ShareLinkId, ShareLinkRecord, ShareLinkUrl, SignedPart, SignedTransfer, UploadId, UploadLimits,
     UploadRecord, UploadTransfer, ValueError,
 };
 
@@ -273,7 +273,7 @@ pub struct CreateShareLinkRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateShareLinkResult {
     pub share_link: ShareLinkRecord,
-    pub url: SignedUrl,
+    pub url: ShareLinkUrl,
 }
 
 /// `revoke_share_link`.
@@ -299,10 +299,10 @@ pub struct RequestArtifactAccessRequest {
     pub justification: Note,
 }
 
-/// `cancel_access_request`.
+/// `cancel_access_request`: withdraw the caller's pending request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AccessRequestRef {
+pub struct CancelAccessRequestRequest {
     pub access_request_id: AccessRequestId,
 }
 

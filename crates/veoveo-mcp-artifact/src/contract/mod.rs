@@ -18,24 +18,26 @@ pub use calls::{ArtifactProvider, served_tools};
 pub use ids::{AccessRequestId, ArtifactId, ArtifactIdentifierError, ShareLinkId, UploadId};
 pub use permissions::ArtifactScope;
 pub use records::{
-    AccessRequestRecord, ActiveUploadLimit, AllowedMediaTypes, ArtifactEntry, ArtifactGrant,
-    ArtifactListing, ArtifactProvenance, ArtifactRecord, ByteCount, DerivedFrom, GrantListing,
-    MAX_DERIVED_FROM, MAX_NOTE_BYTES, Note, PartNumber, PartSize, ShareLinkRecord, StorageUsage,
-    UploadLimits, UploadListing, UploadRecord,
+    AccessRequestListing, AccessRequestRecord, ActiveUploadLimit, AllowedMediaTypes, ArtifactEntry,
+    ArtifactGrant, ArtifactListing, ArtifactProvenance, ArtifactRecord, ByteCount, DerivedFrom,
+    GrantListing, MAX_DERIVED_FROM, MAX_NOTE_BYTES, MAX_SHARE_LINK_URL_BYTES, Note, PartNumber,
+    PartSize, ShareLinkListing, ShareLinkRecord, ShareLinkUrl, StorageUsage, UploadLimits,
+    UploadListing, UploadRecord,
 };
 pub use resource::{
     AccessRequestRole, ArtifactDocument, ArtifactResource, ArtifactResourceError, ListCursor,
     MAX_CURSOR_BYTES,
 };
 pub use tools::{
-    AbortUploadRequest, AbortUploadResult, AccessRequestRef, AccessRequestResult, ArtifactResult,
-    CompleteUploadRequest, CompleteUploadResult, CreateDownloadRequest, CreateDownloadResult,
-    CreateShareLinkRequest, CreateShareLinkResult, CreateUploadRequest, CreateUploadResult,
-    DecideAccessRequestRequest, DeleteArtifactRequest, DeleteArtifactResult, GrantArtifactRequest,
-    GrantArtifactResult, MAX_PARTS_PER_SIGNING, MAX_SHARE_LINK_DAYS, PartRequest,
-    RequestArtifactAccessRequest, RevokeArtifactGrantRequest, RevokeArtifactGrantResult,
-    RevokeShareLinkRequest, SetReleaseStateRequest, SetUploadLimitsRequest, ShareLinkDays,
-    ShareLinkResult, SignUploadPartsRequest, SignUploadPartsResult, UploadLimitsResult,
+    AbortUploadRequest, AbortUploadResult, AccessRequestResult, ArtifactResult,
+    CancelAccessRequestRequest, CompleteUploadRequest, CompleteUploadResult, CreateDownloadRequest,
+    CreateDownloadResult, CreateShareLinkRequest, CreateShareLinkResult, CreateUploadRequest,
+    CreateUploadResult, DecideAccessRequestRequest, DeleteArtifactRequest, DeleteArtifactResult,
+    GrantArtifactRequest, GrantArtifactResult, MAX_PARTS_PER_SIGNING, MAX_SHARE_LINK_DAYS,
+    PartRequest, RequestArtifactAccessRequest, RevokeArtifactGrantRequest,
+    RevokeArtifactGrantResult, RevokeShareLinkRequest, SetReleaseStateRequest,
+    SetUploadLimitsRequest, ShareLinkDays, ShareLinkResult, SignUploadPartsRequest,
+    SignUploadPartsResult, UploadLimitsResult,
 };
 pub use transfer::{
     MAX_SIGNED_URL_BYTES, SignedPart, SignedTransfer, SignedUrl, TransferMethod, UploadTransfer,
