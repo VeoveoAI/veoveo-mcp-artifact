@@ -22,7 +22,8 @@ pub struct Harness {
     pub service: Arc<ArtifactService>,
     pub storage: ObjectStorage,
     _rustfs: TestRustFs,
-    _db: TestDb,
+    /// The database, whose owner connection reads the audit log.
+    pub db: TestDb,
 }
 
 /// Run a service test with a 120-second bound.
@@ -45,7 +46,7 @@ where
             service,
             storage,
             _rustfs: rustfs,
-            _db: db,
+            db,
         });
         test(harness).await;
     })
