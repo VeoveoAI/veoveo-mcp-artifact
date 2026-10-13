@@ -1,7 +1,4 @@
-fn main() {
-    println!(
-        "{} {}",
-        veoveo_mcp_artifact::component(),
-        env!("CARGO_PKG_VERSION")
-    );
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    veoveo_mcp_artifact::server::run().await
 }

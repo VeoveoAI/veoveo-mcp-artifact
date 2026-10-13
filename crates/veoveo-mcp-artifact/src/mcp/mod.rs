@@ -45,6 +45,11 @@ use errors::tool_error;
 use requirements::{Target, require};
 use setup::SERVER_SETUP;
 
+/// Build and check the MCP setup, so a bad declaration stops startup.
+pub fn force_setup() {
+    std::sync::LazyLock::force(&SERVER_SETUP);
+}
+
 /// What every handler shares: the service and the tenants' subscription hubs.
 pub struct ArtifactApp {
     pub service: ArtifactService,

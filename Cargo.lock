@@ -3984,6 +3984,7 @@ dependencies = [
  "rmcp",
  "rustls",
  "schemars",
+ "secrecy",
  "serde",
  "serde_json",
  "sha2 0.11.0",

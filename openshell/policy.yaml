@@ -43,10 +43,71 @@ network_policies:
       - path: /usr/lib/git-core/*
       - path: /usr/local/cargo/bin/*
       - path: /usr/local/rustup/toolchains/*/bin/cargo
+  # Local installation. OpenShell pins each policy-listed executable path to the
+  # SHA-256 it first observes and denies the path after the file changes, so Artifact
+  # runs from a content-addressed copy under /sandbox/run, and acceptance tests run from
+  # a fresh nextest archive extraction under /sandbox/run. OpenShell admits one rule set
+  # per endpoint, so both share these rules:
+  # - Artifact registers through the Gateway's forward, where OpenShell substitutes the
+  #   registration secret, keeps and removes the registration at its client URI, and
+  #   reads the issuer's RFC 8414 metadata and the JWK Set its jwks_uri names.
+  # - Acceptance tests obtain tokens as the installation's acceptance callers and call
+  #   MCP through the profile endpoint.
+  local_gateway:
+    endpoints:
+      - host: host.openshell.internal
+        port: 8080
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: "/.well-known/oauth-authorization-server"
+          - allow:
+              method: GET
+              path: "/jwks.json"
+          - allow:
+              method: POST
+              path: "/oauth/register"
+          - allow:
+              method: GET
+              path: "/oauth/register/*"
+          - allow:
+              method: PUT
+              path: "/oauth/register/*"
+          - allow:
+              method: DELETE
+              path: "/oauth/register/*"
+          - allow:
+              method: POST
+              path: "/oauth/token"
+          - allow:
+              method: POST
+              path: "/mcp/local"
+          - allow:
+              method: GET
+              path: "/mcp/local"
+          - allow:
+              method: DELETE
+              path: "/mcp/local"
+        credential_binding:
+          provider: vv-registration
+    binaries:
+      - path: /sandbox/run/veoveo-mcp-artifact-*
+      - path: /sandbox/run/acceptance-*/**
+  # The installation's object store. Signed requests bind their headers, so they pass
+  # through as TCP without inspection. Artifact makes its own calls with its storage
+  # credential; acceptance tests send the requests Artifact signed.
+  local_object_storage:
+    endpoints:
+      - host: host.openshell.internal
+        port: 9000
+        protocol: tcp
+    binaries:
+      - path: /sandbox/run/veoveo-mcp-artifact-*
+      - path: /sandbox/run/acceptance-*/**
   # The installation's PostgreSQL server, which the registration's database grant names.
-  # OpenShell pins each policy-listed executable path to the SHA-256 it first observes,
-  # so the component runs from a content-addressed copy under /sandbox/run. Tests start
-  # their own clusters on loopback and need no egress.
+  # Tests start their own clusters and object stores on loopback and need no egress.
   local_database:
     endpoints:
       - host: host.openshell.internal
