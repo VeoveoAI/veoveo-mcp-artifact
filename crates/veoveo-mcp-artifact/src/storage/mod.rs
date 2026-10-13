@@ -85,17 +85,18 @@ pub enum StorageError {
 }
 
 impl StorageError {
-    pub(crate) fn call<E, R>(
+    pub(crate) fn call<E>(
         operation: &'static str,
-        error: aws_sdk_s3::error::SdkError<E, R>,
+        error: aws_sdk_s3::error::SdkError<E, aws_sdk_s3::config::http::HttpResponse>,
     ) -> Self
     where
         E: aws_sdk_s3::error::ProvideErrorMetadata,
     {
         let code = match &error {
-            aws_sdk_s3::error::SdkError::ServiceError(service) => {
-                service.err().code().unwrap_or("service error").to_owned()
-            }
+            aws_sdk_s3::error::SdkError::ServiceError(service) => match service.err().code() {
+                Some(code) => code.to_owned(),
+                None => format!("HTTP {}", service.raw().status().as_u16()),
+            },
             aws_sdk_s3::error::SdkError::TimeoutError(_) => "timeout".to_owned(),
             aws_sdk_s3::error::SdkError::DispatchFailure(_) => "dispatch failure".to_owned(),
             aws_sdk_s3::error::SdkError::ResponseError(_) => "unreadable response".to_owned(),

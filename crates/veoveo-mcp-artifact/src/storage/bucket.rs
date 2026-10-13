@@ -87,6 +87,25 @@ impl ObjectStorage {
         Ok(())
     }
 
+    /// Prepare the bucket, trying again while object storage refuses for at most
+    /// `within`. A store that reports healthy can still refuse its first calls while it
+    /// starts.
+    pub async fn prepare_within(&self, within: std::time::Duration) -> Result<(), StorageError> {
+        let deadline = tokio::time::Instant::now() + within;
+        let mut pause = std::time::Duration::from_millis(100);
+        loop {
+            match self.prepare().await {
+                Ok(()) => return Ok(()),
+                Err(error) if tokio::time::Instant::now() + pause < deadline => {
+                    tracing::debug!(%error, "object storage is not ready; preparing again");
+                    tokio::time::sleep(pause).await;
+                    pause = (pause * 2).min(std::time::Duration::from_secs(5));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     /// Whether the bucket answers, for readiness.
     pub async fn ready(&self) -> bool {
         self.internal

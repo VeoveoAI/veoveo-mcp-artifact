@@ -27,6 +27,9 @@ use crate::{
 
 use config::Args;
 
+/// How long startup waits for object storage to accept the bucket's preparation.
+const STORAGE_READINESS: std::time::Duration = std::time::Duration::from_secs(120);
+
 pub async fn run() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let _ = dotenvy::dotenv();
@@ -41,7 +44,7 @@ pub async fn run() -> Result<()> {
     mcp::force_setup();
     let storage = ObjectStorage::new(&args.storage()).context("configuring object storage")?;
     storage
-        .prepare()
+        .prepare_within(STORAGE_READINESS)
         .await
         .context("preparing Artifact's bucket")?;
     let (registration_client, registration, http) =

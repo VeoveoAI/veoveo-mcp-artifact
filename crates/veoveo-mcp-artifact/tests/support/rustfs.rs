@@ -92,7 +92,10 @@ impl TestRustFs {
     /// A prepared fresh bucket.
     pub async fn storage(&self) -> ObjectStorage {
         let storage = ObjectStorage::new(&self.config()).expect("test storage configuration");
-        storage.prepare().await.expect("prepare the test bucket");
+        storage
+            .prepare_within(Duration::from_secs(30))
+            .await
+            .expect("prepare the test bucket");
         storage
     }
 }
