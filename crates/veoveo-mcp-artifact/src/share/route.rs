@@ -42,8 +42,8 @@ async fn redeem(
         }
         Ok(None) => refused(),
         Err(error) => {
-            // A root event: the request's span records its path, which holds the secret.
-            tracing::warn!(parent: None, %error, "a share link redemption failed");
+            // The request's span records the route template, never the token.
+            tracing::warn!(%error, "a share link redemption failed");
             unavailable()
         }
     }
