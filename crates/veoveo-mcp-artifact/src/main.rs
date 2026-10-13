@@ -1,7 +1,7 @@
 fn main() {
     println!(
         "{} {}",
-        veoveo_template_mcp_rust::component(),
+        veoveo_mcp_artifact::component(),
         env!("CARGO_PKG_VERSION")
     );
 }

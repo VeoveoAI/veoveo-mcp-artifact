@@ -53,4 +53,4 @@ network_policies:
         port: 5432
         protocol: tcp
     binaries:
-      - path: /sandbox/run/veoveo-template-mcp-rust-*
+      - path: /sandbox/run/veoveo-mcp-artifact-*

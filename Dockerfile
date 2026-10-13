@@ -2,7 +2,7 @@
 # Stages: dev is the OpenShell environment, check is the single gate, build compiles the
 # release binary, and runtime is the deployable image.
 
-ARG COMPONENT=veoveo-template-mcp-rust
+ARG COMPONENT=veoveo-mcp-artifact
 
 FROM rust:1.99.0-trixie@sha256:6ff07edce8775d0f64be7aba9197229407301bddf2054d62c27b541a6238a181 AS dev
 # PostgreSQL 18.6 from the PGDG repository, whose signing key Debian's postgresql-common
@@ -48,10 +48,10 @@ RUN cargo fetch --locked \
     && DATABASE_URL=postgres://postgres@127.0.0.1/veoveo cargo sqlx migrate run \
         --source "${store}/migrations" --config "${store}/sqlx.toml" \
     && psql --host 127.0.0.1 --username postgres --dbname veoveo --quiet \
-        --command "SELECT kernel.ensure_server('template')" \
+        --command "SELECT kernel.ensure_server('artifact')" \
     && DATABASE_URL=postgres://postgres@127.0.0.1/veoveo cargo sqlx migrate run \
-        --source crates/veoveo-template-mcp-rust/migrations \
-        --config crates/veoveo-template-mcp-rust/sqlx.toml \
+        --source crates/veoveo-mcp-artifact/migrations \
+        --config crates/veoveo-mcp-artifact/sqlx.toml \
     && DATABASE_URL=postgres://postgres@127.0.0.1/veoveo cargo sqlx prepare --workspace --check \
         -- --all-targets --all-features \
     && pg_ctl stop --pgdata /tmp/sqlx/data --mode fast --wait --silent \
@@ -75,7 +75,7 @@ RUN useradd --system --uid 10001 --no-create-home "${COMPONENT}"
 COPY --from=build "/home/sandbox/${COMPONENT}" "/usr/local/bin/${COMPONENT}"
 USER ${COMPONENT}
 # The exec form cannot expand build arguments, so the binary path is fixed here.
-ENTRYPOINT ["/usr/local/bin/veoveo-template-mcp-rust"]
+ENTRYPOINT ["/usr/local/bin/veoveo-mcp-artifact"]
 LABEL org.opencontainers.image.title="${COMPONENT}" \
       org.opencontainers.image.source="https://github.com/VeoveoAI/${COMPONENT}" \
       org.opencontainers.image.version="${VERSION}" \

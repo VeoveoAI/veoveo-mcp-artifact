@@ -1,0 +1,57 @@
+[package]
+name = "veoveo-mcp-artifact"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["server"]
+# Artifact's public types: identifiers, resource addresses, metadata, grants, uploads,
+# tool requests and results, and the permission vocabulary. No database, runtime or
+# object-storage dependency.
+contract = [
+    "dep:chrono",
+    "dep:schemars",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:thiserror",
+    "dep:uuid",
+    "dep:veoveo-types",
+]
+# The server: persistence in the `artifact` schema and the binary.
+server = [
+    "contract",
+    "chrono/clock",
+    "dep:sqlx",
+    "dep:tokio",
+    "dep:veoveo-platform-store",
+]
+
+[dependencies]
+chrono = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+veoveo-types = { workspace = true, optional = true }
+
+sqlx = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+veoveo-platform-store = { workspace = true, optional = true }
+
+[dev-dependencies]
+# `database-conformance` holds the crate's queries and schema to core's database rules.
+veoveo-test-fixtures = { workspace = true, features = ["store", "database-conformance"] }
+tokio = { workspace = true, features = ["full"] }
+
+[[bin]]
+name = "veoveo-mcp-artifact"
+required-features = ["server"]
+
