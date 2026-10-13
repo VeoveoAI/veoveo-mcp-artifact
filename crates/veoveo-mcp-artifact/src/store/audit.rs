@@ -1,14 +1,12 @@
 //! Audit records of Artifact's decisions. Each decision appends its record on the
 //! connection of the transaction that makes the change, so both commit or neither does.
-//! The record names the caller's verified attribution, the artifact or server it is about
-//! and one of Artifact's declared detail types.
+//! The record names the caller's verified attribution, the server and Task that called for
+//! the caller when another server did, the Artifact resource the decision concerns and one
+//! of Artifact's declared detail types.
 use sqlx::PgConnection;
-use veoveo_audit_contract::{
-    AuditDetailType, AuditOutcome, AuditReason, AuditTarget, AuditTransactionWrite,
-};
-use veoveo_types::ResourceUri;
+use veoveo_audit_contract::{AuditDetailType, AuditOutcome, AuditTarget, AuditTransactionWrite};
 
-use crate::contract::{ArtifactId, ArtifactResource};
+use crate::contract::{ArtifactAuditReason, ArtifactId, ArtifactResource, UploadId};
 
 use super::{ArtifactStore, ArtifactStoreError, Caller};
 
@@ -17,7 +15,7 @@ use super::{ArtifactStore, ArtifactStoreError, Caller};
 pub(crate) enum Decided {
     Succeeded,
     /// The decision failed the artifact; the reason names why.
-    Failed(AuditReason),
+    Failed(ArtifactAuditReason),
 }
 
 impl ArtifactStore {
@@ -31,12 +29,16 @@ impl ArtifactStore {
         detail: &T,
         decided: Decided,
     ) -> Result<(), ArtifactStoreError> {
-        let (outcome, reason) = match decided {
-            Decided::Succeeded => (AuditOutcome::Succeeded, AuditReason::Accepted),
-            Decided::Failed(reason) => (AuditOutcome::Failed, reason),
-        };
         let detail = self.registry.detail(detail)?;
-        let draft = caller.audit().draft(target, detail, outcome, reason)?;
+        let draft = match decided {
+            Decided::Succeeded => caller.audit().draft(detail, AuditOutcome::Success),
+            Decided::Failed(reason) => caller
+                .audit()
+                .draft(detail, AuditOutcome::Failure)
+                .reason(reason.code()),
+        }
+        .target(target)
+        .build()?;
         AuditTransactionWrite::new(&self.registry, draft)?
             .append_as_server(connection)
             .await?;
@@ -44,18 +46,35 @@ impl ArtifactStore {
     }
 }
 
-/// The target of a record about one artifact: its resource address.
-pub(crate) fn artifact_target(artifact_id: ArtifactId) -> AuditTarget {
-    AuditTarget::Resource {
-        uri: ResourceUri::new(ArtifactResource::Artifact(artifact_id).to_string())
-            .expect("an artifact address is a resource URI"),
-    }
+/// The target of a record about one resource: its Artifact address.
+fn resource_target(resource: ArtifactResource) -> AuditTarget {
+    AuditTarget::parse(resource.to_string()).expect("an Artifact address is an absolute URI")
 }
 
-/// The target of a record about the server's own configuration, such as a tenant's
-/// upload limits.
-pub(crate) fn server_target() -> AuditTarget {
-    AuditTarget::Server {
-        server: crate::server(),
-    }
+/// The target of a record about one artifact.
+pub(crate) fn artifact_target(artifact_id: ArtifactId) -> AuditTarget {
+    resource_target(ArtifactResource::Artifact(artifact_id))
+}
+
+/// The target of a record about one upload.
+pub(crate) fn upload_target(upload_id: UploadId) -> AuditTarget {
+    resource_target(ArtifactResource::Upload(upload_id))
+}
+
+/// The target of a record about an artifact's grants.
+pub(crate) fn grants_target(artifact_id: ArtifactId) -> AuditTarget {
+    resource_target(ArtifactResource::Grants(artifact_id))
+}
+
+/// The target of a record about an artifact's share links.
+pub(crate) fn share_links_target(artifact_id: ArtifactId) -> AuditTarget {
+    resource_target(ArtifactResource::ShareLinks {
+        artifact_id,
+        cursor: None,
+    })
+}
+
+/// The target of a record about a tenant's storage: its upload limits.
+pub(crate) fn storage_target() -> AuditTarget {
+    resource_target(ArtifactResource::StorageUsage)
 }

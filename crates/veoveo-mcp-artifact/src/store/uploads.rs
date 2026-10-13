@@ -13,13 +13,13 @@ use crate::contract::{
     UploadRecord, UploadState,
 };
 
-use veoveo_audit_contract::AuditReason;
-
-use crate::contract::{ArtifactVerified, UploadAborted, UploadCompleted, UploadCreated};
+use crate::contract::{
+    ArtifactAuditReason, ArtifactVerified, UploadAborted, UploadCompleted, UploadCreated,
+};
 
 use super::{
     ArtifactStore, ArtifactStoreError, Caller, UPLOAD_LIFETIME, UploadPlan,
-    audit::{Decided, artifact_target},
+    audit::{Decided, artifact_target, upload_target},
     limits::LimitsRow,
     rows::{ArtifactRow, UploadRow, size_column},
 };
@@ -213,14 +213,12 @@ impl ArtifactStore {
         self.record(
             &mut tx,
             caller,
-            artifact_target(artifact_id),
+            upload_target(upload.upload_id),
             &UploadCreated {
                 artifact_id,
                 upload_id: upload.upload_id,
                 form: upload.form,
                 reserved: upload.reserved,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -322,16 +320,14 @@ impl ArtifactStore {
             self.record(
                 &mut tx,
                 caller,
-                artifact_target(upload.artifact_id),
+                upload_target(upload_id),
                 &UploadCompleted {
                     artifact_id: upload.artifact_id,
                     upload_id,
                     size: object.size,
                     state: ArtifactState::Failed,
-                    acting_server: caller.acting_server().cloned(),
-                    acting_task: caller.acting_task().cloned(),
                 },
-                Decided::Failed(AuditReason::Conflict),
+                Decided::Failed(ArtifactAuditReason::SizeMismatch),
             )
             .await?;
             tx.commit().await?;
@@ -354,14 +350,12 @@ impl ArtifactStore {
         self.record(
             &mut tx,
             caller,
-            artifact_target(artifact.artifact_id),
+            upload_target(upload_id),
             &UploadCompleted {
                 artifact_id: artifact.artifact_id,
                 upload_id,
                 size: object.size,
                 state: artifact.state,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -394,7 +388,7 @@ impl ArtifactStore {
             .ok_or(ArtifactStoreError::ArtifactNotFound)?;
             (
                 ArtifactState::Failed,
-                Decided::Failed(AuditReason::Conflict),
+                Decided::Failed(ArtifactAuditReason::DigestMismatch),
             )
         } else {
             sqlx::query_file_scalar!(
@@ -417,8 +411,6 @@ impl ArtifactStore {
                 artifact_id,
                 sha256: computed.clone(),
                 state,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             decided,
         )
@@ -459,12 +451,10 @@ impl ArtifactStore {
         self.record(
             &mut tx,
             caller,
-            artifact_target(upload.artifact_id),
+            upload_target(upload_id),
             &UploadAborted {
                 artifact_id: upload.artifact_id,
                 upload_id,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )

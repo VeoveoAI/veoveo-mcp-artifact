@@ -16,7 +16,9 @@ use sha2::{Digest as _, Sha256};
 use support::service::{Harness, with_service};
 use tokio_util::sync::CancellationToken;
 use veoveo_audit::AuditStore;
-use veoveo_audit_contract::{AuditDetailType, AuditPartition, AuditQuery, AuditReadScope};
+use veoveo_audit_contract::{
+    AuditDetailType, AuditPartition, AuditQuery, AuditReadScope, AuditVia,
+};
 use veoveo_mcp_artifact::{
     client::{ArtifactClient, ArtifactClientError, UploadBody},
     contract::{
@@ -392,8 +394,9 @@ async fn a_caller_without_the_write_permission_is_refused() {
     .await;
 }
 
-/// The details of every record of `T`'s class in the test user's tenant.
-async fn audit_details<T: AuditDetailType>(harness: &Harness) -> Vec<T> {
+/// The details of every record of `T`'s class in the test user's tenant, each with the
+/// acting server and Task its envelope names.
+async fn audit_details<T: AuditDetailType>(harness: &Harness) -> Vec<(T, Option<AuditVia>)> {
     let registry = Arc::new(audit_registry().unwrap());
     let reader = AuditStore::new(harness.db.connect().await, registry.clone());
     let tenant: TenantId = testing::principal().tenant.unwrap();
@@ -407,9 +410,12 @@ async fn audit_details<T: AuditDetailType>(harness: &Harness) -> Vec<T> {
         .iter()
         .filter(|record| record.draft.class().to_string() == T::CLASS)
         .map(|record| {
-            registry
-                .read(record.draft.class(), record.draft.detail())
-                .unwrap()
+            (
+                registry
+                    .read(record.draft.class(), record.draft.detail())
+                    .unwrap(),
+                record.draft.via().cloned(),
+            )
         })
         .collect()
 }
@@ -430,23 +436,28 @@ async fn the_acting_server_and_its_task_are_named_in_the_audit_records() {
             .unwrap();
         assert_eq!(tasked.provenance.task, Some(task.clone()));
 
-        let created: Vec<UploadCreated> = audit_details(&harness).await;
-        let completed: Vec<UploadCompleted> = audit_details(&harness).await;
-        for (artifact, acting_task) in [(&direct, None), (&tasked, Some(task))] {
+        let created: Vec<(UploadCreated, _)> = audit_details(&harness).await;
+        let completed: Vec<(UploadCompleted, _)> = audit_details(&harness).await;
+        // Ledger's Tasks run in core's Task runtime, so the envelope names the Task by its
+        // core identifier.
+        let ledger_task = TaskId::parse(task.as_str()).unwrap();
+        for (artifact, acting_task) in [(&direct, None), (&tasked, Some(ledger_task))] {
+            let via = Some(AuditVia {
+                server: ledger_slug(),
+                task: acting_task,
+            });
             let created: Vec<_> = created
                 .iter()
-                .filter(|detail| detail.artifact_id == artifact.artifact_id)
+                .filter(|(detail, _)| detail.artifact_id == artifact.artifact_id)
                 .collect();
             assert_eq!(created.len(), 1, "{created:?}");
-            assert_eq!(created[0].acting_server, Some(ledger_slug()));
-            assert_eq!(created[0].acting_task, acting_task);
+            assert_eq!(created[0].1, via);
             let completed: Vec<_> = completed
                 .iter()
-                .filter(|detail| detail.artifact_id == artifact.artifact_id)
+                .filter(|(detail, _)| detail.artifact_id == artifact.artifact_id)
                 .collect();
             assert_eq!(completed.len(), 1, "{completed:?}");
-            assert_eq!(completed[0].acting_server, Some(ledger_slug()));
-            assert_eq!(completed[0].acting_task, acting_task);
+            assert_eq!(completed[0].1, via);
         }
     })
     .await;

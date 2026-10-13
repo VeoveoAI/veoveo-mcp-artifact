@@ -5,7 +5,7 @@ use std::{num::NonZeroU32, sync::Arc};
 use chrono::{DateTime, Utc};
 use sqlx::{Postgres, Transaction};
 use veoveo_audit_contract::{
-    AuditDraft, AuditOutcome, AuditReason, AuditRegistry, AuditRequest, AuditTransactionWrite,
+    AuditDraft, AuditOutcome, AuditRegistry, AuditRequest, AuditTransactionWrite,
 };
 use veoveo_platform_store::{CursorScope, KeysetCursor, Page, PageSize, TenantId as StoredTenant};
 use veoveo_types::{AccessLevel, PrincipalId, Sha256Digest};
@@ -17,7 +17,7 @@ use crate::contract::{
 
 use super::{
     ArtifactStore, ArtifactStoreError, Caller, VisibleArtifact,
-    audit::{Decided, artifact_target},
+    audit::{Decided, artifact_target, share_links_target},
 };
 
 /// The most live share links one artifact holds.
@@ -98,14 +98,9 @@ impl Redemption {
             expires_at,
         })?;
         // The holder of a link has no account, so the record names no actor.
-        let draft = AuditDraft::builder(
-            AuditRequest::background(),
-            artifact_target(self.artifact_id),
-            detail,
-            AuditOutcome::Succeeded,
-            AuditReason::Accepted,
-        )
-        .build()?;
+        let draft = AuditDraft::builder(AuditRequest::background(), detail, AuditOutcome::Success)
+            .target(artifact_target(self.artifact_id))
+            .build()?;
         AuditTransactionWrite::new(&self.registry, draft)?
             .append_as_server(&mut self.tx)
             .await?;
@@ -162,8 +157,6 @@ impl ArtifactStore {
                 artifact_id,
                 release_state,
                 ended_share_links: u32::try_from(ended).unwrap_or(u32::MAX),
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -236,14 +229,12 @@ impl ArtifactStore {
         self.record(
             &mut tx,
             caller,
-            artifact_target(link.artifact_id),
+            share_links_target(link.artifact_id),
             &ShareLinkCreated {
                 artifact_id: link.artifact_id,
                 share_link_id: record.share_link_id,
                 expires_at: record.expires_at,
                 redemption_limit: record.redemption_limit,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -278,12 +269,10 @@ impl ArtifactStore {
         self.record(
             &mut tx,
             caller,
-            artifact_target(artifact_id),
+            share_links_target(artifact_id),
             &ShareLinkRevoked {
                 artifact_id,
                 share_link_id,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )

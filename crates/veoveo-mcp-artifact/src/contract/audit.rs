@@ -1,21 +1,44 @@
 //! Artifact's audit vocabulary: one class per decision, `artifact.<name>`, each with a
-//! closed detail type whose JSON Schema the server declares. A record's target is the
-//! artifact or upload resource it names, and a decision another server asked for on the
-//! caller's behalf names that server as `actingServer` and, when the call came from one of
-//! its Tasks, that Task as `actingTask`.
+//! closed detail type whose JSON Schema the server declares and the OCSF API Activity it
+//! maps to, and the reason codes of decisions that did not succeed. A record's target is
+//! the Artifact resource it concerns. The envelope names the caller, and a decision another
+//! server asked for on the caller's behalf names that server and its Task as `via`.
 use std::num::NonZeroU32;
 
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use veoveo_audit_contract::{AuditDetailError, AuditDetailType, AuditRegistryBuilder};
-use veoveo_sdk_rust::OpaqueTaskId;
-use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, ServerSlug, Sha256Digest, TenantId};
+use veoveo_audit_contract::{
+    AuditDetailError, AuditDetailType, AuditOcsfClass, AuditReason, AuditRegistryBuilder,
+};
+use veoveo_types::{
+    AccessLevel, AccessSubject, PrincipalId, Sha256Digest, TenantId, Vocabulary as _,
+};
 
 use super::{
     AccessRequestDecision, AccessRequestId, ArtifactId, ArtifactState, ObjectSize, ReleaseState,
     ShareLinkId, UploadForm, UploadId, UploadLimits,
 };
+
+/// Why an Artifact decision did not succeed, as the reason code of its audit record.
+/// Artifact records the decisions it makes; a refused request changes nothing and
+/// records nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, veoveo_types::Vocabulary)]
+pub enum ArtifactAuditReason {
+    /// The bytes that arrived differ in size from the size the upload declared or
+    /// exceed the bytes it reserved, so the artifact failed.
+    SizeMismatch,
+    /// The SHA-256 the server computed differs from the one the upload declared, so the
+    /// artifact failed.
+    DigestMismatch,
+}
+
+impl ArtifactAuditReason {
+    /// The record's reason code.
+    pub fn code(self) -> AuditReason {
+        AuditReason::parse(self.as_str()).expect("an Artifact reason is a reason code")
+    }
+}
 
 /// An upload reserved an artifact and its bytes: class `artifact.upload_created`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -25,15 +48,11 @@ pub struct UploadCreated {
     pub upload_id: UploadId,
     pub form: UploadForm,
     pub reserved: ObjectSize,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for UploadCreated {
     const CLASS: &'static str = "artifact.upload_created";
+    /// OCSF API Activity, Create.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(1);
 }
 
 /// An upload's bytes arrived: class `artifact.upload_completed`.
@@ -44,15 +63,11 @@ pub struct UploadCompleted {
     pub upload_id: UploadId,
     pub size: ObjectSize,
     pub state: ArtifactState,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for UploadCompleted {
     const CLASS: &'static str = "artifact.upload_completed";
+    /// OCSF API Activity, Update.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(3);
 }
 
 /// An upload's creator aborted it: class `artifact.upload_aborted`.
@@ -61,15 +76,11 @@ impl AuditDetailType for UploadCompleted {
 pub struct UploadAborted {
     pub artifact_id: ArtifactId,
     pub upload_id: UploadId,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for UploadAborted {
     const CLASS: &'static str = "artifact.upload_aborted";
+    /// OCSF API Activity, Delete.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(4);
 }
 
 /// A caller received a download URL, valid until `expires_at`: class
@@ -79,15 +90,11 @@ impl AuditDetailType for UploadAborted {
 pub struct DownloadIssued {
     pub artifact_id: ArtifactId,
     pub expires_at: DateTime<Utc>,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for DownloadIssued {
     const CLASS: &'static str = "artifact.download_issued";
+    /// OCSF API Activity, Read.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(2);
 }
 
 /// A grant was written, or revoked when `level` is absent: class
@@ -99,15 +106,11 @@ pub struct GrantChanged {
     pub subject: AccessSubject,
     pub level: Option<AccessLevel>,
     pub expires_at: Option<DateTime<Utc>>,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for GrantChanged {
     const CLASS: &'static str = "artifact.grant_changed";
+    /// OCSF API Activity, Update.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(3);
 }
 
 /// The server computed an artifact's SHA-256: class `artifact.verified`. The artifact is
@@ -118,15 +121,11 @@ pub struct ArtifactVerified {
     pub artifact_id: ArtifactId,
     pub sha256: Sha256Digest,
     pub state: ArtifactState,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ArtifactVerified {
     const CLASS: &'static str = "artifact.verified";
+    /// OCSF API Activity, Update.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(3);
 }
 
 /// An artifact was deleted: class `artifact.deleted`.
@@ -134,15 +133,11 @@ impl AuditDetailType for ArtifactVerified {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ArtifactDeleted {
     pub artifact_id: ArtifactId,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ArtifactDeleted {
     const CLASS: &'static str = "artifact.deleted";
+    /// OCSF API Activity, Delete.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(4);
 }
 
 /// An installation administrator set a tenant's upload limits: class
@@ -152,15 +147,11 @@ impl AuditDetailType for ArtifactDeleted {
 pub struct UploadLimitsSet {
     pub tenant: TenantId,
     pub limits: UploadLimits,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for UploadLimitsSet {
     const CLASS: &'static str = "artifact.upload_limits_set";
+    /// OCSF API Activity, Update.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(3);
 }
 
 /// An administrator moved an artifact between private and released: class
@@ -172,15 +163,11 @@ pub struct ReleaseChanged {
     pub release_state: ReleaseState,
     /// How many live share links the change ended.
     pub ended_share_links: u32,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ReleaseChanged {
     const CLASS: &'static str = "artifact.release_changed";
+    /// OCSF API Activity, Update.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(3);
 }
 
 /// An administrator created a share link: class `artifact.share_link_created`.
@@ -192,15 +179,11 @@ pub struct ShareLinkCreated {
     pub expires_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redemption_limit: Option<NonZeroU32>,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ShareLinkCreated {
     const CLASS: &'static str = "artifact.share_link_created";
+    /// OCSF API Activity, Create.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(1);
 }
 
 /// An administrator revoked a share link: class `artifact.share_link_revoked`.
@@ -209,15 +192,11 @@ impl AuditDetailType for ShareLinkCreated {
 pub struct ShareLinkRevoked {
     pub artifact_id: ArtifactId,
     pub share_link_id: ShareLinkId,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for ShareLinkRevoked {
     const CLASS: &'static str = "artifact.share_link_revoked";
+    /// OCSF API Activity, Delete.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(4);
 }
 
 /// Someone holding a share link received a download URL, valid until `expires_at`:
@@ -234,6 +213,8 @@ pub struct ShareLinkRedeemed {
 }
 impl AuditDetailType for ShareLinkRedeemed {
     const CLASS: &'static str = "artifact.share_link_redeemed";
+    /// OCSF API Activity, Read.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(2);
 }
 
 /// A caller asked an artifact's administrators for a level: class
@@ -244,15 +225,11 @@ pub struct AccessRequested {
     pub artifact_id: ArtifactId,
     pub access_request_id: AccessRequestId,
     pub level: AccessLevel,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for AccessRequested {
     const CLASS: &'static str = "artifact.access_requested";
+    /// OCSF API Activity, Create.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(1);
 }
 
 /// A requester withdrew a pending request: class `artifact.access_request_cancelled`.
@@ -261,15 +238,11 @@ impl AuditDetailType for AccessRequested {
 pub struct AccessRequestCancelled {
     pub artifact_id: ArtifactId,
     pub access_request_id: AccessRequestId,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for AccessRequestCancelled {
     const CLASS: &'static str = "artifact.access_request_cancelled";
+    /// OCSF API Activity, Update.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(3);
 }
 
 /// An administrator approved or denied a request: class
@@ -283,15 +256,11 @@ pub struct AccessRequestDecided {
     pub requester: PrincipalId,
     pub level: AccessLevel,
     pub decision: AccessRequestDecision,
-    /// The server that made the call for the caller, when another server called.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_server: Option<ServerSlug>,
-    /// The calling server's Task the call ran in, when the call came from one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acting_task: Option<OpaqueTaskId>,
 }
 impl AuditDetailType for AccessRequestDecided {
     const CLASS: &'static str = "artifact.access_request_decided";
+    /// OCSF API Activity, Update.
+    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(3);
 }
 
 /// A registry that holds the platform's declarations and Artifact's.
@@ -342,12 +311,31 @@ mod tests {
             .declarations()
             .filter(|declaration| declaration.class().to_string().starts_with("artifact."))
         {
+            let schema = declaration
+                .schema()
+                .expect("Artifact documents every detail");
             assert_eq!(
-                declaration.schema()["additionalProperties"],
+                schema["additionalProperties"],
                 serde_json::Value::Bool(false),
                 "{}",
                 declaration.class()
             );
+            let ocsf = declaration.ocsf();
+            assert_eq!(ocsf.class_uid, 6003, "{}", declaration.class());
+            assert!(
+                (1..=4).contains(&ocsf.activity_id),
+                "{} maps to no API Activity",
+                declaration.class()
+            );
         }
+    }
+
+    #[test]
+    fn reasons_are_audit_reason_codes() {
+        let codes: Vec<String> = ArtifactAuditReason::ALL
+            .iter()
+            .map(|reason| reason.code().to_string())
+            .collect();
+        assert_eq!(codes, ["size_mismatch", "digest_mismatch"]);
     }
 }

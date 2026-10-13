@@ -15,7 +15,7 @@ use crate::contract::{
 
 use super::{
     ArtifactStore, ArtifactStoreError, Caller, MAX_GRANTS_PER_ARTIFACT,
-    audit::{Decided, artifact_target},
+    audit::{Decided, artifact_target, grants_target},
     caller::{level_from_text, level_text},
     grants::GrantRow,
 };
@@ -115,8 +115,6 @@ impl ArtifactStore {
                 artifact_id: request.artifact_id,
                 access_request_id: record.access_request_id,
                 level: request.level,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -162,8 +160,6 @@ impl ArtifactStore {
             &AccessRequestCancelled {
                 artifact_id,
                 access_request_id,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -243,8 +239,6 @@ impl ArtifactStore {
                 requester: requested.requester.clone(),
                 level: requested.level,
                 decision,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -498,14 +492,12 @@ impl ArtifactStore {
             self.record(
                 &mut *tx,
                 caller,
-                artifact_target(requested.artifact_id),
+                grants_target(requested.artifact_id),
                 &GrantChanged {
                     artifact_id: requested.artifact_id,
                     subject: AccessSubject::Principal(requested.requester.clone()),
                     level: Some(grant.level),
                     expires_at: grant.expires_at,
-                    acting_server: caller.acting_server().cloned(),
-                    acting_task: caller.acting_task().cloned(),
                 },
                 Decided::Succeeded,
             )

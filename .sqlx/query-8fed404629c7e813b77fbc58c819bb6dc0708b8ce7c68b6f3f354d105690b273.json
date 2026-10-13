@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "-- The members of one sealed block that match a query, every filter applied in SQL. The\n-- caller orders them by block position.\nSELECT\n    r.id AS \"id: AuditRecordId\",\n    r.partition,\n    r.class AS \"class: AuditClass\",\n    r.occurred_at,\n    r.draft,\n    r.recorded_at\nFROM audit.record AS r\nWHERE r.partition = $1\n    AND r.id = ANY ($2)\n    AND ($3::text IS NULL OR r.class = $3)\n    AND ($4::text IS NULL OR r.actor = $4)\n    AND ($5::jsonb IS NULL OR r.draft -> 'target' = $5)\n    AND ($6::text IS NULL OR r.outcome = $6)\n    AND ($7::text IS NULL OR r.trace_id = $7)\n    AND ($8::timestamptz IS NULL OR r.occurred_at >= $8)\n    AND ($9::timestamptz IS NULL OR r.occurred_at < $9)\n",
+  "query": "-- The members of one sealed block that match a query, every filter applied in SQL. The\n-- caller orders them by block position.\nSELECT\n    r.id AS \"id: AuditRecordId\",\n    r.partition,\n    r.class AS \"class: AuditClass\",\n    r.occurred_at,\n    r.draft,\n    r.recorded_at\nFROM audit.record AS r\nWHERE r.partition = $1\n    AND r.id = ANY ($2)\n    AND ($3::text IS NULL OR r.class = $3)\n    AND ($4::text IS NULL OR r.actor = $4)\n    AND ($5::text IS NULL OR r.target = $5)\n    AND ($6::text IS NULL OR r.outcome = $6)\n    AND ($10::text IS NULL OR r.reason = $10)\n    AND ($7::text IS NULL OR r.trace_id = $7)\n    AND ($8::timestamptz IS NULL OR r.occurred_at >= $8)\n    AND ($9::timestamptz IS NULL OR r.occurred_at < $9)\n",
   "describe": {
     "columns": [
       {
@@ -76,11 +76,12 @@
         "UuidArray",
         "Text",
         "Text",
-        "Jsonb",
+        "Text",
         "Text",
         "Text",
         "Timestamptz",
-        "Timestamptz"
+        "Timestamptz",
+        "Text"
       ]
     },
     "nullable": [
@@ -92,5 +93,5 @@
       false
     ]
   },
-  "hash": "2b1fb887b2ca21524edb03863609521cb7e2171e24253850ccdeb4e796a04044"
+  "hash": "8fed404629c7e813b77fbc58c819bb6dc0708b8ce7c68b6f3f354d105690b273"
 }

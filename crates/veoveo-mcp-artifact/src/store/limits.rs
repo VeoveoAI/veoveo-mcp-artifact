@@ -12,7 +12,7 @@ use crate::contract::{
 
 use super::{
     ArtifactStore, ArtifactStoreError, Caller,
-    audit::{Decided, artifact_target, server_target},
+    audit::{Decided, artifact_target, storage_target},
     rows::object_size,
     rows::size_column,
 };
@@ -108,12 +108,10 @@ impl ArtifactStore {
         self.record(
             &mut tx,
             administrator,
-            server_target(),
+            storage_target(),
             &UploadLimitsSet {
                 tenant: tenant.clone(),
                 limits: set.clone(),
-                acting_server: administrator.acting_server().cloned(),
-                acting_task: administrator.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -139,8 +137,6 @@ impl ArtifactStore {
             &DownloadIssued {
                 artifact_id,
                 expires_at,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )

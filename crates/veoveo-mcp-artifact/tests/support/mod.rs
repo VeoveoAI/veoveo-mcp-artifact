@@ -10,9 +10,7 @@ pub mod service;
 use std::{collections::BTreeSet, future::Future, time::Duration};
 
 use chrono::{DateTime, TimeZone, Utc};
-use veoveo_audit_contract::{
-    AuditActor, AuditAuthority, AuditContext, AuditPrincipalKind, AuditRequest,
-};
+use veoveo_audit_contract::{AuditActor, AuditContext, AuditPrincipalKind, AuditRequest, AuditVia};
 use veoveo_mcp_artifact::{
     contract::{
         ArtifactId, ArtifactLabels, ArtifactName, CreateUploadRequest, IdempotencyKey, MediaType,
@@ -134,20 +132,20 @@ impl Who {
         };
         let tenant = TenantId::parse(self.tenant).unwrap();
         let principal = PrincipalId::parse(self.principal).unwrap();
+        let acting_server = self
+            .acting_server
+            .map(|slug| ServerSlug::parse(slug).unwrap());
+        // As the forwarded identity does, the record names the acting server as `via`.
         let audit = AuditContext {
             actor: AuditActor {
                 principal: principal.clone(),
                 kind: AuditPrincipalKind::User,
                 tenant: Some(tenant.clone()),
-                oauth_client: None,
-                delegating_principal: None,
-            },
-            authority: AuditAuthority {
                 work_context: Some(WorkContextId::parse(self.work_context).unwrap()),
-                policy_revision: None,
-                scopes: BTreeSet::new(),
-                data_labels: label_set(&self.labels),
             },
+            via: acting_server
+                .clone()
+                .map(|server| AuditVia { server, task: None }),
             request: AuditRequest::background(),
         };
         Caller::new(
@@ -166,9 +164,7 @@ impl Who {
                     .collect(),
                 labels: label_set(&self.labels),
                 output_labels: label_set(&self.output_labels),
-                acting_server: self
-                    .acting_server
-                    .map(|slug| ServerSlug::parse(slug).unwrap()),
+                acting_server,
                 acting_task: None,
             },
             audit,

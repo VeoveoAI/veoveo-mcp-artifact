@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "-- veoveo: all tenants (a server's workers address the Tasks they run by ID, whichever tenant owns them)\nUPDATE tasks.task AS task\nSET status = 'running', status_message = 'Running', owner_instance = $3, started_at = now()\nFROM (\n    SELECT id\n    FROM tasks.task\n    WHERE id = $1 AND server = $2 AND status = 'queued'\n    FOR UPDATE SKIP LOCKED\n) AS claimable\nWHERE task.id = claimable.id\nRETURNING\n    task.id,\n    task.server,\n    task.tenant,\n    task.owner_tenant,\n    task.owner_principal,\n    task.owner_kind AS \"owner_kind: PrincipalKind\",\n    task.owner_issuer,\n    task.owner_subject,\n    task.surface,\n    task.data_labels,\n    task.work_context,\n    task.authority AS \"authority: Json<InvocationAuthority>\",\n    task.task_type,\n    task.recovery_class AS \"recovery_class: RecoveryClass\",\n    task.input,\n    task.idempotency_key,\n    task.ttl_ms,\n    task.poll_interval_ms,\n    task.status AS \"status: TaskStatus\",\n    task.status_message,\n    task.progress,\n    task.result,\n    task.result_uri,\n    task.error_code,\n    task.error_message,\n    task.error_details,\n    task.owner_instance AS \"owner_instance: InstanceId\",\n    task.revision,\n    task.retention_pins,\n    task.created_at,\n    task.updated_at,\n    task.started_at,\n    task.cancel_requested_at,\n    task.completed_at,\n    task.retention_expires_at\n",
+  "query": "-- veoveo: all tenants (a worker claims the oldest queued Task of its server, whichever tenant owns it)\n-- A claim takes a queued Task, which starts running, or a parked Task whose cancellation\n-- the server must carry to its provider, which stays cancel-requested.\nUPDATE tasks.task AS task\nSET status = CASE WHEN task.status = 'queued' THEN 'running' ELSE task.status END,\n    status_message = CASE WHEN task.status = 'queued' THEN 'Running' ELSE task.status_message END,\n    owner_instance = $2,\n    parked_on = NULL,\n    started_at = CASE WHEN task.status = 'queued' THEN now() ELSE task.started_at END\nFROM (\n    SELECT id\n    FROM tasks.task\n    WHERE server = $1\n        AND (status = 'queued' OR (status = 'cancel_requested' AND owner_instance IS NULL))\n    ORDER BY created_at, id\n    LIMIT 1\n    FOR UPDATE SKIP LOCKED\n) AS claimable\nWHERE task.id = claimable.id\nRETURNING\n    task.id,\n    task.server,\n    task.tenant,\n    task.owner_tenant,\n    task.owner_principal,\n    task.owner_kind AS \"owner_kind: PrincipalKind\",\n    task.owner_issuer,\n    task.owner_subject,\n    task.surface,\n    task.data_labels,\n    task.work_context,\n    task.authority AS \"authority: Json<InvocationAuthority>\",\n    task.task_type,\n    task.recovery_class AS \"recovery_class: RecoveryClass\",\n    task.input,\n    task.idempotency_key,\n    task.ttl_ms,\n    task.poll_interval_ms,\n    task.status AS \"status: TaskStatus\",\n    task.status_message,\n    task.progress,\n    task.result,\n    task.result_uri,\n    task.error_code,\n    task.error_message,\n    task.error_details,\n    task.owner_instance AS \"owner_instance: InstanceId\",\n    task.revision,\n    task.retention_pins,\n    task.created_at,\n    task.updated_at,\n    task.started_at,\n    task.cancel_requested_at,\n    task.completed_at,\n    task.retention_expires_at\n",
   "describe": {
     "columns": [
       {
@@ -391,7 +391,6 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
         "Text",
         "Int4"
       ]
@@ -434,5 +433,5 @@
       true
     ]
   },
-  "hash": "7ae5a09bdbcdb3fd7a250bfd065469e4ca22bd93352525d289c9262891b6260b"
+  "hash": "31c6435918ca6c3944ba292c385902aaccf37490ffe52124a9c2c2accaf8ff86"
 }

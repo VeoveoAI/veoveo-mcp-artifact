@@ -7,9 +7,7 @@ use chrono::Utc;
 use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
-use veoveo_audit_contract::{
-    AuditActor, AuditAuthority, AuditContext, AuditPrincipalKind, AuditRequest,
-};
+use veoveo_audit_contract::{AuditActor, AuditContext, AuditPrincipalKind, AuditRequest};
 use veoveo_task_runtime::{
     CreateTask, PrincipalKind, RecoveryClass, TaskFailure, TaskOwner, TaskSnapshot, TaskStatus,
     TaskTransition,
@@ -91,7 +89,7 @@ impl ArtifactService {
     async fn verify(&self, snapshot: &TaskSnapshot) -> Result<ArtifactState, ArtifactError> {
         let request: VerificationRequest = serde_json::from_value(snapshot.request.clone())
             .map_err(|_| crate::store::ArtifactStoreError::Corrupt("verification request"))?;
-        let caller = owner_caller(&snapshot.owner)?;
+        let caller = owner_caller(snapshot.task_id, &snapshot.owner)?;
         let key = ObjectKey::for_artifact(caller.tenant(), request.artifact_id);
         let (computed, _) = self.storage.sha256(&key).await?;
         let state = self
@@ -123,9 +121,12 @@ impl ArtifactService {
     }
 }
 
-/// The store caller of a Task's owner: its tenant, principal and Work Context. The Task
-/// runs outside any request, so its records carry a background request of their own.
-fn owner_caller(owner: &TaskOwner) -> Result<Caller, ArtifactError> {
+/// The store caller of a verification Task's owner: its tenant, principal and Work
+/// Context. The Task runs outside any request, so its records carry a background request
+/// that names the Task.
+fn owner_caller(task_id: TaskId, owner: &TaskOwner) -> Result<Caller, ArtifactError> {
+    let mut request = AuditRequest::background();
+    request.task = Some(task_id);
     let audit = AuditContext {
         actor: AuditActor {
             principal: owner.principal_key.clone(),
@@ -134,16 +135,10 @@ fn owner_caller(owner: &TaskOwner) -> Result<Caller, ArtifactError> {
                 PrincipalKind::Service => AuditPrincipalKind::Service,
             },
             tenant: owner.tenant_key.clone(),
-            oauth_client: None,
-            delegating_principal: None,
-        },
-        authority: AuditAuthority {
             work_context: Some(owner.authority.work_context.clone()),
-            policy_revision: Some(owner.authority.policy_revision.clone()),
-            scopes: Default::default(),
-            data_labels: owner.data_labels.clone(),
         },
-        request: AuditRequest::background(),
+        via: None,
+        request,
     };
     Ok(Caller::new(
         owner.authority.tenant.clone(),

@@ -14,8 +14,8 @@ use support::{
 };
 use veoveo_audit::AuditStore;
 use veoveo_audit_contract::{
-    AuditDetailType, AuditOutcome, AuditPartition, AuditQuery, AuditReadScope, AuditRecord,
-    AuditRegistry, AuditTarget,
+    AuditDetailType, AuditOutcome, AuditPartition, AuditQuery, AuditReadScope, AuditReason,
+    AuditRecord, AuditRegistry, AuditTarget, AuditVia,
 };
 use veoveo_mcp_artifact::{
     contract::{
@@ -24,14 +24,14 @@ use veoveo_mcp_artifact::{
         DecideAccessRequestRequest, DownloadIssued, GrantArtifactRequest, GrantChanged, Note,
         ReleaseChanged, ReleaseState, RequestArtifactAccessRequest, ShareLinkCreated,
         ShareLinkDays, ShareLinkRedeemed, ShareLinkRevoked, UploadAborted, UploadCompleted,
-        UploadCreated, UploadLimits, UploadLimitsSet, UploadTransfer, audit_registry,
+        UploadCreated, UploadId, UploadLimits, UploadLimitsSet, UploadTransfer, audit_registry,
     },
     migrator, server,
-    store::{ArtifactStore, ArtifactStoreError},
+    store::{ArtifactStore, ArtifactStoreError, CompletedObject},
 };
 use veoveo_platform_store::PlatformStore;
 use veoveo_test_fixtures::store::TestDb;
-use veoveo_types::{AccessLevel, AccessSubject, Checked, PrincipalId, ResourceUri, TenantId};
+use veoveo_types::{AccessLevel, AccessSubject, Checked, PrincipalId, ServerSlug, TenantId};
 
 /// Every record of `tenant`, oldest first, read as the installation owner.
 async fn records(owner: PlatformStore, tenant: &str) -> Vec<AuditRecord> {
@@ -46,10 +46,24 @@ async fn records(owner: PlatformStore, tenant: &str) -> Vec<AuditRecord> {
         .records
 }
 
+fn target(uri: String) -> AuditTarget {
+    AuditTarget::parse(uri).unwrap()
+}
+
 fn artifact_target(artifact_id: ArtifactId) -> AuditTarget {
-    AuditTarget::Resource {
-        uri: ResourceUri::new(format!("artifact://artifacts/{artifact_id}")).unwrap(),
-    }
+    target(format!("artifact://artifacts/{artifact_id}"))
+}
+
+fn upload_target(upload_id: UploadId) -> AuditTarget {
+    target(format!("artifact://uploads/{upload_id}"))
+}
+
+fn grants_target(artifact_id: ArtifactId) -> AuditTarget {
+    target(format!("artifact://artifacts/{artifact_id}/grants"))
+}
+
+fn share_links_target(artifact_id: ArtifactId) -> AuditTarget {
+    target(format!("artifact://artifacts/{artifact_id}/share-links"))
 }
 
 /// A store test with the database at hand, bounded to 60 seconds.
@@ -78,10 +92,12 @@ async fn a_decision_and_its_record_commit_together() {
         assert_eq!(records.len(), 1, "{records:?}");
         let draft = &records[0].draft;
         assert_eq!(draft.class().to_string(), UploadCreated::CLASS);
-        assert_eq!(draft.outcome(), AuditOutcome::Succeeded);
+        assert_eq!(draft.outcome(), AuditOutcome::Success);
+        assert_eq!(draft.reason(), None);
+        assert_eq!(draft.via(), None);
         assert_eq!(
             draft.target(),
-            &artifact_target(created.artifact.artifact_id)
+            Some(&upload_target(created.upload.upload_id))
         );
         assert_eq!(
             draft.actor().map(|actor| &actor.principal),
@@ -380,18 +396,42 @@ async fn every_decision_records_its_declared_class() {
         let (class, detail) = read(limits);
         let set: UploadLimitsSet = registry.read(&class, &detail).unwrap();
         assert_eq!(set.tenant.as_str(), "acme");
-        assert_eq!(
-            limits.draft.target(),
-            &AuditTarget::Server { server: server() }
-        );
-        for record in &records[..15] {
+        // Each record names the resource it concerns, and every decision succeeded.
+        let upload = created.upload.upload_id;
+        let artifact = artifact_target(artifact_id);
+        let grants_of = grants_target(artifact_id);
+        let links = share_links_target(artifact_id);
+        let expected = [
+            upload_target(upload),
+            upload_target(upload),
+            artifact.clone(),
+            artifact.clone(),
+            grants_of.clone(),
+            grants_of.clone(),
+            artifact.clone(),
+            links.clone(),
+            links,
+            artifact.clone(),
+            grants_of,
+            artifact.clone(),
+            artifact.clone(),
+            artifact.clone(),
+            artifact,
+            target("artifact://storage-usage".into()),
+            upload_target(abandoned.upload.upload_id),
+            upload_target(abandoned.upload.upload_id),
+        ];
+        assert_eq!(records.len(), expected.len());
+        for (record, expected) in records.iter().zip(&expected) {
             assert_eq!(
                 record.draft.target(),
-                &artifact_target(artifact_id),
+                Some(expected),
                 "{}",
                 record.draft.class()
             );
-            assert_eq!(record.draft.outcome(), AuditOutcome::Succeeded);
+            assert_eq!(record.draft.outcome(), AuditOutcome::Success);
+            assert_eq!(record.draft.reason(), None);
+            assert_eq!(record.draft.via(), None);
         }
 
         // The holder of a link has no account, so its redemption is the installation's.
@@ -412,7 +452,10 @@ async fn every_decision_records_its_declared_class() {
             .collect();
         assert_eq!(redeemed.len(), 1);
         assert!(redeemed[0].draft.actor().is_none());
-        assert_eq!(redeemed[0].draft.target(), &artifact_target(artifact_id));
+        assert_eq!(
+            redeemed[0].draft.target(),
+            Some(&artifact_target(artifact_id))
+        );
     })
     .await;
 }
@@ -450,7 +493,11 @@ async fn a_digest_mismatch_records_a_failed_verification() {
         let records = records(harness.db.connect().await, "acme").await;
         let last = &records.last().expect("records").draft;
         assert_eq!(last.class().to_string(), ArtifactVerified::CLASS);
-        assert_eq!(last.outcome(), AuditOutcome::Failed);
+        assert_eq!(last.outcome(), AuditOutcome::Failure);
+        assert_eq!(
+            last.reason(),
+            Some(&AuditReason::parse("digest_mismatch").unwrap())
+        );
         let detail: ArtifactVerified = audit_registry()
             .unwrap()
             .read(last.class(), last.detail())
@@ -458,6 +505,76 @@ async fn a_digest_mismatch_records_a_failed_verification() {
         assert_eq!(
             detail.state,
             veoveo_mcp_artifact::contract::ArtifactState::Failed
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_size_that_differs_records_a_failed_completion() {
+    with_database(|db| async move {
+        let store = declared_store(db.server_store(&server()).await).await;
+        let who = Who::new("ada");
+        let created = create(&store, &who, upload_request("wrong.txt", Some(10))).await;
+        let refused = store
+            .complete_upload(
+                &who.caller(),
+                created.upload.upload_id,
+                &CompletedObject {
+                    size: veoveo_mcp_artifact::contract::ObjectSize::new(11).unwrap(),
+                    checked_sha256: None,
+                },
+                now(),
+            )
+            .await;
+        assert!(matches!(
+            refused,
+            Err(ArtifactStoreError::SizeMismatch { received: 11 })
+        ));
+
+        let records = records(db.connect().await, "acme").await;
+        let last = &records.last().expect("records").draft;
+        assert_eq!(last.class().to_string(), UploadCompleted::CLASS);
+        assert_eq!(last.outcome(), AuditOutcome::Failure);
+        assert_eq!(
+            last.reason(),
+            Some(&AuditReason::parse("size_mismatch").unwrap())
+        );
+        assert_eq!(
+            last.target(),
+            Some(&upload_target(created.upload.upload_id))
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_decision_another_server_asked_for_names_it_as_via() {
+    with_database(|db| async move {
+        let store = declared_store(db.server_store(&server()).await).await;
+        let who = Who::new("ada").acting("media");
+        let created = create(&store, &who, upload_request("for-media.txt", Some(5))).await;
+
+        let records = records(db.connect().await, "acme").await;
+        assert_eq!(records.len(), 1, "{records:?}");
+        let draft = &records[0].draft;
+        assert_eq!(
+            draft.via(),
+            Some(&AuditVia {
+                server: ServerSlug::parse("media").unwrap(),
+                task: None,
+            })
+        );
+        assert_eq!(
+            draft.actor().map(|actor| &actor.principal),
+            Some(&PrincipalId::parse("ada").unwrap())
+        );
+        // The detail carries Artifact's facts only; the envelope names the acting server.
+        let detail = draft.detail().as_map();
+        assert!(!detail.contains_key("actingServer"), "{detail:?}");
+        assert_eq!(
+            created.artifact.provenance.acting_server,
+            Some(ServerSlug::parse("media").unwrap())
         );
     })
     .await;

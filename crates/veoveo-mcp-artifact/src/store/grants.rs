@@ -8,7 +8,7 @@ use crate::contract::{ArtifactGrant, ArtifactId, GrantArtifactRequest, GrantChan
 
 use super::{
     ArtifactStore, ArtifactStoreError, Caller,
-    audit::{Decided, artifact_target},
+    audit::{Decided, grants_target},
     caller::{level_from_text, level_text},
 };
 
@@ -108,14 +108,12 @@ impl ArtifactStore {
         self.record(
             &mut tx,
             caller,
-            artifact_target(request.artifact_id),
+            grants_target(request.artifact_id),
             &GrantChanged {
                 artifact_id: request.artifact_id,
                 subject: request.subject.clone(),
                 level: Some(request.level),
                 expires_at: request.expires_at,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
@@ -151,14 +149,12 @@ impl ArtifactStore {
         self.record(
             &mut tx,
             caller,
-            artifact_target(artifact_id),
+            grants_target(artifact_id),
             &GrantChanged {
                 artifact_id,
                 subject: revoked_subject,
                 level: None,
                 expires_at: None,
-                acting_server: caller.acting_server().cloned(),
-                acting_task: caller.acting_task().cloned(),
             },
             Decided::Succeeded,
         )
