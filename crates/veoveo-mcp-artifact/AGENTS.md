@@ -27,10 +27,19 @@ decisions; bytes move between clients and object storage through URLs the server
   locks the tenant's usage row before it checks the quota.
 - Row triggers notify the `artifact` channel with each row's key and tenant. Do not
   notify subscribers from handlers.
+- Bytes never pass through the server. A tool returns signed requests, and each
+  signature binds every header the client sends. Object storage calls stay in
+  `src/storage/`, and the store never reads bytes.
+- An object's key is `tenants/{tenant}/artifacts/{artifact}`. A failed, aborted or
+  expired upload's object is removed when it fails, and the sweep removes it again
+  before the row goes.
+- A verification Task carries its artifact's identifier. Do not queue a second one.
+- The storage secret lives in the server's environment, because SigV4 signs with it.
 
 ## Build And Test
 
-- `cargo test -p veoveo-mcp-artifact` with the PostgreSQL 18 server programs on `PATH`.
+- `cargo test -p veoveo-mcp-artifact` with the PostgreSQL 18 server programs and
+  `rustfs` on `PATH`, as the `dev` image provides them.
 - `cargo test -p veoveo-mcp-artifact --no-default-features --features contract` checks
   the contract alone.
 - `tests/database_conformance.rs` runs core's database checks over every statement and

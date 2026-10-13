@@ -12,11 +12,11 @@ design and operational contract.
 
 | Path | Purpose |
 |---|---|
-| `crates/veoveo-mcp-artifact` | The library and binary. The `contract` feature holds Artifact's public types; the default `server` feature adds persistence |
+| `crates/veoveo-mcp-artifact` | The library and binary. The `contract` feature holds Artifact's public types; the default `server` feature adds the MCP server, persistence, object storage, the verification worker and the sweep |
 | `crates/veoveo-mcp-artifact/migrations/` | The `artifact` schema, applied in the server's own PostgreSQL schema at startup |
 | `.sqlx/` | sqlx's checked metadata for every query the workspace compiles |
 | `Dockerfile` | The `dev` environment, the `check` gate, the release `build` and the `runtime` image |
-| `openshell/policy.yaml` | The OpenShell policy for the development environment |
+| `openshell/policy.yaml` | The OpenShell policy: the Gateway, PostgreSQL and object storage |
 | `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `deny.toml` | The pinned toolchain, code rules and dependency rules |
 
 ## Using The Contract
@@ -45,6 +45,22 @@ target directory with no earlier build:
 CARGO_TARGET_DIR=<empty directory> cargo sqlx prepare --workspace -- --all-targets --all-features
 ```
 
+## Object Storage
+
+The server signs every request that moves bytes and makes its own calls with the
+storage credential it is configured with. Tests start a private RustFS per test process
+from the `rustfs` binary the `dev` image copies out of the pinned RustFS image, with a
+fresh bucket for each test, the way they start PostgreSQL.
+
+## Running
+
+The server takes the registration settings every server takes (`VEOVEO_PUBLIC_BASE_URL`,
+`VEOVEO_GATEWAY_ISSUER`, `VEOVEO_REGISTRATION_SECRET`, `VEOVEO_KEY_DIRECTORY`) and its
+storage settings: `VEOVEO_STORAGE_ENDPOINT`, `VEOVEO_STORAGE_SIGNING_ENDPOINT`,
+`VEOVEO_STORAGE_REGION`, `VEOVEO_STORAGE_BUCKET`, `VEOVEO_STORAGE_ACCESS_KEY`,
+`VEOVEO_STORAGE_SECRET_KEY` and `VEOVEO_STORAGE_CORS_ORIGINS`. It listens on port 8801
+and serves MCP at `{public_base_url}/artifact/mcp`.
+
 ## Gate
 
 ```sh
@@ -65,8 +81,9 @@ openshell sandbox create --name vv-mcp-artifact --from veoveo-mcp-artifact:dev \
   --policy openshell/policy.yaml --detach -- sleep infinity
 ```
 
-The policy lets the server reach the installation's PostgreSQL server at
-`host.openshell.internal:5432`. OpenShell pins each policy-listed executable to the
+The policy lets the server reach the Gateway at `host.openshell.internal:8080`, the
+installation's PostgreSQL server at port 5432 and its object store at port 9000, and lets
+acceptance tests reach the Gateway and the object store. OpenShell pins each policy-listed executable to the
 SHA-256 it first observes, so the server runs from a content-addressed copy under
 `/sandbox/run`.
 

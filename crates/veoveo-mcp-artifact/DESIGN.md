@@ -20,7 +20,7 @@ permissions  artifact.*
 MCP          /artifact/mcp
 share links  /artifact/shares/{token}
 liveness     /livez
-readiness    /readyz (ready while PostgreSQL and the bucket answer)
+readiness    /readyz (ready while the bucket answers)
 port         8801
 ```
 
@@ -28,9 +28,8 @@ port         8801
 
 | Standard or protocol | Implemented profile |
 |---|---|
-| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-sdk-rust` implements. The server exposes tools, resources and templates, prompts, completions, subscriptions and typed structured content. |
-| MCP Tasks extension `io.modelcontextprotocol/tasks` | Version `2026-07-28`. Checksum verification of a completed upload runs as a Task. |
-| [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/) | Tool inputs and results, resource contents and the audit details Artifact declares at registration. |
+| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-sdk-rust` 5c6e1ba implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
+| [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/) | Tool inputs and results, resource contents and the audit detail types Artifact declares. |
 | [URI Template RFC 6570](https://www.rfc-editor.org/rfc/rfc6570) | Discovery declares simple variables, and collection pages continue through a `cursor` query parameter. |
 | Amazon S3 REST API | The subset in [Object Storage](#object-storage): PutObject, CreateMultipartUpload, UploadPart, ListParts, CompleteMultipartUpload, AbortMultipartUpload, HeadObject, GetObject, DeleteObject, CreateBucket, PutBucketCors and PutBucketLifecycleConfiguration. |
 | AWS Signature Version 4, query-string authentication | Signed URLs for PutObject, UploadPart and GetObject, valid for at most 15 minutes. Each URL binds the method, object key and every header the client must send. |
@@ -39,9 +38,9 @@ port         8801
 | [RFC 6838](https://www.rfc-editor.org/rfc/rfc6838) media types | An artifact's media type is a bare `type/subtype` without parameters. |
 | SHA-256 | Every available artifact records its SHA-256 in the foundational `Sha256Digest` spelling, `sha256:` followed by 64 lowercase hexadecimal digits. |
 | [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Gateway forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server. |
-| [Veoveo server registration](https://github.com/VeoveoAI/veoveo-sdk-rust) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions and audit details. |
+| [Veoveo server registration](https://github.com/VeoveoAI/veoveo-sdk-rust) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions in `ai.veoveo/authorization`. |
 | [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/7a6c210ff1f9ee9f5150c0a5d101afeb98d659da/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. |
-| RustFS 1.0.1 | The installation's object store, pinned by image digest. Artifact uses only the S3 calls listed above, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
+| RustFS 1.0.1 | The installation's object store, pinned by image digest. Artifact uses only the S3 calls listed above through aws-sdk-s3 1.152.0, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
 
 ## Domain Contract
 
@@ -72,12 +71,16 @@ The crate is a library and a binary.
 A consumer such as Media selects `default-features = false, features = ["client"]` and
 compiles neither sqlx nor the S3 SDK. The check stage proves that with `cargo tree`.
 
+The `client` feature is plan item M5 and waits for the SDK's `ctx.client()` (M3).
+
 ### Hosted Process
 
-The binary parses configuration, registers with the Gateway, connects to PostgreSQL
-with the login its registration returned, applies its migrations, prepares its bucket
-and serves MCP and the share route. One sweep loop runs on every replica and claims
-work with `FOR UPDATE SKIP LOCKED`.
+The binary parses configuration, prepares its bucket, registers with the Gateway,
+connects to PostgreSQL with the login its registration returned, applies its
+migrations and serves MCP. Three loops run on every replica beside it: the sweep, which
+claims rows with `FOR UPDATE SKIP LOCKED`; the verification worker, which claims
+verification Tasks from core's Task runtime; and the change watcher, which hands each
+change on the `artifact` channel to its tenant's subscribers.
 
 ## MCP Surface
 
@@ -97,6 +100,9 @@ work with `FOR UPDATE SKIP LOCKED`.
 | `decide_access_request` | Approves the request, which writes the grant, or denies it with a note | `artifact.grants.write` (sensitive) | admin |
 | `delete_artifact` | Deletes the artifact, its grants and share links, and its object | `artifact.artifacts.delete` (destructive) | admin |
 | `set_upload_limits` | Sets a tenant's quota, largest object, allowed media types and active-upload limit | `artifact.upload-limits.administer` (administer) | installation administrator |
+
+The server serves the upload, download, grant, deletion and limit tools. Release
+states, share links and access requests arrive with sharing (plan item M7).
 
 `create_upload` takes the name and media type, and optionally the size, the SHA-256,
 a maximum size, data labels, a retention period, metadata, the artifacts it derives
@@ -118,13 +124,16 @@ caller's data labels.
 | `artifact://access-requests{?role,state,cursor}` | Requests the caller made, or can decide |
 | `artifact://storage-usage` | The tenant's stored and reserved bytes against its quota |
 
-Every resource accepts subscriptions. The prompts `review-artifact-sharing` and
-`review-access-requests` guide an administrator through those two resources.
+Single resources and the first page of each collection accept subscriptions. A
+change to an artifact or its grants reaches that artifact's resources and every
+artifact listing; a change to an upload reaches that upload and the upload listing. Share
+links, access requests and the prompts `review-artifact-sharing` and
+`review-access-requests` arrive with sharing (M7).
 
 ### Share Route
 
-`GET /artifact/shares/{token}` is the only route outside MCP, because a share link must
-work for someone without an account. The server hashes the token, finds a live link
+`GET /artifact/shares/{token}`, which arrives with sharing (M7), is the only route
+outside MCP, because a share link must work for someone without an account. The server hashes the token, finds a live link
 to a released artifact, counts one redemption and answers `303 See Other` with a fresh
 signed GET.
 
@@ -154,12 +163,18 @@ Parts upload in parallel, and a failed part is sent again on a URL from
 ListParts, then reads the object's size with HeadObject. When RustFS checked a
 declared SHA-256 during a single PUT, the artifact becomes available at once. In every
 other case the server computes the SHA-256 itself. Objects up to 8 MiB are hashed
-during `complete_upload`. A larger object reads `verifying` while a Task streams it
-once, and becomes available when the Task records the digest. A declared SHA-256 that
-does not match fails the artifact and deletes the object.
+during `complete_upload`. A larger object reads `verifying` while a verification Task
+streams it once and records the digest. The Task carries the artifact's identifier, so
+completing the upload again finds the same Task, and a replica resumes the Task when the
+instance that claimed it dies. A declared SHA-256 that does not match fails the
+artifact, removes its object and refuses the completion. When a verifying artifact
+still has no live Task 15 minutes after its upload completed, the sweep fails it and
+removes its object.
 
-An upload expires 24 hours after creation. The sweep aborts it and releases its
-reservation, and a bucket lifecycle rule removes any multipart upload the sweep missed.
+An upload expires 24 hours after creation. The sweep then aborts its multipart upload,
+removes any object that arrived and releases its reservation, and a bucket lifecycle
+rule removes any multipart upload the sweep missed. Aborting an upload removes them at
+once.
 
 ### Downloads
 
@@ -172,8 +187,8 @@ RustFS on the same URL.
 
 At startup the server creates the bucket when it does not exist, sets CORS to the
 installation's application origins for PUT and GET with the headers the signed URLs
-bind, and sets a lifecycle rule that aborts incomplete multipart uploads after one
-day. The server uses aws-sdk-s3 1.152.0 without default features, with rustls on ring
+bind (`content-type`, `if-none-match` and `x-amz-checksum-sha256`), and sets a
+lifecycle rule that aborts incomplete multipart uploads after one day. The server uses aws-sdk-s3 1.152.0 without default features, with rustls on ring
 and without aws-config. It builds two clients from one configuration: one signs URLs
 with the address clients use, because SigV4 binds the Host header, and one makes its
 own calls on the installation network.
@@ -262,9 +277,11 @@ marks it `deleting`, and `artifact.effective_level` hides it from every caller a
 The sweep then claims a batch of deleted artifacts, deletes each object and then each
 row, and commits. The row's grants, uploads, share links and access requests go with it
 through foreign-key cascades. The same sweep ends expired uploads and fails their
-artifacts, marks artifacts whose retention passed as deleting, and prunes rows past
-their retention, each in short batches that `FOR UPDATE SKIP LOCKED` divides between
-replicas.
+artifacts, marks artifacts whose retention passed as deleting, removes each failed
+artifact's object and then its row 7 days after it failed, and prunes rows past their
+retention, each in short batches that `FOR UPDATE SKIP LOCKED` divides between
+replicas. The server removes a failed artifact's object when it fails, and the sweep
+removes it again in case the process stopped first.
 
 Listings hold `verifying` and `available` artifacts. An upload's progress is read
 through the uploads resource. An artifact holds at most 256 grants, and its name holds
@@ -273,13 +290,17 @@ with it.
 
 ## Audit And Notifications
 
-Every decision appends an audit record in the transaction that makes the change:
-uploads created and completed, downloads issued, grants, release changes, share links
-created, revoked and redeemed, access requests and deletions. Artifact declares these
-classes as `artifact.<name>` with a JSON Schema for each detail when it registers. A
-record states the authorization, such as a principal allowed to download an artifact
-until a time. An installation that must prove each transfer adds RustFS's own audit
-feed.
+Artifact's contract declares a closed detail type for each decision:
+`artifact.upload_created`, `artifact.upload_completed`, `artifact.upload_aborted`,
+`artifact.download_issued`, `artifact.grant_changed`, `artifact.deleted` and
+`artifact.upload_limits_set`. A record states the authorization, such as a principal
+allowed to download an artifact until a time. An installation that must prove each
+transfer adds RustFS's own audit feed.
+
+Core's audit schema takes class declarations and records only from the installation
+owner, so a server's login can neither declare its classes nor append its records.
+Artifact appends no audit record until core admits a server's own; Contract Compliance
+lists the gap.
 
 Row triggers notify the `artifact` channel with each row's key and tenant, and
 subscriptions wake only for their own tenant.
@@ -293,35 +314,47 @@ forwarded token. A target the declaration omits is denied.
 
 ## Registration
 
-Artifact registers with the Gateway at startup like any server: it loads its key,
-discovers the registration endpoint, registers its slug, scheme, endpoint, permissions
-and audit details, connects with the database login the response grants, applies its
-migrations, prepares its bucket and serves. On SIGTERM it stops serving and deletes
-its registration.
+Artifact prepares its bucket, then registers with the Gateway at startup like any
+server: it loads its key, discovers the registration endpoint, registers its slug,
+scheme, endpoint and permissions, connects with the database login the response grants,
+applies its migrations and serves. On SIGTERM it stops serving, stops its loops, ends
+its process instance and deletes its registration.
 
 ## Deployment
 
 The image runs as UID 10001 with a read-only root filesystem. The installation runs
-RustFS beside PostgreSQL, pinned by digest, and gives the server its storage address,
-bucket name and an access key limited to that bucket through an OpenShell provider.
-Locally the signed address is `http://host.openshell.internal:9000`, and a host browser
-maps that name to `127.0.0.1` as it does for the Gateway. A client's sandbox policy
-names the RustFS endpoint for the binaries that transfer bytes.
+RustFS beside PostgreSQL, pinned by digest, and configures the server through
+`VEOVEO_STORAGE_ENDPOINT`, `VEOVEO_STORAGE_SIGNING_ENDPOINT` (the address clients use,
+defaulting to the endpoint), `VEOVEO_STORAGE_REGION`, `VEOVEO_STORAGE_BUCKET`,
+`VEOVEO_STORAGE_ACCESS_KEY`, `VEOVEO_STORAGE_SECRET_KEY` and
+`VEOVEO_STORAGE_CORS_ORIGINS`, beside the registration settings every server takes.
+SigV4 signs with the secret key inside the server, so the server's environment holds the
+credential itself, the way the Gateway's holds the database owner's password; a
+placeholder that a proxy substitutes cannot sign. The credential is limited to the
+bucket. Locally the signed address is `http://host.openshell.internal:9000`, and a host
+browser maps that name to `127.0.0.1` as it does for the Gateway. The sandbox policy
+passes object storage through as TCP, because an inspecting proxy that changed a signed
+header would void the signature.
 
 ## Contract Compliance
 
 | Area | State |
 |---|---|
+| Audit records | Core's audit schema admits class declarations and records only from the installation owner; Artifact declares its detail types and appends none |
 | Inline content for a model without a sandbox (`write_artifact` and a content resource) | Open decision D27 |
-| Calls from other servers | Needs Gateway token exchange (A5) |
-| Sharing, share links and access requests | Delivered by M7 |
-| The library App | Delivered by M8 |
+| Calls from other servers, with the acting server and Task in provenance | Needs Gateway token exchange (A5) |
+| The `client` feature and `ArtifactClient` | Plan item M5, after the SDK's `ctx.client()` (M3) |
+| Release states, share links and their route, access requests and the review prompts | Plan item M7 |
+| The library App | Plan item M8 |
+| Helm chart | Pending (C15) |
 
 ## Verification
 
 | Layer | Checks |
 |---|---|
-| Unit | Each signed URL binds the declared headers and method; media type, name, label and metadata admission; part size selection; level computation |
-| Database | Core's database checks over every statement and table; `effective_level` against a matrix of owners, grants, groups, Work Context roles and labels; quota reservation under concurrent uploads |
-| Object storage | A private RustFS per test process, from the binary in the pinned image: single and multipart uploads with and without declared checksums, a wrong size and a wrong checksum refused, create-only completion, ranged downloads, and sweep clean-up |
-| Acceptance | Through the Gateway on macOS and Linux: an upload of several GiB and a ranged download, a cross-tenant read refused, a quota refusal, deletion releasing bytes |
+| Unit | Checksum headers, object keys, attachment dispositions, part plans, permission risks, audit schemas, the requirement table and tool annotations, the MCP setup, subscription matching and configuration |
+| Database | Core's database checks over every statement and table; `effective_level` against a matrix of owners, grants, groups, Work Context roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
+| Object storage | A private RustFS per test process, from the binary in the pinned image: signed single and multipart uploads, a wrong size, checksum or part checksum refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
+| Service | The store and RustFS together: declared and undeclared uploads, refused bytes, aborts, a large object verified in a Task, a digest mismatch, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
+| MCP | The SDK's in-process Gateway: discovery, permission refusals on tools and resources, a signed upload counted in storage usage, and upload limits |
+| Acceptance | Through the Gateway on macOS and Linux, with the installation's RustFS (stage D of the core cut) |
