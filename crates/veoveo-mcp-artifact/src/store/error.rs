@@ -3,7 +3,7 @@
 use veoveo_platform_store::CursorError;
 use veoveo_types::AccessLevel;
 
-use crate::contract::{ArtifactState, MediaType, UploadState};
+use crate::contract::{AccessRequestState, ArtifactState, MediaType, UploadState};
 
 use super::caller::level_text;
 
@@ -41,6 +41,26 @@ pub enum ArtifactStoreError {
     SizeMismatch { received: u64 },
     #[error("the artifact holds its limit of {0} grants")]
     TooManyGrants(usize),
+    #[error("a share link reaches an artifact only while it is released")]
+    NotReleased,
+    #[error(
+        "a share link reaches people without data labels, so a labelled artifact cannot be shared by link"
+    )]
+    LabelledArtifact,
+    #[error("the artifact holds its limit of {0} live share links")]
+    TooManyShareLinks(usize),
+    #[error("invalid share link: {0}")]
+    InvalidShareLink(&'static str),
+    #[error("no such share link")]
+    ShareLinkNotFound,
+    #[error("the caller already holds {} access to the artifact", level_text(*level))]
+    AlreadyHolds { level: AccessLevel },
+    #[error("the caller already has a pending request for the artifact")]
+    AccessRequestPending,
+    #[error("no such access request")]
+    AccessRequestNotFound,
+    #[error("the access request is {state}, not pending")]
+    AccessRequestSettled { state: AccessRequestState },
     #[error("invalid upload limits: {0}")]
     InvalidLimits(&'static str),
     #[error("a listing applies at most one filter")]

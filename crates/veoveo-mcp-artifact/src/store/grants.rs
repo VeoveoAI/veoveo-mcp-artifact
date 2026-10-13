@@ -15,17 +15,20 @@ use super::{
 /// The most grants one artifact holds.
 pub const MAX_GRANTS_PER_ARTIFACT: usize = 256;
 
-struct GrantRow {
-    subject_kind: String,
-    subject: String,
-    level: String,
-    expires_at: Option<DateTime<Utc>>,
-    granted_by: String,
-    granted_at: DateTime<Utc>,
+pub(super) struct GrantRow {
+    pub(super) subject_kind: String,
+    pub(super) subject: String,
+    pub(super) level: String,
+    pub(super) expires_at: Option<DateTime<Utc>>,
+    pub(super) granted_by: String,
+    pub(super) granted_at: DateTime<Utc>,
 }
 
 impl GrantRow {
-    fn record(self, artifact_id: ArtifactId) -> Result<ArtifactGrant, ArtifactStoreError> {
+    pub(super) fn record(
+        self,
+        artifact_id: ArtifactId,
+    ) -> Result<ArtifactGrant, ArtifactStoreError> {
         let corrupt = |_| ArtifactStoreError::Corrupt("grant subject");
         let subject = match self.subject_kind.as_str() {
             "principal" => {

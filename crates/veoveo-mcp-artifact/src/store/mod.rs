@@ -2,6 +2,7 @@
 //! the module that runs it, checked by sqlx against the migrated schema. Per-artifact
 //! access is decided in SQL by `artifact.effective_level` from the caller's facts.
 
+mod access_requests;
 mod artifacts;
 mod audit;
 mod caller;
@@ -10,15 +11,23 @@ mod grants;
 mod limits;
 mod plan;
 mod rows;
+mod sharing;
 mod sweep;
 mod uploads;
 
+pub use access_requests::{
+    AccessRequestPage, AccessRequestPageSize, DecidedRequest, MAX_ACCESS_REQUESTS_PER_PAGE,
+};
 pub use artifacts::{ArtifactFilter, ArtifactPage, ArtifactPageSize, MAX_ARTIFACTS_PER_PAGE};
 pub use caller::{Caller, CallerContext, GroupAccess};
 pub use error::ArtifactStoreError;
 pub use grants::MAX_GRANTS_PER_ARTIFACT;
 pub use plan::{DEFAULT_PART_BYTES, SINGLE_PUT_MAX_BYTES, UPLOAD_LIFETIME, UploadPlan};
 pub use rows::VisibleArtifact;
+pub use sharing::{
+    MAX_LIVE_SHARE_LINKS, MAX_SHARE_LINKS_PER_PAGE, NewShareLink, Redemption, ShareLinkPage,
+    ShareLinkPageSize,
+};
 pub use sweep::{
     ACCESS_REQUEST_RETENTION, ClaimedDeletion, DeletionBatch, ExpiredUpload, FAILED_RETENTION,
     SHARE_LINK_RETENTION, StaleVerification, UPLOAD_RETENTION,

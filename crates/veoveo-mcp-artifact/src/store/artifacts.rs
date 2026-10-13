@@ -1,4 +1,4 @@
-//! Reading, listing, releasing and deleting artifacts, and a tenant's storage usage.
+//! Reading, listing and deleting artifacts, and a tenant's storage usage.
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
@@ -206,39 +206,6 @@ impl ArtifactStore {
         .await?;
         tx.commit().await?;
         Ok(deleted.state)
-    }
-
-    /// Move an available artifact the caller administers between private and released.
-    pub async fn set_release_state(
-        &self,
-        caller: &Caller,
-        artifact_id: ArtifactId,
-        release_state: ReleaseState,
-        now: DateTime<Utc>,
-    ) -> Result<VisibleArtifact, ArtifactStoreError> {
-        let mut tx = self.pool().begin().await?;
-        let visible = self
-            .lock_artifact(&mut tx, caller, artifact_id, AccessLevel::Admin, now)
-            .await?;
-        if visible.record.state != ArtifactState::Available {
-            return Err(ArtifactStoreError::ArtifactState {
-                state: visible.record.state,
-            });
-        }
-        sqlx::query_file_scalar!(
-            "src/store/artifacts/set_release_state.sql",
-            caller.tenant() as StoredTenant,
-            artifact_id as ArtifactId,
-            release_state as ReleaseState,
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-        let changed = self
-            .read_artifact(&mut tx, caller, artifact_id, now)
-            .await?
-            .ok_or(ArtifactStoreError::ArtifactNotFound)?;
-        tx.commit().await?;
-        Ok(changed)
     }
 
     /// The caller's tenant's stored and reserved bytes against its quota.

@@ -31,7 +31,12 @@ pub(crate) fn store_error(error: ArtifactStoreError) -> McpError {
         | ArtifactStoreError::TooLarge { .. }
         | ArtifactStoreError::SizeMismatch { .. }
         | ArtifactStoreError::MediaTypeNotAllowed(_)
-        | ArtifactStoreError::InvalidLimits(_) => McpError::invalid_params(error.to_string(), None),
+        | ArtifactStoreError::InvalidLimits(_)
+        | ArtifactStoreError::InvalidShareLink(_)
+        | ArtifactStoreError::ShareLinkNotFound
+        | ArtifactStoreError::AccessRequestNotFound => {
+            McpError::invalid_params(error.to_string(), None)
+        }
         ArtifactStoreError::Forbidden { .. }
         | ArtifactStoreError::UploadNotOpen { .. }
         | ArtifactStoreError::ArtifactState { .. }
@@ -40,6 +45,12 @@ pub(crate) fn store_error(error: ArtifactStoreError) -> McpError {
         | ArtifactStoreError::TooManyOpenUploads { .. }
         | ArtifactStoreError::QuotaExceeded { .. }
         | ArtifactStoreError::TooManyGrants(_)
+        | ArtifactStoreError::NotReleased
+        | ArtifactStoreError::LabelledArtifact
+        | ArtifactStoreError::TooManyShareLinks(_)
+        | ArtifactStoreError::AlreadyHolds { .. }
+        | ArtifactStoreError::AccessRequestPending
+        | ArtifactStoreError::AccessRequestSettled { .. }
         | ArtifactStoreError::InvalidCaller => McpError::invalid_request(error.to_string(), None),
         ArtifactStoreError::Corrupt(_)
         | ArtifactStoreError::AuditDetail(_)
