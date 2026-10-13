@@ -14,7 +14,7 @@ mod values;
 mod vocabulary;
 
 pub use audit::*;
-pub use calls::{ArtifactProvider, served_tools};
+pub use calls::{ArtifactProvider, ReadArtifact, served_tools};
 pub use ids::{AccessRequestId, ArtifactId, ArtifactIdentifierError, ShareLinkId, UploadId};
 pub use permissions::ArtifactScope;
 pub use records::{

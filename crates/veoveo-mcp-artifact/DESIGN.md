@@ -68,7 +68,7 @@ The crate is a library and a binary.
 
 | Feature | Contains | Depends on |
 |---|---|---|
-| `contract` | `ArtifactId`, the typed resource addresses, every tool request and result, metadata, grant levels and subjects, access requests, upload limits, the `ArtifactPermission` vocabulary, the audit detail types, and `ArtifactProvider` with a `ToolCall` for each served tool | `veoveo-types`, the SDK's `contract` feature, Serde and Schemars |
+| `contract` | `ArtifactId`, the typed resource addresses, every tool request and result, metadata, grant levels and subjects, access requests, upload limits, the `ArtifactPermission` vocabulary, the audit detail types, and `ArtifactProvider` with a `ToolCall` for each served tool and `ReadArtifact`, a `ResourceRead` of one artifact | `veoveo-types`, the SDK's `contract` feature, Serde and Schemars |
 | `client` | `contract` plus `ArtifactClient`, which uploads a stream of known or unknown size and downloads through signed URLs, built on the SDK's `GatewayClient` | the SDK's `client` feature, reqwest, Tokio and sha2 |
 | `server` (default) | the hosted server, persistence and object storage | the SDK's `server` feature, sqlx and aws-sdk-s3 |
 
@@ -314,6 +314,15 @@ number of bytes than its declared size, or more than its bound, fails the upload
 every failure after `create_upload` aborts the upload, which releases its reserved bytes.
 An upload whose future is dropped stays open until it expires.
 
+A multipart upload resolves while Artifact still verifies a large object, so its artifact
+is `verifying`. `until_verified(timeout)` makes the upload wait for the verification: it
+reads `artifact://artifacts/{artifact_id}` through `ReadArtifact`, the contract's typed
+read of that resource, and follows the resource's updates on `subscriptions/listen` until
+the artifact leaves `verifying`. It resolves with the available artifact, fails with
+`VerificationFailed` when the bytes did not verify, and fails with a timeout when the
+verification takes longer, while the artifact keeps verifying. The wait reads the
+resource, so the caller needs `artifact.artifacts.read`.
+
 A download calls `create_download` and streams the signed GET, whole or as one range.
 A failure names object storage's status and S3 error code, never the signed URL.
 
@@ -449,7 +458,6 @@ header would void the signature.
 | Area | State |
 |---|---|
 | Inline content for a model without a sandbox (`write_artifact` and a content resource) | Open decision D27 |
-| Waiting for a large artifact's verification in `ArtifactClient` | Pending: an upload resolves with a `verifying` artifact, and the client offers no wait, because MCP resource reads are outside the SDK's `GatewayClient` |
 | The share route's secret in request telemetry | Pending in `veoveo-sdk-rust`: the hosted server's request span records the raw request path, which for the share route holds a link's secret. The route itself logs nothing within that span; the SDK fix records the matched route template instead |
 | The library App | Plan item M8 |
 | Helm chart | Pending (C15) |
@@ -465,6 +473,6 @@ header would void the signature.
 | MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
 | Sharing | Database tests: returning to private ends only live links and releasing again revives none; links need an administrator and a released, available artifact without labels; twelve concurrent redemptions of a link limited to three count exactly three; expired, revoked, deleted and unknown links redeem nothing, and a dropped redemption counts nothing; share-link pages and their cursors. Access requests: an approval writes the requested grant and records each step, visibility and the held level bound a request, only the requester withdraws and only an administrator decides, an approval keeps a stronger grant, and listings page by role and state |
 | Share route | `tests/share_route.rs` through the hosted router and a private RustFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing |
-| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private RustFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned; a caller without the write permission is refused; the acting server is recorded in provenance and in the audit records, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
+| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private RustFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves verifying, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and waits for its verification through the artifact's resource updates, which resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and in the audit records, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with its target, actor and detail, a redemption records no actor in the installation's partition, and a digest mismatch records a failed verification |
 | Acceptance | `tests/acceptance.rs` through a running installation's Gateway and RustFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |

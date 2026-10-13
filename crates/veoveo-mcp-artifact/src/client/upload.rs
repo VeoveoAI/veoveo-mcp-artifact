@@ -2,7 +2,7 @@
 //! read into memory first, so its size and SHA-256 travel with `create_upload` and
 //! object storage checks them during one PUT. A larger body streams in parts of the
 //! upload's part size; memory holds at most `parallelism` parts at once.
-use std::{future::IntoFuture, io, num::NonZeroUsize, pin::Pin, sync::Arc};
+use std::{future::IntoFuture, io, num::NonZeroUsize, pin::Pin, sync::Arc, time::Duration};
 
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, future::BoxFuture};
@@ -12,8 +12,9 @@ use veoveo_types::Sha256Digest;
 
 use crate::contract::{
     AbortUploadRequest, ArtifactLabels, ArtifactMetadataMap, ArtifactName, ArtifactRecord,
-    CompleteUploadRequest, CreateUploadRequest, DerivedFrom, IdempotencyKey, MediaType, ObjectSize,
-    PartNumber, PartSize, RetentionDays, UploadId, UploadTransfer,
+    ArtifactState, CompleteUploadRequest, CreateUploadRequest, DerivedFrom, IdempotencyKey,
+    MediaType, ObjectSize, PartNumber, PartSize, ReadArtifact, RetentionDays, UploadId,
+    UploadTransfer,
 };
 
 use super::{
@@ -59,8 +60,9 @@ impl std::fmt::Debug for UploadBody {
 }
 
 /// An upload that runs when it is awaited and resolves with the artifact: available,
-/// or verifying while Artifact computes the SHA-256 of a large object. A failure after
-/// the upload was created aborts it, which releases its reserved bytes.
+/// or verifying while Artifact computes the SHA-256 of a large object, unless the upload
+/// waits for the verification with [`Upload::until_verified`]. A failure after the upload
+/// was created aborts it, which releases its reserved bytes.
 #[must_use = "an upload runs when it is awaited"]
 #[derive(Debug)]
 pub struct Upload {
@@ -68,6 +70,7 @@ pub struct Upload {
     request: CreateUploadRequest,
     body: UploadBody,
     parallelism: Option<NonZeroUsize>,
+    verification: Option<Duration>,
 }
 
 impl Upload {
@@ -93,6 +96,7 @@ impl Upload {
             },
             body,
             parallelism: None,
+            verification: None,
         }
     }
 
@@ -148,12 +152,35 @@ impl Upload {
         self
     }
 
+    /// Waits up to `timeout` for Artifact to verify a large object, so the upload
+    /// resolves with an available artifact or [`ArtifactClientError::VerificationFailed`]
+    /// instead of a verifying one. The wait follows the artifact's resource updates
+    /// rather than polling, which needs the caller's `artifact.artifacts.read`; a wait
+    /// that ends first fails with a timeout, and the artifact keeps verifying.
+    pub fn until_verified(mut self, timeout: Duration) -> Self {
+        self.verification = Some(timeout);
+        self
+    }
+
     async fn run(self) -> Result<ArtifactRecord, ArtifactClientError> {
+        let verification = self.verification;
+        let client = self.client.clone();
+        let artifact = self.transfer().await?;
+        match verification {
+            Some(timeout) if artifact.state == ArtifactState::Verifying => {
+                verified(&client, artifact, timeout).await
+            }
+            _ => Ok(artifact),
+        }
+    }
+
+    async fn transfer(self) -> Result<ArtifactRecord, ArtifactClientError> {
         let Upload {
             client,
             request,
             body,
             parallelism,
+            verification: _,
         } = self;
         let mut reader = body.reader;
         // One byte past the single-PUT bound tells whether the body fits one PUT.
@@ -182,6 +209,29 @@ impl IntoFuture for Upload {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.run())
+    }
+}
+
+/// The artifact once Artifact has verified it: available, or a failure when the bytes
+/// did not verify.
+async fn verified(
+    client: &ArtifactClient,
+    artifact: ArtifactRecord,
+    timeout: Duration,
+) -> Result<ArtifactRecord, ArtifactClientError> {
+    let entry = client
+        .calls
+        .read(ReadArtifact {
+            artifact: artifact.artifact_id,
+        })
+        .until(|entry| entry.artifact.state != ArtifactState::Verifying)
+        .timeout(timeout)
+        .await?;
+    match entry.artifact.state {
+        ArtifactState::Available => Ok(entry.artifact),
+        _ => Err(ArtifactClientError::VerificationFailed {
+            artifact_id: entry.artifact.artifact_id,
+        }),
     }
 }
 

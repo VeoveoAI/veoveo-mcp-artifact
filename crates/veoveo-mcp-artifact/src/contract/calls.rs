@@ -1,19 +1,20 @@
 //! Artifact as a provider of calls between servers. Each served tool's request names its
-//! tool and its typed result, so a server that declares uses of Artifact's permissions
-//! calls Artifact through the Gateway with the SDK's `GatewayClient`, and the `client`
-//! feature's `ArtifactClient` builds uploads and downloads on these calls.
-use veoveo_sdk_rust::calls::{ProviderContract, ToolCall};
+//! tool and its typed result, and `ReadArtifact` names one artifact's resource and its
+//! content, so a server that declares uses of Artifact's permissions calls and reads
+//! Artifact through the Gateway with the SDK's `GatewayClient`. The `client` feature's
+//! `ArtifactClient` builds uploads and downloads on these calls.
+use veoveo_sdk_rust::calls::{ProviderContract, ResourceRead, ToolCall};
 use veoveo_types::ServerSlug;
 
 use super::{
-    AbortUploadRequest, AbortUploadResult, AccessRequestResult, ArtifactResult,
-    CancelAccessRequestRequest, CompleteUploadRequest, CompleteUploadResult, CreateDownloadRequest,
-    CreateDownloadResult, CreateShareLinkRequest, CreateShareLinkResult, CreateUploadRequest,
-    CreateUploadResult, DecideAccessRequestRequest, DeleteArtifactRequest, DeleteArtifactResult,
-    GrantArtifactRequest, GrantArtifactResult, RequestArtifactAccessRequest,
-    RevokeArtifactGrantRequest, RevokeArtifactGrantResult, RevokeShareLinkRequest,
-    SetReleaseStateRequest, SetUploadLimitsRequest, ShareLinkResult, SignUploadPartsRequest,
-    SignUploadPartsResult, UploadLimitsResult,
+    AbortUploadRequest, AbortUploadResult, AccessRequestResult, ArtifactEntry, ArtifactId,
+    ArtifactResource, ArtifactResult, CancelAccessRequestRequest, CompleteUploadRequest,
+    CompleteUploadResult, CreateDownloadRequest, CreateDownloadResult, CreateShareLinkRequest,
+    CreateShareLinkResult, CreateUploadRequest, CreateUploadResult, DecideAccessRequestRequest,
+    DeleteArtifactRequest, DeleteArtifactResult, GrantArtifactRequest, GrantArtifactResult,
+    RequestArtifactAccessRequest, RevokeArtifactGrantRequest, RevokeArtifactGrantResult,
+    RevokeShareLinkRequest, SetReleaseStateRequest, SetUploadLimitsRequest, ShareLinkResult,
+    SignUploadPartsRequest, SignUploadPartsResult, UploadLimitsResult,
 };
 
 /// The Artifact server, the provider these calls reach.
@@ -114,6 +115,24 @@ impl ToolCall for SetUploadLimitsRequest {
     type Provider = ArtifactProvider;
     type Output = UploadLimitsResult;
     const TOOL: &'static str = "set_upload_limits";
+}
+
+/// A read of one artifact as the caller sees it, `artifact://artifacts/{artifact_id}`:
+/// its record and the caller's level on it. A wait on its updates sees the artifact
+/// leave `verifying`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadArtifact {
+    pub artifact: ArtifactId,
+}
+
+impl ResourceRead for ReadArtifact {
+    type Provider = ArtifactProvider;
+    type Address = ArtifactResource;
+    type Content = ArtifactEntry;
+
+    fn address(&self) -> ArtifactResource {
+        ArtifactResource::Artifact(self.artifact)
+    }
 }
 
 /// The tool of every request type above, in the order the server serves them. The

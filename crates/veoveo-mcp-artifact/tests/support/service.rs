@@ -8,7 +8,7 @@ use sha2::{Digest as _, Sha256};
 use veoveo_mcp_artifact::{
     migrator, server, service::ArtifactService, share::ShareBase, storage::ObjectStorage,
 };
-use veoveo_platform_store::Instance;
+use veoveo_platform_store::{Instance, PlatformStore};
 use veoveo_task_runtime::{PrincipalKind, TaskOwner, TaskRuntime, TaskSurface};
 use veoveo_test_fixtures::store::TestDb;
 use veoveo_types::{
@@ -27,6 +27,8 @@ pub struct Harness {
     pub service: Arc<ArtifactService>,
     pub storage: ObjectStorage,
     _rustfs: TestRustFs,
+    /// The server's own store, which a test listens on for Artifact's changes.
+    pub platform: PlatformStore,
     /// The database, whose owner connection reads the audit log.
     pub db: TestDb,
 }
@@ -45,7 +47,7 @@ where
         let tasks = TaskRuntime::new(platform.clone(), server(), instance);
         let rustfs = TestRustFs::start().await;
         let storage = rustfs.storage().await;
-        let store = super::declared_store(platform).await;
+        let store = super::declared_store(platform.clone()).await;
         let service = Arc::new(ArtifactService::new(
             store,
             storage.clone(),
@@ -56,6 +58,7 @@ where
             service,
             storage,
             _rustfs: rustfs,
+            platform,
             db,
         });
         test(harness).await;

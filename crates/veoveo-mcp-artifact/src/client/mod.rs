@@ -85,6 +85,9 @@ pub enum ArtifactClientError {
         declared: Sha256Digest,
         computed: Sha256Digest,
     },
+    /// Artifact did not verify the uploaded bytes, and the artifact holds no object.
+    #[error("Artifact did not verify artifact {artifact_id}")]
+    VerificationFailed { artifact_id: ArtifactId },
     /// Artifact answered with something its contract does not describe for this request.
     #[error("Artifact answered unexpectedly: {0}")]
     Protocol(&'static str),

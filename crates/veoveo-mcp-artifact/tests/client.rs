@@ -23,7 +23,10 @@ use veoveo_mcp_artifact::{
         ArtifactName, ArtifactPermission, ArtifactRecord, ArtifactState, MediaType, ObjectSize,
         UploadCompleted, UploadCreated, UploadState, audit_registry,
     },
-    mcp::{AUTHORIZATION, ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs, identity},
+    mcp::{
+        AUTHORIZATION, ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs, identity,
+        watch_changes,
+    },
     service::run_verifications,
     store::{Caller, UploadPageSize},
 };
@@ -134,6 +137,14 @@ struct Mesh {
     running: RunningMesh,
     ledger: ServerCalls,
     http: reqwest::Client,
+    /// Hands Artifact's changes to its subscription hubs, as the hosted process does.
+    watching: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Mesh {
+    fn drop(&mut self) {
+        self.watching.abort();
+    }
 }
 
 impl Mesh {
@@ -142,9 +153,11 @@ impl Mesh {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let mut mesh = TestMesh::bind().await;
         mesh.register((*AUTHORIZATION).clone());
+        let hubs = Arc::new(TenantHubs::default());
+        let watching = tokio::spawn(watch_changes(harness.platform.clone(), hubs.clone()));
         let app = Arc::new(ArtifactApp {
             service: (*harness.service).clone(),
-            hubs: Arc::new(TenantHubs::default()),
+            hubs,
         });
         mesh.serve(
             testing::for_domain::<ArtifactMcp>()
@@ -179,6 +192,7 @@ impl Mesh {
             running,
             ledger,
             http: reqwest::Client::new(),
+            watching,
         }
     }
 
@@ -290,6 +304,8 @@ async fn a_request_binding_uploads_and_downloads_for_its_caller() {
             .max_size(ObjectSize::new(64 * MIB).unwrap())
             .await
             .unwrap();
+        // Without a wait, the upload resolves while Artifact still verifies the bytes.
+        assert_eq!(uploaded.state, ArtifactState::Verifying);
         let large = verified(&harness, &uploaded).await;
         assert_eq!(large.state, ArtifactState::Available);
         assert_eq!(large.size, Some(ObjectSize::new(length).unwrap()));
@@ -332,14 +348,16 @@ async fn a_task_binding_uploads_after_its_request_returned() {
 
         // A known size beyond one PUT streams in parts, two at a time, each one signed
         // and sent again on its own.
+        // The upload waits for Artifact's verification Task through the artifact's
+        // resource updates, so it resolves available.
         let length = 20 * MIB + 7;
-        let uploaded = artifacts
+        let artifact = artifacts
             .upload(name("render.bin"), octets(), streamed(length))
             .size(ObjectSize::new(length).unwrap())
             .parallelism(NonZeroUsize::new(2).unwrap())
+            .until_verified(Duration::from_secs(60))
             .await
             .unwrap();
-        let artifact = verified(&harness, &uploaded).await;
         assert_eq!(artifact.state, ArtifactState::Available);
         assert_eq!(artifact.sha256, Some(sha256_of(length)));
         assert_eq!(artifact.provenance.acting_server, Some(ledger_slug()));
