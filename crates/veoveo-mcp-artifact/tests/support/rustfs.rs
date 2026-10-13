@@ -25,51 +25,48 @@ pub struct TestRustFs {
 
 impl TestRustFs {
     /// Start RustFS on a free loopback port and wait until it answers, for at most 30
-    /// seconds.
+    /// seconds. The port is free when chosen, but another process can take it before
+    /// RustFS binds it; RustFS then exits, and the fixture starts it again on another
+    /// port, at most three times.
     pub async fn start() -> Self {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let port = TcpListener::bind("127.0.0.1:0")
-            .and_then(|listener| listener.local_addr())
-            .expect("a free loopback port")
-            .port();
         let dir = std::env::temp_dir().join(format!("artifact-rustfs-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(dir.join("data")).expect("RustFS data directory");
         std::fs::create_dir_all(dir.join("logs")).expect("RustFS log directory");
-        let child = Command::new("rustfs")
-            .arg("server")
-            .arg(dir.join("data"))
-            .env("RUSTFS_ADDRESS", format!("127.0.0.1:{port}"))
-            .env("RUSTFS_ACCESS_KEY", ACCESS_KEY)
-            .env("RUSTFS_SECRET_KEY", SECRET_KEY)
-            .env("RUSTFS_OBS_LOG_DIRECTORY", dir.join("logs"))
-            .env("RUSTFS_OBS_LOGGER_LEVEL", "warn")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("start rustfs; the dev image puts it on PATH");
-        let endpoint = Url::parse(&format!("http://127.0.0.1:{port}")).unwrap();
-        let server = Self {
-            child,
-            dir,
-            endpoint,
-        };
-        server.wait_until_ready().await;
-        server
-    }
-
-    async fn wait_until_ready(&self) {
-        let client = reqwest::Client::new();
         let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            if client.get(self.endpoint.as_str()).send().await.is_ok() {
-                return;
+        for _ in 0..3 {
+            let port = TcpListener::bind("127.0.0.1:0")
+                .and_then(|listener| listener.local_addr())
+                .expect("a free loopback port")
+                .port();
+            let stderr = std::fs::File::create(dir.join("stderr.log")).expect("RustFS stderr log");
+            let mut child = Command::new("rustfs")
+                .arg("server")
+                .arg(dir.join("data"))
+                .env("RUSTFS_ADDRESS", format!("127.0.0.1:{port}"))
+                .env("RUSTFS_ACCESS_KEY", ACCESS_KEY)
+                .env("RUSTFS_SECRET_KEY", SECRET_KEY)
+                .env("RUSTFS_OBS_LOG_DIRECTORY", dir.join("logs"))
+                .env("RUSTFS_OBS_LOGGER_LEVEL", "warn")
+                .stdout(Stdio::null())
+                .stderr(stderr)
+                .spawn()
+                .expect("start rustfs; the dev image puts it on PATH");
+            let endpoint = Url::parse(&format!("http://127.0.0.1:{port}")).unwrap();
+            if answers(&mut child, &endpoint, &dir, deadline).await {
+                return Self {
+                    child,
+                    dir,
+                    endpoint,
+                };
             }
-            assert!(
-                Instant::now() < deadline,
-                "RustFS did not answer within 30 seconds"
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // RustFS exited, most likely because another process took the port.
+            let _ = child.wait();
         }
+        panic!(
+            "RustFS exited three times without answering: {}",
+            std::fs::read_to_string(dir.join("stderr.log")).unwrap_or_default()
+        );
     }
 
     pub fn endpoint(&self) -> &Url {
@@ -97,6 +94,31 @@ impl TestRustFs {
             .await
             .expect("prepare the test bucket");
         storage
+    }
+}
+
+/// True once RustFS answers at `endpoint`, false when it exits first. Panics at
+/// `deadline` with RustFS's error output.
+async fn answers(
+    child: &mut Child,
+    endpoint: &Url,
+    dir: &std::path::Path,
+    deadline: Instant,
+) -> bool {
+    let client = reqwest::Client::new();
+    loop {
+        if client.get(endpoint.as_str()).send().await.is_ok() {
+            return true;
+        }
+        if child.try_wait().ok().flatten().is_some() {
+            return false;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "RustFS did not answer within 30 seconds: {}",
+            std::fs::read_to_string(dir.join("stderr.log")).unwrap_or_default()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
