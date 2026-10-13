@@ -39,6 +39,9 @@ port         8801
 | SHA-256 | Every available artifact records its SHA-256 in the foundational `Sha256Digest` spelling, `sha256:` followed by 64 lowercase hexadecimal digits. |
 | [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Gateway forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, which Artifact records as the acting server. `ArtifactClient` calls through a Gateway profile with a token the SDK obtains by exchange. |
 | [HTTP range requests, RFC 9110 §14](https://www.rfc-editor.org/rfc/rfc9110#name-range-requests) | `ArtifactClient` sends one `bytes=first-last` or `bytes=first-` range with a signed GET and expects `206 Partial Content`. |
+| [HTTP semantics, RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) `303 See Other` and `Cache-Control: no-store` ([RFC 9111](https://www.rfc-editor.org/rfc/rfc9111)) | The share route answers a live link with `303` to a signed GET, and every answer carries `no-store`. |
+| [Base64url, RFC 4648 §5](https://www.rfc-editor.org/rfc/rfc4648#section-5) | A share link's secret is 32 random bytes in unpadded canonical base64url, 43 characters. |
+| [Referrer Policy](https://www.w3.org/TR/referrer-policy/) | The share route's answers carry `Referrer-Policy: no-referrer`. |
 | [Veoveo server registration](https://github.com/VeoveoAI/veoveo-sdk-rust) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions in `ai.veoveo/authorization`. |
 | [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/f685fbfd3d28a477d35f77cee3feacc8787772ac/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. |
 | RustFS 1.0.1 | The installation's object store, pinned by image digest. Artifact uses only the S3 calls listed above through aws-sdk-s3 1.152.0, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
@@ -96,13 +99,10 @@ change on the `artifact` channel to its tenant's subscribers.
 | `grant_artifact`, `revoke_artifact_grant` | Gives or removes read, write or admin for a principal or group, with an optional expiry | `artifact.grants.write` (sensitive) | admin |
 | `set_release_state` | Moves an artifact between private and released | `artifact.releases.write` | admin |
 | `create_share_link`, `revoke_share_link` | Issues or revokes an anonymous read link for a released artifact | `artifact.share-links.write` (sensitive) | admin |
-| `request_artifact_access`, `cancel_access_request` | Asks an artifact's administrators for a level the caller lacks | `artifact.access-requests.write` | the artifact is visible to the caller |
+| `request_artifact_access`, `cancel_access_request` | Asks an artifact's administrators for a level above the caller's, or withdraws the caller's own pending request | `artifact.access-requests.write` | read, and a requested level above the caller's |
 | `decide_access_request` | Approves the request, which writes the grant, or denies it with a note | `artifact.grants.write` (sensitive) | admin |
 | `delete_artifact` | Deletes the artifact, its grants and share links, and its object | `artifact.artifacts.delete` (destructive) | admin |
 | `set_upload_limits` | Sets a tenant's quota, largest object, allowed media types and active-upload limit | `artifact.upload-limits.administer` (administer) | installation administrator |
-
-The server serves the upload, download, grant, deletion and limit tools. Release
-states, share links and access requests arrive with sharing (plan item M7).
 
 `create_upload` takes the name and media type, and optionally the size, the SHA-256,
 a maximum size, data labels, a retention period, metadata, the artifacts it derives
@@ -125,17 +125,42 @@ caller's data labels.
 | `artifact://storage-usage` | The tenant's stored and reserved bytes against its quota |
 
 Single resources and the first page of each collection accept subscriptions. A
-change to an artifact or its grants reaches that artifact's resources and every
-artifact listing; a change to an upload reaches that upload and the upload listing. Share
-links, access requests and the prompts `review-artifact-sharing` and
-`review-access-requests` arrive with sharing (M7).
+change to an artifact, its grants or its share links reaches that artifact's resources
+and every artifact listing; a change to an upload reaches that upload and the upload
+listing; a change to an access request reaches every access-request listing of its
+tenant, whose readers then read only the requests they made or can decide. A
+subscription to an artifact's share links needs admin on the artifact.
+
+### Prompts
+
+| Prompt | Arguments | Guides the model to |
+|---|---|---|
+| `review-artifact-sharing` | `artifact_id` | read the artifact, its grants and its share links, report who can reach it and how, and propose revocations the user then confirms |
+| `review-access-requests` | none | read the pending requests the caller can decide, weigh each against its artifact, and decide only the ones the user decides |
+
+Each prompt requires `artifact.artifacts.read`, and acts only through the tools above.
 
 ### Share Route
 
-`GET /artifact/shares/{token}`, which arrives with sharing (M7), is the only route
-outside MCP, because a share link must work for someone without an account. The server hashes the token, finds a live link
-to a released artifact, counts one redemption and answers `303 See Other` with a fresh
-signed GET.
+`GET /artifact/shares/{token}` is the only route outside MCP, because a share link must
+work for someone without an account. The hosted process serves it under its mount
+without Gateway authentication; the link's secret authenticates the request.
+
+| The request names | The answer |
+|---|---|
+| a live link, neither revoked, expired nor at its redemption limit, to a released, available artifact without labels | `303 See Other` to a signed GET valid for 5 minutes, after one redemption and its audit record commit together |
+| anything else: a malformed, unknown, expired, revoked or spent token, or an artifact that is private, deleted, past its retention or unavailable | `404` with one fixed body |
+| a `HEAD` request | `405` with `Allow: GET`, counting nothing |
+
+Every answer carries `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and
+`X-Content-Type-Options: nosniff`, and no refusal tells the holder why. A database
+failure answers `503`. The token is 43 characters of canonical unpadded base64url
+holding 256 random bits from the operating system. The server looks the link up by the
+SHA-256 of those bits, which is all it stores, so the URL `create_share_link` returns is
+the only copy of the secret. One `UPDATE` counts the redemption under the link's row
+lock and admits it only while the count is below the limit, so concurrent redemptions
+never pass the limit. A redemption's record names no actor, because the holder has no
+account, so it lands in the installation's audit partition.
 
 ## Object Storage
 
@@ -221,12 +246,25 @@ see it gets the same answer as for an unknown ID.
 |---|---|---|
 | Grant | a principal or group in the tenant | Read, write or admin, with an optional expiry. The owner's admin access cannot be revoked. |
 | Work Context membership | the members of the artifact's Work Context | The level follows the membership role. |
-| Share link | anyone holding the link | Read only, for a released artifact, for at most 30 days, with an optional redemption limit. The server stores only the SHA-256 of the link's secret. |
-| Access request | a caller who can see an artifact but lacks a level | Pending, then approved, denied or cancelled. Approval writes the grant in the same transaction. |
+| Share link | anyone holding the link | Read only, for a released artifact without data labels, for 1 to 30 days, with an optional redemption limit. An artifact holds at most 256 live links. The server stores only the SHA-256 of the link's secret. |
+| Access request | a caller who reads an artifact and asks for write or admin | Pending, then approved, denied or cancelled. Approval writes the grant in the same transaction. |
 
-Revoking a link or returning an artifact to private stops new redemptions at once. A
-URL already issued expires within its 5 minutes. A redemption counts once per visit to
-the share route, because ranges and resumes go to RustFS.
+An administrator releases an available artifact with `set_release_state`. A share link
+reaches people without data labels, so an artifact that carries a label cannot be
+shared by link. Returning an artifact to private revokes its live links in the same
+transaction, so releasing it again revives none; revoking a link or deleting its
+artifact also stops new redemptions at once. A URL already issued expires within its 5
+minutes. A redemption counts once per visit to the share route, because ranges and
+resumes go to RustFS.
+
+A caller holds at most one pending request per artifact, and asks only for a level
+above the one it holds; a caller who cannot read the artifact gets the answer for an
+unknown ID. Only the requester withdraws a request, and only an administrator of the
+artifact decides it. An approval gives the requester a principal grant of the requested
+level without an expiry, unless a grant it already holds gives at least that level
+without one, and records the grant change beside the decision. The access-request
+listing holds the requests the caller made, those on artifacts it administers, or,
+without a role, both, newest first.
 
 ## Calls From Other Servers
 
@@ -345,6 +383,13 @@ Artifact's contract declares a closed detail type for each class:
 | `artifact.grant_changed` | `grant_artifact`, or `revoke_artifact_grant` with no level | succeeded |
 | `artifact.deleted` | `delete_artifact` marks the artifact | succeeded |
 | `artifact.upload_limits_set` | `set_upload_limits` | succeeded |
+| `artifact.release_changed` | `set_release_state`, with the number of live share links a return to private ended | succeeded |
+| `artifact.share_link_created` | `create_share_link`, with the link's expiry and limit | succeeded |
+| `artifact.share_link_revoked` | `revoke_share_link` | succeeded |
+| `artifact.share_link_redeemed` | the share route counts a redemption, before it answers; the record names no actor | succeeded |
+| `artifact.access_requested` | `request_artifact_access` | succeeded |
+| `artifact.access_request_cancelled` | `cancel_access_request` | succeeded |
+| `artifact.access_request_decided` | `decide_access_request`, with the decision; an approval that writes a grant also records `artifact.grant_changed` | succeeded |
 
 Records about an artifact target its resource address; a limits record targets the
 server. Every detail names the acting server as `actingServer` when another server made
@@ -383,11 +428,15 @@ RustFS beside PostgreSQL, pinned by digest, and configures the server through
 defaulting to the endpoint), `VEOVEO_STORAGE_REGION`, `VEOVEO_STORAGE_BUCKET`,
 `VEOVEO_STORAGE_ACCESS_KEY`, `VEOVEO_STORAGE_SECRET_KEY` and
 `VEOVEO_STORAGE_CORS_ORIGINS`, beside the registration settings every server takes.
+`VEOVEO_SHARE_BASE_URL` names the origin a share link's URL uses, defaulting to the
+public base URL, and the server accepts its host in the `Host` header. The installation
+routes that origin's `/artifact/shares/*` to the server for people without an account.
 SigV4 signs with the secret key inside the server, so the server's environment holds the
 credential itself, the way the Gateway's holds the database owner's password; a
 placeholder that a proxy substitutes cannot sign. The credential is limited to the
-bucket. Locally the signed address is `http://host.openshell.internal:9000`, and a host
-browser maps that name to `127.0.0.1` as it does for the Gateway. The sandbox policy
+bucket. Locally the signed address is `http://host.openshell.internal:9000` and share
+links name `http://host.openshell.internal:8801`, Artifact's forward, so a host browser
+follows both once the host maps that name to `127.0.0.1`, as it does for the Gateway. The sandbox policy
 passes object storage through as TCP, because an inspecting proxy that changed a signed
 header would void the signature.
 
@@ -398,7 +447,7 @@ header would void the signature.
 | Inline content for a model without a sandbox (`write_artifact` and a content resource) | Open decision D27 |
 | The calling server's Task in provenance | Pending: the forwarded token names the acting server but not its Task, so `provenance.task` stays empty for calls from other servers |
 | Waiting for a large artifact's verification in `ArtifactClient` | Pending: an upload resolves with a `verifying` artifact, and the client offers no wait, because MCP resource reads are outside the SDK's `GatewayClient` |
-| Release states, share links and their route, access requests and the review prompts | Plan item M7 |
+| The share route's secret in request telemetry | Pending in `veoveo-sdk-rust`: the hosted server's request span records the raw request path, which for the share route holds a link's secret. The route itself logs nothing within that span; the SDK fix records the matched route template instead |
 | The library App | Plan item M8 |
 | Helm chart | Pending (C15) |
 
@@ -410,7 +459,9 @@ header would void the signature.
 | Database | Core's database checks over every statement and table; `effective_level` against a matrix of owners, grants, groups, Work Context roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
 | Object storage | A private RustFS per test process, from the binary in the pinned image: signed single and multipart uploads, a wrong size, checksum or part checksum refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
 | Service | The store and RustFS together: declared and undeclared uploads, refused bytes, aborts, a large object verified in a Task, a digest mismatch, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
-| MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery, which matches the typed calls the contract publishes, permission refusals on tools and resources, a signed upload counted in storage usage, and upload limits |
+| MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
+| Sharing | Database tests: returning to private ends only live links and releasing again revives none; links need an administrator and a released, available artifact without labels; twelve concurrent redemptions of a link limited to three count exactly three; expired, revoked, deleted and unknown links redeem nothing, and a dropped redemption counts nothing; share-link pages and their cursors. Access requests: an approval writes the requested grant and records each step, visibility and the held level bound a request, only the requester withdraws and only an administrator decides, an approval keeps a stronger grant, and listings page by role and state |
+| Share route | `tests/share_route.rs` through the hosted router and a private RustFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing |
 | Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private RustFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned; a caller without the write permission is refused; the acting server is recorded in provenance and in the audit records; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
-| Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision records its declared class with its target, actor and detail, and a digest mismatch records a failed verification |
-| Acceptance | `tests/acceptance.rs` through a running installation's Gateway and RustFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, and the admin's quota refusing an upload. The local installation has one tenant, so the database tests cover a read refused across tenants |
+| Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with its target, actor and detail, a redemption records no actor in the installation's partition, and a digest mismatch records a failed verification |
+| Acceptance | `tests/acceptance.rs` through a running installation's Gateway and RustFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |

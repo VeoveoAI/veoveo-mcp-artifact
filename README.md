@@ -16,7 +16,7 @@ design and operational contract.
 | `crates/veoveo-mcp-artifact/migrations/` | The `artifact` schema, applied in the server's own PostgreSQL schema at startup |
 | `.sqlx/` | sqlx's checked metadata for every query the workspace compiles |
 | `Dockerfile` | The `dev` environment, the `check` gate, the release `build` and the `runtime` image |
-| `openshell/policy.yaml` | The OpenShell policy: the Gateway, PostgreSQL and object storage |
+| `openshell/policy.yaml` | The OpenShell policy: the Gateway, PostgreSQL, object storage and, for acceptance tests, Artifact's share route |
 | `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `deny.toml` | The pinned toolchain, code rules and dependency rules |
 
 ## Using The Contract
@@ -109,7 +109,10 @@ The server takes the registration settings every server takes (`VEOVEO_PUBLIC_BA
 storage settings: `VEOVEO_STORAGE_ENDPOINT`, `VEOVEO_STORAGE_SIGNING_ENDPOINT`,
 `VEOVEO_STORAGE_REGION`, `VEOVEO_STORAGE_BUCKET`, `VEOVEO_STORAGE_ACCESS_KEY`,
 `VEOVEO_STORAGE_SECRET_KEY` and `VEOVEO_STORAGE_CORS_ORIGINS`. It listens on port 8801
-and serves MCP at `{public_base_url}/artifact/mcp`.
+and serves MCP at `{public_base_url}/artifact/mcp`. Share links name
+`{share_base_url}/artifact/shares/{token}`, where `VEOVEO_SHARE_BASE_URL` defaults to the
+public base URL; that route answers people without an account, so the installation
+routes it to the server without the Gateway.
 
 ## Gate
 
@@ -134,7 +137,8 @@ openshell sandbox create --name vv-mcp-artifact --from veoveo-mcp-artifact:dev \
 
 The policy lets the server reach the Gateway at `host.openshell.internal:8080`, the
 installation's PostgreSQL server at port 5432 and its object store at port 9000, and lets
-acceptance tests reach the Gateway and the object store. Signed requests to the object
+acceptance tests reach the Gateway, the object store and Artifact's own share route
+through its forward at port 8801. Signed requests to the object
 store pass through as TCP, because a proxy that changed a signed header would void the
 signature.
 
@@ -169,7 +173,8 @@ openshell forward start 8801 vv-mcp-artifact -d
 The first command keeps running in its terminal. Artifact prepares its bucket and
 registers before it listens, and the Gateway reaches it as
 `http://host.openshell.internal:8801/artifact/mcp`. Signed URLs name the object store as
-`http://host.openshell.internal:9000`; a browser on the host resolves that name only
+`http://host.openshell.internal:9000` and share links name
+`http://host.openshell.internal:8801`; a browser on the host resolves that name only
 when the host maps it to `127.0.0.1`. Artifact removes its registration when it
 receives SIGTERM or Ctrl-C.
 
@@ -182,8 +187,10 @@ is refused the tools whose permissions carry a risk; a small upload with a decla
 completion, read by the owner and by a member of its Work Context, and fetched as a
 range; a gibibyte of unknown size uploaded in parts, verified by the server's Task,
 fetched as a range across a part boundary, then deleted and released by the sweep; a
-grant listed and revoked; and an upload refused by the quota the admin sets, then
-admitted once the limits are restored. The tests share the tenant's usage and limits,
+grant listed and revoked; an upload refused by the quota the admin sets, then
+admitted once the limits are restored; a released artifact's share link opened through
+the share route, redirected to the object store and spent after its one redemption; and
+the member's request to administer an artifact, approved by the admin. The tests share the tenant's usage and limits,
 so nextest runs them one at a time. The local installation has one tenant, so a read
 refused across tenants is covered by the database tests.
 

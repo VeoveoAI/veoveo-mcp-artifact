@@ -60,7 +60,7 @@
     {
       "id": "C14",
       "status": "met",
-      "note": "bytes move only between clients and object storage through signed URLs; the server serves no byte route"
+      "note": "bytes move only between clients and object storage through signed URLs; the share route answers with a redirect to a signed GET and serves no bytes"
     },
     {
       "id": "C15",

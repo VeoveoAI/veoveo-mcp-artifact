@@ -42,6 +42,14 @@ decisions; bytes move between clients and object storage through URLs the server
   before the row goes.
 - A verification Task carries its artifact's identifier. Do not queue a second one.
 - The storage secret lives in the server's environment, because SigV4 signs with it.
+- A share link's secret appears only in the URL `create_share_link` returns. The store
+  keeps its SHA-256, records and errors never name it, and the share route logs only
+  root events, outside the request span that records its path.
+- Every refused share link answers the same `404`; a refusal never says why. A
+  redemption counts in the statement that checks the limit, and its audit record
+  commits with it before the route answers.
+- Returning an artifact to private revokes its live links in the same transaction. An
+  artifact with data labels takes no share link.
 - Every decision appends its audit record through `ArtifactStore::record` on its own
   transaction's connection, before the commit. A new decision declares its detail type
   in `contract/audit.rs`; the server declares the classes at startup.
@@ -75,7 +83,7 @@ Contract: https://veoveo.ai/contracts/hosted-mcp
 - C11: met
 - C12: met
 - C13: met
-- C14: met — bytes move only between clients and object storage through signed URLs; the server serves no byte route
+- C14: met — bytes move only between clients and object storage through signed URLs; the share route answers with a redirect to a signed GET and serves no bytes
 - C15: pending — the OCI image builds; the Helm chart is pending
 - C16: met
 - C17: met
