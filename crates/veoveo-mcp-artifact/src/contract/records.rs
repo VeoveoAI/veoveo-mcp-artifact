@@ -120,6 +120,8 @@ pub struct PartSize(u64);
 impl PartSize {
     pub const MIN: u64 = 5 * 1024 * 1024;
     pub const MAX: u64 = 5 * 1024 * 1024 * 1024;
+    /// The part size of an upload whose bound fits 10,000 parts of it: 16 MiB.
+    pub const DEFAULT: u64 = 16 * 1024 * 1024;
 
     pub fn new(bytes: u64) -> Result<Self, ValueError> {
         if !(Self::MIN..=Self::MAX).contains(&bytes) {

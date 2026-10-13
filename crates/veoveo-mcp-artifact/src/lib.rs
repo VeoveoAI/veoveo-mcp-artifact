@@ -1,7 +1,10 @@
 //! The Artifact MCP server's library. The `contract` feature holds Artifact's public
-//! types for consumers; the default `server` feature adds persistence in the server's
-//! own PostgreSQL schema.
+//! types and typed calls for consumers, the `client` feature adds `ArtifactClient` for
+//! their uploads and downloads, and the default `server` feature adds the server with
+//! persistence in its own PostgreSQL schema.
 
+#[cfg(feature = "client")]
+pub mod client;
 #[cfg(feature = "contract")]
 pub mod contract;
 #[cfg(feature = "server")]

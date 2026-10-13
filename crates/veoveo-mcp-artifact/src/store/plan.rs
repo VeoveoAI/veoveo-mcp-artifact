@@ -11,7 +11,7 @@ use super::ArtifactStoreError;
 /// The largest object one signed PutObject receives: 100 MiB.
 pub const SINGLE_PUT_MAX_BYTES: u64 = 100 * 1024 * 1024;
 /// The part size of a multipart upload whose bound fits 10,000 parts of it: 16 MiB.
-pub const DEFAULT_PART_BYTES: u64 = 16 * 1024 * 1024;
+pub const DEFAULT_PART_BYTES: u64 = PartSize::DEFAULT;
 /// How long an upload stays open: 24 hours.
 pub const UPLOAD_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 
