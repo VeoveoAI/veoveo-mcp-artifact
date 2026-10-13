@@ -19,9 +19,12 @@ use veoveo_audit_contract::{
 };
 use veoveo_mcp_artifact::{
     contract::{
-        ArtifactDeleted, ArtifactId, ArtifactVerified, DownloadIssued, GrantArtifactRequest,
-        GrantChanged, UploadAborted, UploadCompleted, UploadCreated, UploadLimits, UploadLimitsSet,
-        UploadTransfer, audit_registry,
+        AccessRequestCancelled, AccessRequestDecided, AccessRequestDecision, AccessRequested,
+        ArtifactDeleted, ArtifactId, ArtifactVerified, CreateShareLinkRequest,
+        DecideAccessRequestRequest, DownloadIssued, GrantArtifactRequest, GrantChanged, Note,
+        ReleaseChanged, ReleaseState, RequestArtifactAccessRequest, ShareLinkCreated,
+        ShareLinkDays, ShareLinkRedeemed, ShareLinkRevoked, UploadAborted, UploadCompleted,
+        UploadCreated, UploadLimits, UploadLimitsSet, UploadTransfer, audit_registry,
     },
     migrator, server,
     store::{ArtifactStore, ArtifactStoreError},
@@ -217,6 +220,74 @@ async fn every_decision_records_its_declared_class() {
             .revoke_artifact_grant(&caller, artifact_id, &grantee, Utc::now())
             .await
             .unwrap();
+
+        // Sharing: a release, a link redeemed and revoked, an approved request and a
+        // withdrawn one.
+        service
+            .set_release_state(&caller, artifact_id, ReleaseState::Released, Utc::now())
+            .await
+            .unwrap();
+        let link = service
+            .create_share_link(
+                &caller,
+                &CreateShareLinkRequest {
+                    artifact_id,
+                    expires_in_days: ShareLinkDays::new(1).unwrap(),
+                    redemption_limit: None,
+                },
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+        let token = link.url.expose().rsplit('/').next().unwrap().to_owned();
+        assert!(
+            service
+                .redeem_share_link(&token, Utc::now())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        service
+            .revoke_share_link(
+                &caller,
+                artifact_id,
+                link.share_link.share_link_id,
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+        let ask = |who: &str| RequestArtifactAccessRequest {
+            artifact_id,
+            level: AccessLevel::Admin,
+            justification: Note::parse(format!("{who} reviews it")).unwrap(),
+        };
+        let bob = Who::new("bob").caller();
+        let approved = service
+            .request_access(&bob, &ask("bob"), Utc::now())
+            .await
+            .unwrap();
+        service
+            .decide_access_request(
+                &caller,
+                &DecideAccessRequestRequest {
+                    access_request_id: approved.access_request_id,
+                    decision: AccessRequestDecision::Approve,
+                    note: None,
+                },
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+        let cy = Who::new("cy").caller();
+        let withdrawn = service
+            .request_access(&cy, &ask("cy"), Utc::now())
+            .await
+            .unwrap();
+        service
+            .cancel_access_request(&cy, withdrawn.access_request_id, Utc::now())
+            .await
+            .unwrap();
+
         service
             .delete_artifact(&caller, artifact_id, Utc::now())
             .await
@@ -258,6 +329,14 @@ async fn every_decision_records_its_declared_class() {
                 DownloadIssued::CLASS,
                 GrantChanged::CLASS,
                 GrantChanged::CLASS,
+                ReleaseChanged::CLASS,
+                ShareLinkCreated::CLASS,
+                ShareLinkRevoked::CLASS,
+                AccessRequested::CLASS,
+                GrantChanged::CLASS,
+                AccessRequestDecided::CLASS,
+                AccessRequested::CLASS,
+                AccessRequestCancelled::CLASS,
                 ArtifactDeleted::CLASS,
                 UploadLimitsSet::CLASS,
                 UploadCreated::CLASS,
@@ -273,25 +352,67 @@ async fn every_decision_records_its_declared_class() {
         assert_eq!(declared.len(), 15);
 
         // Every detail reads back as its type, and names the artifact it is about.
-        let draft = |index: usize| &records[index].draft;
-        let verified: ArtifactVerified =
-            registry.read(draft(2).class(), draft(2).detail()).unwrap();
+        let of = |class: &str| -> Vec<&AuditRecord> {
+            records
+                .iter()
+                .filter(|record| record.draft.class().to_string() == class)
+                .collect()
+        };
+        let read =
+            |record: &AuditRecord| (record.draft.class().clone(), record.draft.detail().clone());
+        let (class, detail) = read(of(ArtifactVerified::CLASS)[0]);
+        let verified: ArtifactVerified = registry.read(&class, &detail).unwrap();
         assert_eq!(verified.sha256, sha256(&body));
-        let download: DownloadIssued = registry.read(draft(3).class(), draft(3).detail()).unwrap();
+        let (class, detail) = read(of(DownloadIssued::CLASS)[0]);
+        let download: DownloadIssued = registry.read(&class, &detail).unwrap();
         assert_eq!(download.artifact_id, artifact_id);
-        let revoked: GrantChanged = registry.read(draft(5).class(), draft(5).detail()).unwrap();
+        let grants = of(GrantChanged::CLASS);
+        let (class, detail) = read(grants[1]);
+        let revoked: GrantChanged = registry.read(&class, &detail).unwrap();
         assert_eq!((revoked.subject, revoked.level), (grantee, None));
-        let limits: UploadLimitsSet = registry.read(draft(7).class(), draft(7).detail()).unwrap();
-        assert_eq!(limits.tenant.as_str(), "acme");
-        assert_eq!(draft(7).target(), &AuditTarget::Server { server: server() });
-        for index in [0, 1, 2, 3, 4, 5, 6] {
+        let (class, detail) = read(grants[2]);
+        let approval: GrantChanged = registry.read(&class, &detail).unwrap();
+        assert_eq!(approval.level, Some(AccessLevel::Admin));
+        let (class, detail) = read(of(AccessRequestDecided::CLASS)[0]);
+        let decided: AccessRequestDecided = registry.read(&class, &detail).unwrap();
+        assert_eq!(decided.decision, AccessRequestDecision::Approve);
+        let limits = of(UploadLimitsSet::CLASS)[0];
+        let (class, detail) = read(limits);
+        let set: UploadLimitsSet = registry.read(&class, &detail).unwrap();
+        assert_eq!(set.tenant.as_str(), "acme");
+        assert_eq!(
+            limits.draft.target(),
+            &AuditTarget::Server { server: server() }
+        );
+        for record in &records[..15] {
             assert_eq!(
-                draft(index).target(),
+                record.draft.target(),
                 &artifact_target(artifact_id),
-                "{index}"
+                "{}",
+                record.draft.class()
             );
-            assert_eq!(draft(index).outcome(), AuditOutcome::Succeeded);
+            assert_eq!(record.draft.outcome(), AuditOutcome::Succeeded);
         }
+
+        // The holder of a link has no account, so its redemption is the installation's.
+        let reader = AuditStore::new(
+            harness.db.connect().await,
+            Arc::new(audit_registry().unwrap()),
+        );
+        let mut query = AuditQuery::new(AuditPartition::Installation);
+        query.limit = 1000;
+        let installation = reader
+            .page(&AuditReadScope::new(None, true), &query)
+            .await
+            .unwrap()
+            .records;
+        let redeemed: Vec<_> = installation
+            .iter()
+            .filter(|record| record.draft.class().to_string() == ShareLinkRedeemed::CLASS)
+            .collect();
+        assert_eq!(redeemed.len(), 1);
+        assert!(redeemed[0].draft.actor().is_none());
+        assert_eq!(redeemed[0].draft.target(), &artifact_target(artifact_id));
     })
     .await;
 }
