@@ -12,6 +12,11 @@ These rules apply to veoveo-mcp-artifact.
   checked `query_file*!` macros. Builds read the committed `.sqlx` metadata, because
   `.cargo/config.toml` sets `SQLX_OFFLINE`. After changing a query or a migration,
   regenerate the metadata from an empty target directory.
+- SQL names only the `artifact` schema. Core state, such as Tasks, process instances,
+  usage and audit, comes only through the SDK and core's runtime API, and a missing API
+  is reported to its owner rather than worked around in SQL.
+  `crates/veoveo-mcp-artifact/tests/sql_confinement.rs` checks every query, migration
+  and test query with the SDK's `assert_sql_confined`.
 - Statements and tables follow the server schema rules of veoveo-core's
   [database design](https://github.com/VeoveoAI/veoveo-core/blob/286e2fcc8f2f36c44e1ce17e171289cac0f8d8cb/docs/DATABASE.md),
   which `crates/veoveo-mcp-artifact/tests/database_conformance.rs` checks. A statement binds its tenant, bounds its
