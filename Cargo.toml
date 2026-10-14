@@ -22,9 +22,9 @@ veoveo-task-runtime = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "
 veoveo-oauth-client = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "c0c8254f4a1f532a7c8bb5123639d9997700b105" }
 # The Rust SDK for Veoveo MCP servers: the contract feature for the permission and audit
 # declarations, the server feature for hosting, registration and forwarded identity.
-veoveo-sdk-rust = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "3ea1a32d9a818ca79a816e191dba1346a92cdf26", default-features = false }
+veoveo-sdk-rust = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "e5ba205728409b33eb0ab4e608c8c8cb647a3462", default-features = false }
 # Ledger, the SDK's calls fixture server: the consumer the client tests call Artifact for.
-veoveo-sdk-rust-fixture = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "3ea1a32d9a818ca79a816e191dba1346a92cdf26" }
+veoveo-sdk-rust-fixture = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "e5ba205728409b33eb0ab4e608c8c8cb647a3462" }
 
 anyhow = "=1.0.104"
 # The share route, served beside MCP on the SDK's router.
