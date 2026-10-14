@@ -28,7 +28,7 @@ pub(super) struct Args {
     /// The Gateway's RFC 8414 issuer; registration discovers its endpoint from there.
     #[arg(long, env = "VEOVEO_GATEWAY_ISSUER")]
     pub gateway_issuer: Url,
-    /// The installation's registration secret, or the placeholder OpenShell substitutes.
+    /// The installation's registration secret, or the placeholder the installation's edge replaces.
     #[arg(
         long,
         env = "VEOVEO_REGISTRATION_SECRET",
@@ -126,7 +126,7 @@ fn parse_allowed_host(value: &str) -> Result<String, String> {
     let value = value.trim();
     parse_allowed_host_authority(value)
         .map(|_| value.to_owned())
-        .ok_or_else(|| "expected a host authority such as host.openshell.internal:8801".to_owned())
+        .ok_or_else(|| "expected a host authority such as vv-mcp-artifact.internal:8801".to_owned())
 }
 
 #[cfg(test)]
@@ -138,13 +138,13 @@ mod tests {
         let args = Args::try_parse_from([
             "veoveo-mcp-artifact",
             "--public-base-url",
-            "http://host.openshell.internal:8801",
+            "http://vv-mcp-artifact.internal:8801",
             "--gateway-issuer",
-            "http://host.openshell.internal:8080",
+            "http://vv-gateway.internal:8080",
             "--registration-secret",
             "placeholder",
             "--storage-endpoint",
-            "http://host.openshell.internal:9000",
+            "http://vv-seaweedfs.internal:9000",
             "--storage-access-key",
             "artifact",
             "--storage-secret-key",
@@ -155,7 +155,7 @@ mod tests {
         assert_eq!(storage.signing_endpoint, storage.internal_endpoint);
         assert_eq!(
             args.share_base().unwrap().authority(),
-            "host.openshell.internal:8801",
+            "vv-mcp-artifact.internal:8801",
             "share links default to the public base URL"
         );
         assert_eq!(storage.bucket, "artifacts");
@@ -167,15 +167,15 @@ mod tests {
         let args = Args::try_parse_from([
             "veoveo-mcp-artifact",
             "--public-base-url",
-            "http://host.openshell.internal:8801",
+            "http://vv-mcp-artifact.internal:8801",
             "--public-origin",
             "https://veoveo.example.com",
             "--gateway-issuer",
-            "http://host.openshell.internal:8080",
+            "http://vv-gateway.internal:8080",
             "--registration-secret",
             "placeholder",
             "--storage-endpoint",
-            "http://host.openshell.internal:9000",
+            "http://vv-seaweedfs.internal:9000",
             "--storage-access-key",
             "artifact",
             "--storage-secret-key",
@@ -186,21 +186,21 @@ mod tests {
         let deployment = args.public_deployment().unwrap();
         assert_eq!(
             veoveo_sdk_rust::public_allowed_hosts(&deployment, false),
-            vec!["host.openshell.internal:8801", "veoveo.example.com"]
+            vec!["vv-mcp-artifact.internal:8801", "veoveo.example.com"]
         );
         assert!(
             Args::try_parse_from([
                 "veoveo-mcp-artifact",
                 "--public-base-url",
-                "http://host.openshell.internal:8801",
+                "http://vv-mcp-artifact.internal:8801",
                 "--public-origin",
                 "http://veoveo.example.com",
                 "--gateway-issuer",
-                "http://host.openshell.internal:8080",
+                "http://vv-gateway.internal:8080",
                 "--registration-secret",
                 "placeholder",
                 "--storage-endpoint",
-                "http://host.openshell.internal:9000",
+                "http://vv-seaweedfs.internal:9000",
                 "--storage-access-key",
                 "artifact",
                 "--storage-secret-key",

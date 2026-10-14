@@ -122,17 +122,17 @@ mod tests {
 
     #[test]
     fn a_share_url_names_the_route_under_the_origin() {
-        let base = ShareBase::parse("http://host.openshell.internal:8801/").unwrap();
+        let base = ShareBase::parse("http://vv-mcp-artifact.internal:8801/").unwrap();
         let secret = ShareLinkSecret::generate().unwrap();
         let url = base.url(&secret);
         assert_eq!(
             url.expose(),
             format!(
-                "http://host.openshell.internal:8801/artifact/shares/{}",
+                "http://vv-mcp-artifact.internal:8801/artifact/shares/{}",
                 secret.token()
             )
         );
-        assert_eq!(base.authority(), "host.openshell.internal:8801");
+        assert_eq!(base.authority(), "vv-mcp-artifact.internal:8801");
         assert!(!format!("{url:?}").contains(&secret.token()));
         for refused in [
             "ftp://example.test",

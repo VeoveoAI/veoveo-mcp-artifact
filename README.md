@@ -16,7 +16,6 @@ design and operational contract.
 | `crates/veoveo-mcp-artifact/migrations/` | The `artifact` schema, applied in the server's own PostgreSQL schema at startup |
 | `.sqlx/` | sqlx's checked metadata for every query the workspace compiles |
 | `Dockerfile` | The `dev` environment, the `check` gate, the release `build` and the `runtime` image |
-| `openshell/policy.yaml` | The OpenShell policy: the Gateway, PostgreSQL, object storage and, for acceptance tests, Artifact's share route |
 | `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `deny.toml` | The pinned toolchain, code rules and dependency rules |
 
 ## Using The Contract
@@ -80,8 +79,8 @@ Artifact computes its SHA-256; `until_verified` waits for it through the artifac
 resource updates and resolves available. Artifact records the calling server, and the
 Task when the call came from one, in the artifact's provenance and as the `via` of its
 audit records.
-The consumer's OpenShell policy lets its binary reach the Gateway's `/oauth/token` and
-`/mcp/{profile}`, and object storage as TCP pass-through.
+The consumer reaches the Gateway's `/oauth/token` and `/mcp/{profile}`, and object
+storage, on the installation's network.
 
 ## Database
 
@@ -132,60 +131,52 @@ feature and the nextest `ci` profile with every feature on. It runs the same way
 
 ## Development Environment
 
-Build the `dev` image on the host and create an OpenShell sandbox from it with the
-installation's `vv-registration` provider attached:
-
 ```sh
 docker build --target dev -t veoveo-mcp-artifact:dev .
-openshell sandbox create --name vv-mcp-artifact --from veoveo-mcp-artifact:dev \
-  --policy openshell/policy.yaml --provider vv-registration --detach -- sleep infinity
 ```
 
-The policy lets the server reach the Gateway at `host.openshell.internal:8080`, the
-installation's PostgreSQL server at port 5432 and its object store at port 9000, and lets
-acceptance tests reach the Gateway, the object store and Artifact's own share route
-through its forward at port 8801. Signed requests to the object
-store pass through as TCP, because a proxy that changed a signed header would void the
-signature.
+A local installation from
+[veoveo-template-installation](https://github.com/VeoveoAI/veoveo-template-installation)
+runs this image, under its own layer, as the Compose service `vv-mcp-artifact`, which
+works in the installation's Lore repository at `/sandbox/src`. The environment reaches
+the Gateway at `vv-gateway.internal:8080`, PostgreSQL at `vv-postgres.internal:5432` and
+the object store at `vv-seaweedfs.internal:9000` on the installation's network. Signed
+requests to the object store go there directly, because a proxy that changed a signed
+header would void the signature. Run the commands below from the installation's
+directory.
 
 ### Running Artifact in the environment
 
-Artifact runs inside `vv-mcp-artifact` on port 8801 and registers with a Gateway that the
-environment reaches at `http://host.openshell.internal:8080`. The `vv-registration`
-provider supplies `VEOVEO_REGISTRATION_SECRET` as a placeholder that OpenShell resolves
-only on the Gateway endpoint. The storage credential cannot work that way, because the
-server signs URLs with the secret itself, so the installation uploads it as an
+Artifact runs inside `vv-mcp-artifact` on port 8801 and registers with the Gateway at
+`http://vv-gateway.internal:8080`. The environment holds a placeholder for
+`VEOVEO_REGISTRATION_SECRET`, which the installation's edge replaces with the secret on
+the registration request. The storage credential cannot work that way, because the
+server signs URLs with the secret itself, so the installation pipes it into an
 owner-only file, `/sandbox/state/storage.env`, that holds `VEOVEO_STORAGE_ACCESS_KEY` and
 `VEOVEO_STORAGE_SECRET_KEY`.
 
-OpenShell pins every policy-listed executable path to the SHA-256 it first observes and
-denies the path once the file changes. Artifact therefore runs from a content-addressed
-copy under `/sandbox/run`, so each build gets a fresh path. The served binary builds into
-its own target directory, `/sandbox/target-serve`, apart from `target/`, where the gate
-and acceptance builds enable test-only dependency features, so a test build is never
-installed:
+The served binary builds into its own target directory, `/sandbox/target-serve`, apart
+from `target/`, where the gate and acceptance builds enable test-only dependency
+features, so a test build is never served:
 
 ```sh
-openshell sandbox exec vv-mcp-artifact -- bash -lc 'cd /sandbox/src \
+docker compose exec vv-mcp-artifact bash -lc 'cd /sandbox/src \
   && cargo build --locked --target-dir /sandbox/target-serve --bin veoveo-mcp-artifact \
-  && bin=/sandbox/run/veoveo-mcp-artifact-$(sha256sum /sandbox/target-serve/debug/veoveo-mcp-artifact | cut -c1-16) \
-  && install -D -m 0755 /sandbox/target-serve/debug/veoveo-mcp-artifact "$bin" \
   && set -a && . /sandbox/state/storage.env && set +a \
-  && VEOVEO_PUBLIC_BASE_URL=http://host.openshell.internal:8801 \
-     VEOVEO_GATEWAY_ISSUER=http://host.openshell.internal:8080 \
+  && VEOVEO_PUBLIC_BASE_URL=http://vv-mcp-artifact.internal:8801 \
+     VEOVEO_GATEWAY_ISSUER=http://vv-gateway.internal:8080 \
      VEOVEO_KEY_DIRECTORY=/sandbox/artifact/keys \
-     VEOVEO_STORAGE_ENDPOINT=http://host.openshell.internal:9000 \
-     "$bin"'
-openshell forward start 8801 vv-mcp-artifact -d
+     VEOVEO_STORAGE_ENDPOINT=http://vv-seaweedfs.internal:9000 \
+     exec /sandbox/target-serve/debug/veoveo-mcp-artifact'
 ```
 
-The first command keeps running in its terminal. Artifact prepares its bucket and
-registers before it listens, and the Gateway reaches it as
-`http://host.openshell.internal:8801/artifact/mcp`. Signed URLs name the object store as
-`http://host.openshell.internal:9000` and share links name
-`http://host.openshell.internal:8801`; a browser on the host resolves that name only
-when the host maps it to `127.0.0.1`. Artifact removes its registration when it
-receives SIGTERM or Ctrl-C.
+The command keeps running in its terminal. Artifact prepares its bucket and registers
+before it listens, and the Gateway reaches it as
+`http://vv-mcp-artifact.internal:8801/artifact/mcp`. Signed URLs name the object store as
+`http://vv-seaweedfs.internal:9000` and share links name
+`http://vv-mcp-artifact.internal:8801`; a browser on the host follows them once the host
+maps those names to `127.0.0.1`. Artifact removes its registration when it receives
+SIGTERM or Ctrl-C.
 
 ## Acceptance
 
@@ -204,17 +195,13 @@ so nextest runs them one at a time. The local installation has one tenant, so a 
 refused across tenants is covered by the database tests.
 
 The tests are ignored by default. With the installation running and the callers' keys
-copied to `/sandbox/acceptance`, run them from a fresh nextest archive extraction, so the
-test binaries also get fresh paths:
+copied to `/sandbox/acceptance`, run them:
 
 ```sh
-openshell sandbox exec vv-mcp-artifact -- bash -lc 'cd /sandbox/src \
-  && cargo nextest archive --test acceptance --archive-file /sandbox/run/acceptance.tar.zst \
-  && run=/sandbox/run/acceptance-$(date +%s%N) && mkdir -p "$run" \
-  && VEOVEO_ACCEPTANCE_GATEWAY=http://host.openshell.internal:8080 \
+docker compose exec vv-mcp-artifact bash -lc 'cd /sandbox/src \
+  && VEOVEO_ACCEPTANCE_GATEWAY=http://vv-gateway.internal:8080 \
      VEOVEO_ACCEPTANCE_KEY_DIRECTORY=/sandbox/acceptance \
-     cargo nextest run --archive-file /sandbox/run/acceptance.tar.zst \
-       --workspace-remap /sandbox/src --extract-to "$run" --run-ignored only'
+     cargo nextest run --test acceptance --run-ignored only'
 ```
 
 ## License

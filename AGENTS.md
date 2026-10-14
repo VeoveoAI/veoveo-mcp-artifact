@@ -2,7 +2,7 @@
 
 These rules apply to veoveo-mcp-artifact.
 
-- Use upstream runtimes such as OpenShell and PostgreSQL unmodified. Adapt through
+- Use upstream runtimes such as PostgreSQL unmodified. Adapt through
   supported configuration.
 - Prefer strong types: typed structs, enums and domain identifiers over raw strings and
   JSON wherever the shape is known.

@@ -333,9 +333,9 @@ A download calls `create_download` and streams the signed GET, whole or as one r
 A failure names object storage's status and S3 error code, never the signed URL.
 
 A call bound to a request lasts as long as the forwarded token, at most a minute, so a
-handler starts a Task for an upload that may take longer. A consumer's OpenShell policy
-lets its binary reach the Gateway's `/oauth/token` and `/mcp/{profile}`, and object
-storage as TCP pass-through, like Artifact's own policy.
+handler starts a Task for an upload that may take longer. A consumer reaches the
+Gateway's `/oauth/token` and `/mcp/{profile}`, and object storage, on the installation's
+network, as Artifact does.
 
 ## Lists And Paging
 
@@ -459,12 +459,12 @@ origin's host in the `Host` header, and the installation routes the origin's
 SigV4 signs with the secret key inside the server, so the server's environment holds the
 credential itself, the way the Gateway's holds the database owner's password; a
 placeholder that a proxy substitutes cannot sign. The credential is limited to the
-bucket. Locally the signed address is `http://host.openshell.internal:9000`, and without
-a public origin share links name `http://host.openshell.internal:8801`, Artifact's
-forward, so a host browser follows both once the host maps that name to `127.0.0.1`, as
-it does for the Gateway. The sandbox policy
-passes object storage through as TCP, because an inspecting proxy that changed a signed
-header would void the signature.
+bucket. Locally the signed address is `http://vv-seaweedfs.internal:9000`, and without a
+public origin share links name `http://vv-mcp-artifact.internal:8801`, Artifact's own
+name. The installation publishes both ports on the host's loopback interface, so a host
+browser follows both once the host maps those names to `127.0.0.1`. Environments reach
+object storage directly on the installation's network, because a proxy that changed a
+signed header would void the signature.
 
 ## Contract Compliance
 
