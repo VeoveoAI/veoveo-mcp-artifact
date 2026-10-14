@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use chrono::Utc;
 use support::{
     Who, create, declared_store, now,
-    rustfs::send,
+    seaweedfs::send,
     service::{owner, sha256, with_service},
     upload_request,
 };

@@ -103,8 +103,8 @@ CARGO_TARGET_DIR=<empty directory> cargo sqlx prepare --workspace -- --all-targe
 ## Object Storage
 
 The server signs every request that moves bytes and makes its own calls with the
-storage credential it is configured with. Tests start a private RustFS per test process
-from the `rustfs` binary the `dev` image copies out of the pinned RustFS image, with a
+storage credential it is configured with. Tests start a private SeaweedFS (`weed mini`) per test process
+from the `weed` binary the `dev` image copies out of the pinned SeaweedFS image, with a
 fresh bucket for each test, the way they start PostgreSQL.
 
 ## Running

@@ -1,5 +1,5 @@
 //! The service against a fresh database migrated as the server's own login, a private
-//! RustFS with a fresh bucket and a Task runtime with its own process instance.
+//! SeaweedFS with a fresh bucket and a Task runtime with its own process instance.
 #![allow(dead_code)]
 
 use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
@@ -17,7 +17,7 @@ use veoveo_types::{
     WorkContextOutputPolicy,
 };
 
-use super::{Who, rustfs::TestRustFs};
+use super::{Who, seaweedfs::TestSeaweedFs};
 
 /// The origin the test service names in share links.
 pub const SHARE_ORIGIN: &str = "http://artifact.test:8801";
@@ -26,7 +26,7 @@ pub const SHARE_ORIGIN: &str = "http://artifact.test:8801";
 pub struct Harness {
     pub service: Arc<ArtifactService>,
     pub storage: ObjectStorage,
-    _rustfs: TestRustFs,
+    _seaweedfs: TestSeaweedFs,
     /// The server's own store, which a test listens on for Artifact's changes.
     pub platform: PlatformStore,
     /// The database, whose owner connection reads the audit log.
@@ -45,8 +45,8 @@ where
         let platform = db.server_store(&server()).await;
         let instance = Arc::new(Instance::start(&platform, &server()).await.unwrap());
         let tasks = TaskRuntime::new(platform.clone(), server(), instance);
-        let rustfs = TestRustFs::start().await;
-        let storage = rustfs.storage().await;
+        let seaweedfs = TestSeaweedFs::start().await;
+        let storage = seaweedfs.storage().await;
         let store = super::declared_store(platform.clone()).await;
         let service = Arc::new(ArtifactService::new(
             store,
@@ -57,7 +57,7 @@ where
         let harness = Arc::new(Harness {
             service,
             storage,
-            _rustfs: rustfs,
+            _seaweedfs: seaweedfs,
             platform,
             db,
         });

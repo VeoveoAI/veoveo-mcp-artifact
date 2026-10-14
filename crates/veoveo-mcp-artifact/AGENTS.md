@@ -60,7 +60,7 @@ decisions; bytes move between clients and object storage through URLs the server
 ## Build And Test
 
 - `cargo test -p veoveo-mcp-artifact` with the PostgreSQL 18 server programs and
-  `rustfs` on `PATH`, as the `dev` image provides them.
+  `weed` (SeaweedFS) on `PATH`, as the `dev` image provides them.
 - `cargo test -p veoveo-mcp-artifact --no-default-features --features contract` checks
   the contract alone. `tests/client.rs` needs the `client` feature, so the gate runs
   nextest with `--all-features`.

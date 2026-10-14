@@ -45,7 +45,7 @@ port         8801
 | [Referrer Policy](https://www.w3.org/TR/referrer-policy/) | The share route's answers carry `Referrer-Policy: no-referrer`. |
 | [Veoveo server registration](https://github.com/VeoveoAI/veoveo-sdk-rust) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions in `ai.veoveo/authorization`. |
 | [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/cec2f9fb2916b048dcebf46af4564d5dcf717614/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. |
-| RustFS 1.0.1 | The installation's object store, pinned by image digest. Artifact uses only the S3 calls listed above through aws-sdk-s3 1.152.0, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
+| SeaweedFS 4.48 | The installation's object store, run as `weed mini` and pinned by image digest. Artifact uses only the S3 calls listed above through aws-sdk-s3 1.152.0, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
 
 ## Domain Contract
 
@@ -177,7 +177,7 @@ limited to that bucket and never leaves the server.
 
 | The caller declares | Form | The server checks |
 |---|---|---|
-| a size up to 100 MiB, with or without a SHA-256 | one signed PutObject | RustFS refuses a different size, or a different SHA-256 when one was declared, while it writes |
+| a size up to 100 MiB, with or without a SHA-256 | one signed PutObject | SeaweedFS refuses a different size, or a different SHA-256 when one was declared, while it writes |
 | a larger size, or no size | multipart, with a part size the server chooses | each part's size, and each part's SHA-256 when the client sends one |
 
 Every signed PutObject binds `Content-Length`, `Content-Type` and `If-None-Match: *`,
@@ -188,7 +188,7 @@ Parts upload in parallel, and a failed part is sent again on a URL from
 `sign_upload_parts`.
 
 `complete_upload` completes the multipart upload create-only with the part list from
-ListParts, then reads the object's size with HeadObject. When RustFS checked a
+ListParts, then reads the object's size with HeadObject. When SeaweedFS checked a
 declared SHA-256 during a single PUT, the artifact becomes available at once. In every
 other case the server computes the SHA-256 itself. Objects up to 8 MiB are hashed
 during `complete_upload`. A larger object reads `verifying` while a verification Task
@@ -212,7 +212,7 @@ once.
 `create_download` signs a GetObject valid for 5 minutes, with
 `response-content-disposition` set to an attachment named after the artifact and
 `response-content-type` set to its media type. Ranges and resumed transfers go to
-RustFS on the same URL.
+SeaweedFS on the same URL.
 
 ### Bucket Preparation
 
@@ -261,7 +261,7 @@ shared by link. Returning an artifact to private revokes its live links in the s
 transaction, so releasing it again revives none; revoking a link or deleting its
 artifact also stops new redemptions at once. A URL already issued expires within its 5
 minutes. A redemption counts once per visit to the share route, because ranges and
-resumes go to RustFS.
+resumes go to SeaweedFS.
 
 A caller holds at most one pending request per artifact, and asks only for a level
 above the one it holds; a caller who cannot read the artifact gets the answer for an
@@ -306,7 +306,7 @@ An upload reads the body from an `AsyncRead`, a stream of chunks or bytes in mem
 
 | Body | Upload |
 |---|---|
-| at most 16 MiB, size known or not | The client reads it into memory, then declares its size and SHA-256 with `create_upload`. One create-only PUT sends it, and RustFS refuses other bytes. The artifact is available at completion. |
+| at most 16 MiB, size known or not | The client reads it into memory, then declares its size and SHA-256 with `create_upload`. One create-only PUT sends it, and SeaweedFS refuses other bytes. The artifact is available at completion. |
 | larger than 16 MiB | The client declares a known size as the upload's maximum size, so the upload is multipart and every part can be signed and sent again on its own. It reads parts of the upload's part size and sends them while it reads the next. |
 
 A part takes a permit before the client reads it, so at most `parallelism` parts are in
@@ -423,7 +423,7 @@ Task. Startup declares the classes through the server's own login with core's
 `AuditTransactionWrite::append_as_server`, which the database confines to classes under
 the `artifact.` prefix. A record states the authorization, such as a principal allowed
 to download an artifact until a time. An installation that must prove each transfer
-adds RustFS's own audit feed.
+adds SeaweedFS's S3 audit log (`s3.auditLogConfig`).
 
 Row triggers notify the `artifact` channel with each row's key and tenant, and
 subscriptions wake only for their own tenant.
@@ -446,7 +446,7 @@ its process instance and deletes its registration.
 ## Deployment
 
 The image runs as UID 10001 with a read-only root filesystem. The installation runs
-RustFS beside PostgreSQL, pinned by digest, and configures the server through
+SeaweedFS beside PostgreSQL, pinned by digest, and configures the server through
 `VEOVEO_STORAGE_ENDPOINT`, `VEOVEO_STORAGE_SIGNING_ENDPOINT` (the address clients use,
 defaulting to the endpoint), `VEOVEO_STORAGE_REGION`, `VEOVEO_STORAGE_BUCKET`,
 `VEOVEO_STORAGE_ACCESS_KEY`, `VEOVEO_STORAGE_SECRET_KEY` and
@@ -480,11 +480,11 @@ header would void the signature.
 |---|---|
 | Unit | Checksum headers, object keys, attachment dispositions, part plans, permission risks, audit schemas, the requirement table and tool annotations, the MCP setup, subscription matching and configuration |
 | Database | Core's database checks over every statement and table; `tests/sql_confinement.rs` holds every query, migration and test query to the `artifact` schema with the SDK's `assert_sql_confined`; `effective_level` against a matrix of owners, grants, groups, Work Context roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
-| Object storage | A private RustFS per test process, from the binary in the pinned image: signed single and multipart uploads, a wrong size, checksum or part checksum refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
-| Service | The store and RustFS together: declared and undeclared uploads, refused bytes, aborts, a large object verified in a Task, a verification whose database sessions end while its digest write waits, which runs again from its recovery, a digest mismatch, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
+| Object storage | A private SeaweedFS per test process, from the binary in the pinned image: signed single and multipart uploads, a wrong size, checksum or part checksum refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
+| Service | The store and SeaweedFS together: declared and undeclared uploads, refused bytes, aborts, a large object verified in a Task, a verification whose database sessions end while its digest write waits, which runs again from its recovery, a digest mismatch, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
 | MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
 | Sharing | Database tests: returning to private ends only live links and releasing again revives none; links need an administrator and a released, available artifact without labels; twelve concurrent redemptions of a link limited to three count exactly three; expired, revoked, deleted and unknown links redeem nothing, and a dropped redemption counts nothing; share-link pages and their cursors. Access requests: an approval writes the requested grant and records each step, visibility and the held level bound a request, only the requester withdraws and only an administrator decides, an approval keeps a stronger grant, and listings page by role and state |
-| Share route | `tests/share_route.rs` through the hosted router and a private RustFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
-| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private RustFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves verifying, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and waits for its verification through the artifact's resource updates, which resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
+| Share route | `tests/share_route.rs` through the hosted router and a private SeaweedFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
+| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private SeaweedFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves verifying, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and waits for its verification through the artifact's resource updates, which resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size or digest mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |
-| Acceptance | `tests/acceptance.rs` through a running installation's Gateway and RustFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |
+| Acceptance | `tests/acceptance.rs` through a running installation's Gateway and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |

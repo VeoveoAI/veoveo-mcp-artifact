@@ -1,4 +1,4 @@
-//! Object storage against a private RustFS: signed single and multipart uploads, the
+//! Object storage against a private SeaweedFS: signed single and multipart uploads, the
 //! headers each signature binds, create-only writes, ranged downloads and deletion.
 mod support;
 
@@ -6,7 +6,7 @@ use std::{future::Future, time::Duration};
 
 use chrono::Utc;
 use sha2::{Digest as _, Sha256};
-use support::rustfs::{TestRustFs, send};
+use support::seaweedfs::{TestSeaweedFs, send};
 use veoveo_mcp_artifact::{
     contract::{ArtifactId, ArtifactName, MediaType, ObjectSize, PartNumber},
     storage::{ObjectKey, ObjectStorage},
@@ -19,7 +19,7 @@ where
     Fut: Future<Output = ()>,
 {
     tokio::time::timeout(Duration::from_secs(120), async {
-        let server = TestRustFs::start().await;
+        let server = TestSeaweedFs::start().await;
         let storage = server.storage().await;
         test(storage).await;
         drop(server);

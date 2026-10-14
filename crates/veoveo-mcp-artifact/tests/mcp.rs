@@ -8,7 +8,7 @@ use std::sync::Arc;
 use axum::http::{StatusCode, header};
 use chrono::{TimeDelta, Utc};
 use serde_json::{Value, json};
-use support::rustfs::send;
+use support::seaweedfs::send;
 use support::service::{Harness, with_service};
 use tower::ServiceExt as _;
 use veoveo_audit_contract::AuditRequest;

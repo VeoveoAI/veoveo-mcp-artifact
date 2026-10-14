@@ -1,5 +1,5 @@
 //! Uploads and downloads end to end: the service signs, a client sends the bytes to a
-//! private RustFS, and the service completes, verifies, serves and sweeps them.
+//! private SeaweedFS, and the service completes, verifies, serves and sweeps them.
 mod support;
 
 use std::time::Duration;
@@ -7,7 +7,7 @@ use std::time::Duration;
 use chrono::Utc;
 use support::{
     Who,
-    rustfs::send,
+    seaweedfs::send,
     service::{owner, sha256, with_service},
     upload_request, with_key,
 };

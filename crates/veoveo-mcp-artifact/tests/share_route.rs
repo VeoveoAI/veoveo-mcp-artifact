@@ -1,5 +1,5 @@
 //! The share route as the hosted process serves it, at `/artifact/shares/{token}` without
-//! Gateway authentication, over a private RustFS: a live link redirects to a fresh signed
+//! Gateway authentication, over a private SeaweedFS: a live link redirects to a fresh signed
 //! GET, and every refused link answers the same `404`.
 mod support;
 
@@ -13,7 +13,7 @@ use axum::{
 use chrono::{TimeDelta, Utc};
 use support::{
     Who,
-    rustfs::send,
+    seaweedfs::send,
     service::{Harness, owner, sha256, with_service},
     upload_request,
 };

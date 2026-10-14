@@ -29,10 +29,10 @@ COPY env/profile.d/rust.sh /etc/profile.d/rust.sh
 # A development environment installs toolchains, components and crates, so the sandbox user owns them.
 RUN useradd --create-home --uid 1000 --shell /bin/bash sandbox \
     && chown -R sandbox:sandbox /usr/local/rustup /usr/local/cargo
-# RustFS 1.0.1, the installation's object store. Object-storage tests start a private
-# server per test process from this statically linked binary, as they start PostgreSQL.
-COPY --from=rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c \
-    /usr/bin/rustfs /usr/local/bin/rustfs
+# SeaweedFS 4.48, the installation's object store. Object-storage tests start a private
+# `weed mini` per test process from this statically linked binary, as they start PostgreSQL.
+COPY --from=chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d \
+    /usr/bin/weed /usr/local/bin/weed
 USER sandbox
 
 FROM dev AS source

@@ -2,8 +2,8 @@
 //! server, declares uses of Artifact's read and write permissions and calls Artifact for
 //! the test user: bound to a request Ledger serves, as `ctx.client()` binds it, and
 //! bound to one of Ledger's Tasks after the request that started it returned. Artifact
-//! runs in-process over a fresh database and a private RustFS, and the bytes move
-//! between the client and RustFS directly.
+//! runs in-process over a fresh database and a private SeaweedFS, and the bytes move
+//! between the client and SeaweedFS directly.
 mod support;
 
 use std::{collections::BTreeSet, num::NonZeroUsize, sync::Arc, time::Duration};
