@@ -160,13 +160,16 @@ owner-only file, `/sandbox/state/storage.env`, that holds `VEOVEO_STORAGE_ACCESS
 
 OpenShell pins every policy-listed executable path to the SHA-256 it first observes and
 denies the path once the file changes. Artifact therefore runs from a content-addressed
-copy under `/sandbox/run`, so each build gets a fresh path:
+copy under `/sandbox/run`, so each build gets a fresh path. The served binary builds into
+its own target directory, `/sandbox/target-serve`, apart from `target/`, where the gate
+and acceptance builds enable test-only dependency features, so a test build is never
+installed:
 
 ```sh
 openshell sandbox exec vv-mcp-artifact -- bash -lc 'cd /sandbox/src \
-  && cargo build --locked --bin veoveo-mcp-artifact \
-  && bin=/sandbox/run/veoveo-mcp-artifact-$(sha256sum target/debug/veoveo-mcp-artifact | cut -c1-16) \
-  && install -D -m 0755 target/debug/veoveo-mcp-artifact "$bin" \
+  && cargo build --locked --target-dir /sandbox/target-serve --bin veoveo-mcp-artifact \
+  && bin=/sandbox/run/veoveo-mcp-artifact-$(sha256sum /sandbox/target-serve/debug/veoveo-mcp-artifact | cut -c1-16) \
+  && install -D -m 0755 /sandbox/target-serve/debug/veoveo-mcp-artifact "$bin" \
   && set -a && . /sandbox/state/storage.env && set +a \
   && VEOVEO_PUBLIC_BASE_URL=http://host.openshell.internal:8801 \
      VEOVEO_GATEWAY_ISSUER=http://host.openshell.internal:8080 \
