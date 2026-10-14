@@ -88,7 +88,7 @@ The consumer's OpenShell policy lets its binary reach the Gateway's `/oauth/toke
 The server owns the PostgreSQL schema `artifact`. Every statement is a `.sql` file that
 sqlx checks at compile time against the migrated schema, and the statements and tables
 follow the server schema rules of veoveo-core's
-[database design](https://github.com/VeoveoAI/veoveo-core/blob/d5353ac1c4bba0cea6e115c734a000e598055aa6/docs/DATABASE.md).
+[database design](https://github.com/VeoveoAI/veoveo-core/blob/60b65e5c2af221bd92f814c98e7558a088413920/docs/DATABASE.md).
 Tests need the PostgreSQL 18 server programs on `PATH`; each test clones its own
 database from a migrated template.
 
