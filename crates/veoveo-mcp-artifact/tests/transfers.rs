@@ -14,11 +14,13 @@ use support::{
 use tokio_util::sync::CancellationToken;
 use veoveo_mcp_artifact::{
     contract::{ArtifactState, MediaType, ObjectSize, UploadTransfer},
+    server,
     service::{ArtifactError, run_verifications},
     storage::{ObjectKey, StorageError},
     store::ArtifactStoreError,
     sweep::sweep,
 };
+use veoveo_platform_store::PlatformStore;
 use veoveo_types::Checked;
 
 fn checked(
@@ -277,6 +279,107 @@ async fn a_large_object_of_unknown_size_verifies_in_a_task() {
         worker.await.unwrap().unwrap();
     })
     .await;
+}
+
+#[tokio::test]
+async fn a_verification_a_lost_connection_interrupts_runs_again_from_its_recovery() {
+    with_service(|harness| async move {
+        let who = Who::new("ada");
+        let caller = who.caller();
+        let created = harness
+            .service
+            .create_upload(
+                &caller,
+                &checked(octets(upload_request("video.bin", None))),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+        let Some(UploadTransfer::Multipart { parts, .. }) = &created.transfer else {
+            panic!("an unknown size takes parts");
+        };
+        let first = vec![3_u8; 5 * 1024 * 1024];
+        let last = vec![4_u8; 4 * 1024 * 1024];
+        for (part, bytes) in [(&parts[0], &first), (&parts[1], &last)] {
+            assert!(
+                send(&part.transfer, bytes.clone(), &[])
+                    .await
+                    .status()
+                    .is_success()
+            );
+        }
+        let artifact = harness
+            .service
+            .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(artifact.state, ArtifactState::Verifying);
+
+        // Another login of Artifact's group holds the artifact's row, so the verification
+        // waits on its digest write with the statement in flight.
+        let locker = harness.db.server_store(&server()).await;
+        let mut lock = locker.pool().begin().await.unwrap();
+        sqlx::query_file_scalar!(
+            "tests/transfers/lock_artifact.sql",
+            artifact.artifact_id.as_uuid()
+        )
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+        let stop = CancellationToken::new();
+        let worker = tokio::spawn(run_verifications(harness.service.clone(), stop.clone()));
+        let interrupted = lock_waiter(&locker, None).await;
+
+        // Every session of Artifact's login ends, the waiting one with them. The worker
+        // gives the verification to its recovery, which queues it again, and the worker
+        // claims it once more on a new connection.
+        assert!(harness.db.end_sessions(&harness.platform).await > 0);
+        lock_waiter(&locker, Some(interrupted)).await;
+        lock.rollback().await.unwrap();
+        let verified = tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                let current = harness
+                    .service
+                    .artifact(&caller, artifact.artifact_id, Utc::now())
+                    .await
+                    .unwrap();
+                if current.state != ArtifactState::Verifying {
+                    break current;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("the verification ran again within a minute");
+        let mut whole = first;
+        whole.extend_from_slice(&last);
+        assert_eq!(verified.state, ArtifactState::Available);
+        assert_eq!(verified.sha256, Some(sha256(&whole)));
+        assert!(!worker.is_finished(), "the worker kept running");
+        stop.cancel();
+        worker.await.unwrap().unwrap();
+        locker.close().await;
+    })
+    .await;
+}
+
+/// The process ID of a session waiting on a lock, other than `other_than`.
+async fn lock_waiter(store: &PlatformStore, other_than: Option<i32>) -> i32 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let waiting = sqlx::query_file_scalar!("tests/transfers/lock_waiters.sql")
+            .fetch_all(store.pool())
+            .await
+            .unwrap();
+        if let Some(pid) = waiting.into_iter().find(|pid| Some(*pid) != other_than) {
+            return pid;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no verification waited on the artifact's row within a minute"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 #[tokio::test]

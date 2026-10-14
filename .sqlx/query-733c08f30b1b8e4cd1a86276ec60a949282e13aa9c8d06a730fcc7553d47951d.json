@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.artifact_id AS \"artifact_id!\"\nFROM artifact.artifact AS a\nWHERE a.artifact_id = $1\nFOR UPDATE\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "artifact_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "artifact.artifact",
+            "name": "artifact_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "733c08f30b1b8e4cd1a86276ec60a949282e13aa9c8d06a730fcc7553d47951d"
+}

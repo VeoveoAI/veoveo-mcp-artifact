@@ -12,19 +12,19 @@ publish = false
 
 [workspace.dependencies]
 # veoveo-core, pinned to one revision for every core crate.
-veoveo-platform-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "60b65e5c2af221bd92f814c98e7558a088413920" }
-veoveo-test-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "60b65e5c2af221bd92f814c98e7558a088413920" }
-veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "60b65e5c2af221bd92f814c98e7558a088413920" }
-veoveo-audit = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "60b65e5c2af221bd92f814c98e7558a088413920" }
-veoveo-audit-contract = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "60b65e5c2af221bd92f814c98e7558a088413920" }
-veoveo-task-runtime = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "60b65e5c2af221bd92f814c98e7558a088413920" }
+veoveo-platform-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "286e2fcc8f2f36c44e1ce17e171289cac0f8d8cb" }
+veoveo-test-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "286e2fcc8f2f36c44e1ce17e171289cac0f8d8cb" }
+veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "286e2fcc8f2f36c44e1ce17e171289cac0f8d8cb" }
+veoveo-audit = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "286e2fcc8f2f36c44e1ce17e171289cac0f8d8cb" }
+veoveo-audit-contract = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "286e2fcc8f2f36c44e1ce17e171289cac0f8d8cb" }
+veoveo-task-runtime = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "286e2fcc8f2f36c44e1ce17e171289cac0f8d8cb" }
 # RFC 7523 client assertions for the acceptance callers.
-veoveo-oauth-client = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "60b65e5c2af221bd92f814c98e7558a088413920" }
+veoveo-oauth-client = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "286e2fcc8f2f36c44e1ce17e171289cac0f8d8cb" }
 # The Rust SDK for Veoveo MCP servers: the contract feature for the permission and audit
 # declarations, the server feature for hosting, registration and forwarded identity.
-veoveo-sdk-rust = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "72bef59b9d62fe2872843fcb505be6bd758256ff", default-features = false }
+veoveo-sdk-rust = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "02930e591be9602b34a9fddaf36bbb402c832b7a", default-features = false }
 # Ledger, the SDK's calls fixture server: the consumer the client tests call Artifact for.
-veoveo-sdk-rust-fixture = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "72bef59b9d62fe2872843fcb505be6bd758256ff" }
+veoveo-sdk-rust-fixture = { git = "https://github.com/VeoveoAI/veoveo-sdk-rust", rev = "02930e591be9602b34a9fddaf36bbb402c832b7a" }
 
 anyhow = "=1.0.104"
 # The share route, served beside MCP on the SDK's router.

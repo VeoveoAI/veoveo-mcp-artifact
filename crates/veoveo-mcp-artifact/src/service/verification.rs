@@ -4,13 +4,13 @@
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use chrono::Utc;
-use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use veoveo_audit_contract::{AuditActor, AuditContext, AuditPrincipalKind, AuditRequest};
+use veoveo_sdk_rust::durable_tasks::{TaskContext, TaskWorker};
 use veoveo_task_runtime::{
-    CreateTask, PrincipalKind, RecoveryClass, TaskFailure, TaskOwner, TaskSnapshot, TaskStatus,
-    TaskTransition,
+    CreateTask, PrincipalKind, RecoveryClass, ResumeCancellationPolicy, TaskFailure, TaskOwner,
+    TaskSnapshot, TaskStatus, TaskTransition,
 };
 use veoveo_types::{Sha256Digest, TaskId, TaskTypeName};
 
@@ -150,47 +150,46 @@ fn owner_caller(task_id: TaskId, owner: &TaskOwner) -> Result<Caller, ArtifactEr
     )?)
 }
 
-/// Run every verification this process's instance claims until `stop` is cancelled. A
-/// Task whose instance died returns to the queue, so a replica claims and resumes it.
+/// Run every verification this process's instance claims until `stop` is cancelled,
+/// through the SDK's [`TaskWorker`]. A Task whose instance died returns to the queue, so
+/// a replica claims and resumes it, and a lost database connection hands a running
+/// verification to its recovery. A recorded digest stands over a later cancellation
+/// request, because the artifact's state already reflects it.
 pub async fn run_verifications(
     service: Arc<ArtifactService>,
     stop: CancellationToken,
 ) -> anyhow::Result<()> {
-    let mut claimed = service.tasks.work().await?;
-    loop {
-        let next = tokio::select! {
-            () = stop.cancelled() => return Ok(()),
-            next = claimed.next() => next,
-        };
-        let snapshot = next.ok_or_else(|| anyhow::anyhow!("the Task claim stream ended"))??;
-        let task_id = snapshot.task_id;
-        let worker = service.clone();
-        let cancellation = stop.child_token();
-        let join = tokio::spawn(async move { settle(&worker, snapshot).await });
-        service
-            .tasks
-            .register_worker(task_id, cancellation, join)
-            .await?;
-        service.tasks.reap_workers().await;
-    }
+    TaskWorker::new(service.tasks.clone())
+        .cancellation(VERIFY_TASK, ResumeCancellationPolicy::PreserveOutcome)
+        .run(
+            move |context: TaskContext| {
+                let service = service.clone();
+                async move { service.verification(context.task()).await }
+            },
+            stop,
+        )
+        .await?;
+    Ok(())
 }
 
-/// Run one claimed Task to its end. A Task this version does not know fails.
-async fn settle(service: &ArtifactService, snapshot: TaskSnapshot) {
-    let task_id = snapshot.task_id;
-    let transition = if snapshot.task_type != VERIFY_TASK {
-        TaskTransition::Failed(TaskFailure::new(
-            "unsupported_artifact_task",
-            "the Task type is not an Artifact verification",
-        ))
-    } else {
-        match service.verify(&snapshot).await {
+impl ArtifactService {
+    /// The outcome of one claimed Task. A Task this version does not know fails, and so
+    /// does an object the server cannot read; a lost database connection is returned as
+    /// the error, which the worker hands to the Task's recovery.
+    async fn verification(&self, snapshot: &TaskSnapshot) -> Result<TaskTransition, ArtifactError> {
+        if snapshot.task_type != VERIFY_TASK {
+            return Ok(TaskTransition::Failed(TaskFailure::new(
+                "unsupported_artifact_task",
+                "the Task type is not an Artifact verification",
+            )));
+        }
+        match self.verify(snapshot).await {
             Ok(state) => {
                 let artifact =
                     serde_json::from_value::<VerificationRequest>(snapshot.request.clone())
                         .map(|request| request.artifact_id)
                         .ok();
-                TaskTransition::Succeeded {
+                Ok(TaskTransition::Succeeded {
                     message: format!("the artifact is {state}"),
                     result: serde_json::json!({ "state": state.as_str() }),
                     result_uri: artifact.and_then(|artifact_id| {
@@ -199,18 +198,16 @@ async fn settle(service: &ArtifactService, snapshot: TaskSnapshot) {
                         )
                         .ok()
                     }),
-                }
+                })
             }
+            Err(error) if error.is_connection() => Err(error),
             Err(error) => {
-                tracing::warn!(%error, %task_id, "verification failed");
-                TaskTransition::Failed(TaskFailure::new(
+                tracing::warn!(%error, task_id = %snapshot.task_id, "verification failed");
+                Ok(TaskTransition::Failed(TaskFailure::new(
                     "verification_failed",
                     "the server could not read the object to verify it",
-                ))
+                )))
             }
         }
-    };
-    if let Err(error) = service.tasks.transition(task_id, transition).await {
-        tracing::warn!(%error, %task_id, "could not settle a verification Task");
     }
 }
