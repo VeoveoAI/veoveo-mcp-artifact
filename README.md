@@ -115,9 +115,10 @@ storage settings: `VEOVEO_STORAGE_ENDPOINT`, `VEOVEO_STORAGE_SIGNING_ENDPOINT`,
 `VEOVEO_STORAGE_REGION`, `VEOVEO_STORAGE_BUCKET`, `VEOVEO_STORAGE_ACCESS_KEY`,
 `VEOVEO_STORAGE_SECRET_KEY` and `VEOVEO_STORAGE_CORS_ORIGINS`. It listens on port 8801
 and serves MCP at `{public_base_url}/artifact/mcp`. Share links name
-`{share_base_url}/artifact/shares/{token}`, where `VEOVEO_SHARE_BASE_URL` defaults to the
-public base URL; that route answers people without an account, so the installation
-routes it to the server without the Gateway.
+`{origin}/artifact/shares/{token}` under the installation's public origin,
+`VEOVEO_PUBLIC_ORIGIN`, such as `https://veoveo.example.com`, or under the public base
+URL when the installation has no public origin. That route answers people without an
+account, so the installation routes it to the server without the Gateway.
 
 ## Gate
 

@@ -123,14 +123,10 @@ async fn serve(
 
     let ready = storage.clone();
     let hosted = HostedServer::for_domain::<ArtifactMcp>()
+        // A browser following a share link names the installation origin's host, which
+        // the deployment admits.
         .deployment(deployment, args.allow_loopback_hosts)?
-        // A browser following a share link names the share origin's host.
-        .allowed_hosts(
-            args.allowed_hosts
-                .iter()
-                .cloned()
-                .chain([share_base.authority()]),
-        )
+        .allowed_hosts(args.allowed_hosts.iter().cloned())
         .internal_trust(registration.access_tokens(), http)?
         .handler(move || {
             Hosted::new(ArtifactMcp::new(app.clone()))

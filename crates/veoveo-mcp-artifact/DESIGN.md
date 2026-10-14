@@ -28,7 +28,7 @@ port         8801
 
 | Standard or protocol | Implemented profile |
 |---|---|
-| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-sdk-rust` e1642b7 implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
+| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-sdk-rust` 67314b4 implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
 | [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/) | Tool inputs and results, resource contents and the audit detail types Artifact declares. |
 | [Veoveo audit record](https://github.com/VeoveoAI/veoveo-core/blob/d5353ac1c4bba0cea6e115c734a000e598055aa6/platform/audit/contract/DESIGN.md), after NIST SP 800-53 Rev. 5 AU-3 and mapped to [OCSF 1.9](https://schema.ocsf.io/1.9.0/) | Each record carries core's envelope: Artifact's class with its OCSF API Activity (6003) and activity, an outcome, Artifact's reason code when a decision fails, the caller, the acting server and Task as `via`, the Artifact resource the decision concerns as its target, and a closed detail. |
 | [URI Template RFC 6570](https://www.rfc-editor.org/rfc/rfc6570) | Discovery declares simple variables, and collection pages continue through a `cursor` query parameter. |
@@ -448,15 +448,18 @@ RustFS beside PostgreSQL, pinned by digest, and configures the server through
 defaulting to the endpoint), `VEOVEO_STORAGE_REGION`, `VEOVEO_STORAGE_BUCKET`,
 `VEOVEO_STORAGE_ACCESS_KEY`, `VEOVEO_STORAGE_SECRET_KEY` and
 `VEOVEO_STORAGE_CORS_ORIGINS`, beside the registration settings every server takes.
-`VEOVEO_SHARE_BASE_URL` names the origin a share link's URL uses, defaulting to the
-public base URL, and the server accepts its host in the `Host` header. The installation
-routes that origin's `/artifact/shares/*` to the server for people without an account.
+Share links name `{origin}/artifact/shares/{token}` under the installation's public
+origin, `VEOVEO_PUBLIC_ORIGIN`, an `https` origin such as `https://veoveo.example.com`,
+or under the public base URL when the installation has none. The server accepts the
+origin's host in the `Host` header, and the installation routes the origin's
+`/artifact/shares/*` to the server for people without an account.
 SigV4 signs with the secret key inside the server, so the server's environment holds the
 credential itself, the way the Gateway's holds the database owner's password; a
 placeholder that a proxy substitutes cannot sign. The credential is limited to the
-bucket. Locally the signed address is `http://host.openshell.internal:9000` and share
-links name `http://host.openshell.internal:8801`, Artifact's forward, so a host browser
-follows both once the host maps that name to `127.0.0.1`, as it does for the Gateway. The sandbox policy
+bucket. Locally the signed address is `http://host.openshell.internal:9000`, and without
+a public origin share links name `http://host.openshell.internal:8801`, Artifact's
+forward, so a host browser follows both once the host maps that name to `127.0.0.1`, as
+it does for the Gateway. The sandbox policy
 passes object storage through as TCP, because an inspecting proxy that changed a signed
 header would void the signature.
 

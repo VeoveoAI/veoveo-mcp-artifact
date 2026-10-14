@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
-use veoveo_sdk_rust::{PublicDeployment, parse_allowed_host_authority};
+use veoveo_sdk_rust::{PublicDeployment, PublicOrigin, parse_allowed_host_authority};
 
 use crate::{share::ShareBase, storage::StorageConfig};
 
@@ -19,10 +19,12 @@ pub(super) struct Args {
     /// `{public_base_url}/artifact/mcp` and registers that URL.
     #[arg(long, env = "VEOVEO_PUBLIC_BASE_URL")]
     pub public_base_url: String,
-    /// The origin a share link's URL names, under which `/artifact/shares/{token}`
-    /// reaches Artifact for someone without an account. Defaults to the public base URL.
-    #[arg(long, env = "VEOVEO_SHARE_BASE_URL")]
-    pub share_base_url: Option<String>,
+    /// The installation's public origin, such as `https://veoveo.example.com`. Share
+    /// links name `{origin}/artifact/shares/{token}`, which reaches Artifact for someone
+    /// without an account, and Artifact accepts the origin's host. Without it, share
+    /// links name the public base URL.
+    #[arg(long, env = "VEOVEO_PUBLIC_ORIGIN")]
+    pub public_origin: Option<PublicOrigin>,
     /// The Gateway's RFC 8414 issuer; registration discovers its endpoint from there.
     #[arg(long, env = "VEOVEO_GATEWAY_ISSUER")]
     pub gateway_issuer: Url,
@@ -85,16 +87,17 @@ pub(super) struct Args {
 
 impl Args {
     pub fn public_deployment(&self) -> anyhow::Result<PublicDeployment> {
-        PublicDeployment::new(&self.public_base_url)
+        Ok(PublicDeployment::new(&self.public_base_url)?.with_origin(self.public_origin.clone()))
     }
 
+    /// The origin share links name: the installation's public origin, or else the public
+    /// base URL.
     pub fn share_base(&self) -> anyhow::Result<ShareBase> {
-        ShareBase::parse(
-            self.share_base_url
-                .as_deref()
-                .unwrap_or(&self.public_base_url),
-        )
-        .map_err(anyhow::Error::msg)
+        let origin = match &self.public_origin {
+            Some(origin) => origin.to_string(),
+            None => self.public_base_url.clone(),
+        };
+        ShareBase::parse(&origin).map_err(anyhow::Error::msg)
     }
 
     pub fn storage(&self) -> StorageConfig {
@@ -157,5 +160,54 @@ mod tests {
         );
         assert_eq!(storage.bucket, "artifacts");
         assert!(!format!("{storage:?}").contains("not-printed"));
+    }
+
+    #[test]
+    fn share_links_and_hosts_follow_the_installation_origin() {
+        let args = Args::try_parse_from([
+            "veoveo-mcp-artifact",
+            "--public-base-url",
+            "http://host.openshell.internal:8801",
+            "--public-origin",
+            "https://veoveo.example.com",
+            "--gateway-issuer",
+            "http://host.openshell.internal:8080",
+            "--registration-secret",
+            "placeholder",
+            "--storage-endpoint",
+            "http://host.openshell.internal:9000",
+            "--storage-access-key",
+            "artifact",
+            "--storage-secret-key",
+            "not-printed",
+        ])
+        .unwrap();
+        assert_eq!(args.share_base().unwrap().authority(), "veoveo.example.com");
+        let deployment = args.public_deployment().unwrap();
+        assert_eq!(
+            veoveo_sdk_rust::public_allowed_hosts(&deployment, false),
+            vec!["host.openshell.internal:8801", "veoveo.example.com"]
+        );
+        assert!(
+            Args::try_parse_from([
+                "veoveo-mcp-artifact",
+                "--public-base-url",
+                "http://host.openshell.internal:8801",
+                "--public-origin",
+                "http://veoveo.example.com",
+                "--gateway-issuer",
+                "http://host.openshell.internal:8080",
+                "--registration-secret",
+                "placeholder",
+                "--storage-endpoint",
+                "http://host.openshell.internal:9000",
+                "--storage-access-key",
+                "artifact",
+                "--storage-secret-key",
+                "not-printed",
+            ])
+            .is_err(),
+            "the public origin is an https origin"
+        );
     }
 }
