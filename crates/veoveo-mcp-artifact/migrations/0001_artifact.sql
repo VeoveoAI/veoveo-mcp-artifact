@@ -62,6 +62,12 @@ CREATE TABLE artifact.artifact (
     CHECK (retain_until IS NULL OR retention_days IS NOT NULL)
 );
 
+
+-- The sweep finds verifying artifacts whose verification Task is gone, so it can fail
+-- them. Few artifacts verify at once, and a partial index holds only those.
+CREATE INDEX artifact_verifying ON artifact.artifact (tenant, artifact_id)
+    WHERE state = 'verifying';
+
 -- One index per listing filter, each ending in the artifact ID so a page continues from
 -- its last key. Names compare bytewise, so a prefix is an index range.
 CREATE INDEX artifact_work_context_page ON artifact.artifact (tenant, work_context, artifact_id);
