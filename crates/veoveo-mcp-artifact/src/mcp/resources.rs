@@ -4,8 +4,8 @@ use chrono::Utc;
 use rmcp::{
     ErrorData as McpError, RoleServer, model::ReadResourceRequestParams, service::RequestContext,
 };
-use veoveo_platform_store::PageSize;
 use veoveo_sdk_rust::hosting::{DomainRead, json_read, served_by_host};
+use veoveo_store::PageSize;
 
 use crate::{
     contract::{

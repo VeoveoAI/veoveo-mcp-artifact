@@ -14,7 +14,7 @@ use veoveo_mcp_artifact::{
     },
     store::{ArtifactStoreError, CompletedObject},
 };
-use veoveo_platform_store::MaintenanceBatch;
+use veoveo_store::MaintenanceBatch;
 use veoveo_types::{Checked, TenantId};
 
 async fn set_limits(store: &veoveo_mcp_artifact::store::ArtifactStore, limits: UploadLimits) {

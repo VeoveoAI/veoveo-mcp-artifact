@@ -14,10 +14,10 @@ use rmcp::{
     service::{SubscriptionContext, SubscriptionSendError},
 };
 use tokio::sync::broadcast;
-use veoveo_platform_store::{
+use veoveo_sdk_rust::hosting::{SubscriptionListener, requested_addresses};
+use veoveo_store::{
     ChangeSignal, ChangeStream, Channel, PlatformStore, ServerSchema, TenantId as StoredTenant,
 };
-use veoveo_sdk_rust::hosting::{SubscriptionListener, requested_addresses};
 
 use crate::contract::{ArtifactId, ArtifactResource, UploadId};
 

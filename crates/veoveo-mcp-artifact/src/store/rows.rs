@@ -2,7 +2,7 @@
 //! pass the same admission as a request, so a row the contract would reject fails to load.
 use chrono::{DateTime, Utc};
 use sqlx::types::Json;
-use veoveo_platform_store::PrincipalId as StoredPrincipal;
+use veoveo_store::PrincipalId as StoredPrincipal;
 use veoveo_types::{AccessLevel, DataLabelId, PrincipalId, Sha256Digest, WorkContextId};
 
 use crate::contract::{

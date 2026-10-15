@@ -7,7 +7,7 @@ use sqlx::{Postgres, Transaction};
 use veoveo_audit_contract::{
     AuditDraft, AuditOutcome, AuditRegistry, AuditRequest, AuditTransactionWrite,
 };
-use veoveo_platform_store::{CursorScope, KeysetCursor, Page, PageSize, TenantId as StoredTenant};
+use veoveo_store::{CursorScope, KeysetCursor, Page, PageSize, TenantId as StoredTenant};
 use veoveo_types::{AccessLevel, PrincipalId, Sha256Digest};
 
 use crate::contract::{

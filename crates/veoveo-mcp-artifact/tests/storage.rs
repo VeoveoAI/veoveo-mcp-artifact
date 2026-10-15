@@ -29,7 +29,7 @@ where
 }
 
 fn key() -> ObjectKey {
-    let tenant = veoveo_platform_store::deterministic_tenant_id("acme").unwrap();
+    let tenant = veoveo_store::deterministic_tenant_id("acme").unwrap();
     ObjectKey::for_artifact(tenant, ArtifactId::new())
 }
 

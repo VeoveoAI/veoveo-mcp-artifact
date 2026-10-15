@@ -39,7 +39,7 @@ pub use uploads::{
 use std::sync::Arc;
 
 use veoveo_audit_contract::AuditRegistry;
-use veoveo_platform_store::PlatformStore;
+use veoveo_store::PlatformStore;
 
 /// The Artifact server's persistence over the pool its registration login opened, and
 /// the audit registry that admits its records.

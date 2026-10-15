@@ -29,7 +29,7 @@ use veoveo_mcp_artifact::{
     migrator, server,
     store::{ArtifactStore, ArtifactStoreError, CompletedObject},
 };
-use veoveo_platform_store::PlatformStore;
+use veoveo_store::PlatformStore;
 use veoveo_test_fixtures::store::TestDb;
 use veoveo_types::{AccessLevel, AccessSubject, Checked, PrincipalId, ServerSlug, TenantId};
 

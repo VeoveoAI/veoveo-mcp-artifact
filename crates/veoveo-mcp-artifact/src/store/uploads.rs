@@ -1,7 +1,7 @@
 //! Uploads: reserving an artifact and its bytes, completing, aborting and listing.
 use chrono::{DateTime, Utc};
 use sqlx::types::Json;
-use veoveo_platform_store::{
+use veoveo_store::{
     CursorScope, KeysetCursor, Page, PageSize, PrincipalId as StoredPrincipal,
     TenantId as StoredTenant,
 };

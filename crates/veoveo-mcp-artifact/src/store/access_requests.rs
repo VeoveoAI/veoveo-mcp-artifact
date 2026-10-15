@@ -1,7 +1,7 @@
 //! Access requests: a caller who reads an artifact asks its administrators for a higher
 //! level, withdraws the request, or has it approved, which writes the grant, or denied.
 use chrono::{DateTime, Utc};
-use veoveo_platform_store::{
+use veoveo_store::{
     CursorScope, KeysetCursor, Page, PageSize, PrincipalId as StoredPrincipal,
     TenantId as StoredTenant,
 };

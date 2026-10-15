@@ -20,7 +20,7 @@ use veoveo_mcp_artifact::{
     store::ArtifactStoreError,
     sweep::sweep,
 };
-use veoveo_platform_store::PlatformStore;
+use veoveo_store::PlatformStore;
 use veoveo_types::Checked;
 
 fn checked(

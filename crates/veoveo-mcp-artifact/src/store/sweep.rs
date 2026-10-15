@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use sqlx::{Postgres, Transaction};
-use veoveo_platform_store::{MaintenanceBatch, Pruned, TenantId as StoredTenant};
+use veoveo_store::{MaintenanceBatch, Pruned, TenantId as StoredTenant};
 
 use crate::contract::{ArtifactId, UploadId};
 

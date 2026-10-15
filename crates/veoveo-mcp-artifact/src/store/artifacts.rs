@@ -2,7 +2,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
-use veoveo_platform_store::{
+use veoveo_store::{
     CursorScope, KeysetCursor, Page, PageSize, PrincipalId as StoredPrincipal,
     TenantId as StoredTenant,
 };
@@ -366,7 +366,7 @@ impl ArtifactStore {
                 }
             },
             Some(ArtifactFilter::Owner(owner)) => {
-                let owner = veoveo_platform_store::deterministic_principal_id(
+                let owner = veoveo_store::deterministic_principal_id(
                     caller.tenant_key().as_str(),
                     owner.as_str(),
                 )

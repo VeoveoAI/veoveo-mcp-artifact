@@ -19,7 +19,7 @@ use veoveo_mcp_artifact::{
     migrator, server,
     store::{ArtifactStore, ArtifactStoreError, NewShareLink, ShareLinkPageSize},
 };
-use veoveo_platform_store::PlatformStore;
+use veoveo_store::PlatformStore;
 use veoveo_test_fixtures::store::TestDb;
 use veoveo_types::{Sha256Digest, TenantId, WorkContextMembershipLevel};
 

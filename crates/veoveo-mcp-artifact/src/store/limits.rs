@@ -2,7 +2,7 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
-use veoveo_platform_store::TenantId as StoredTenant;
+use veoveo_store::TenantId as StoredTenant;
 use veoveo_types::TenantId;
 
 use crate::contract::{
@@ -75,7 +75,7 @@ impl ArtifactStore {
         limits: &UploadLimits,
         now: DateTime<Utc>,
     ) -> Result<UploadLimits, ArtifactStoreError> {
-        let stored = veoveo_platform_store::deterministic_tenant_id(tenant.as_str())
+        let stored = veoveo_store::deterministic_tenant_id(tenant.as_str())
             .map_err(|_| ArtifactStoreError::InvalidCaller)?;
         let allowed: Option<Vec<String>> = match &limits.allowed_media_types {
             AllowedMediaTypes::Any => None,

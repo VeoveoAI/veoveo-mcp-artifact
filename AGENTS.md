@@ -18,7 +18,7 @@ These rules apply to veoveo-mcp-artifact.
   `crates/veoveo-mcp-artifact/tests/sql_confinement.rs` checks every query, migration
   and test query with the SDK's `assert_sql_confined`.
 - Statements and tables follow the server schema rules of veoveo-core's
-  [database design](https://github.com/VeoveoAI/veoveo-core/blob/cec2f9fb2916b048dcebf46af4564d5dcf717614/docs/DATABASE.md),
+  [database design](https://github.com/VeoveoAI/veoveo-core/blob/af12a7f52e5e7a445bfc4dca7bac853d5c3bebc9/docs/DATABASE.md),
   which `crates/veoveo-mcp-artifact/tests/database_conformance.rs` checks. A statement binds its tenant, bounds its
   rows and reaches them through an index in a generic plan. A table has a primary key,
   an index whose leading columns are each foreign key's, and a

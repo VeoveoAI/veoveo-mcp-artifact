@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use rmcp::ErrorData as McpError;
 use veoveo_sdk_rust::GatewayInternalIdentity;
-use veoveo_task_runtime::{TaskOwner, TaskSurface};
+use veoveo_task::{TaskOwner, TaskSurface};
 use veoveo_types::AccessLevel;
 
 use crate::store::{Caller, CallerContext, GroupAccess};
@@ -69,8 +69,8 @@ pub fn task_owner(identity: &GatewayInternalIdentity) -> Result<TaskOwner, McpEr
     Ok(TaskOwner {
         principal_key: actor.id.clone(),
         principal_kind: match actor.kind {
-            veoveo_sdk_rust::PrincipalKind::User => veoveo_task_runtime::PrincipalKind::User,
-            veoveo_sdk_rust::PrincipalKind::Service => veoveo_task_runtime::PrincipalKind::Service,
+            veoveo_sdk_rust::PrincipalKind::User => veoveo_task::PrincipalKind::User,
+            veoveo_sdk_rust::PrincipalKind::Service => veoveo_task::PrincipalKind::Service,
         },
         issuer: actor.issuer.clone(),
         subject: actor.subject.clone(),

@@ -1,7 +1,7 @@
 //! Uploads: reserving an artifact, signing where its bytes go, completing it from what
 //! object storage holds, and aborting it.
 use chrono::{DateTime, Utc};
-use veoveo_task_runtime::TaskOwner;
+use veoveo_task::TaskOwner;
 use veoveo_types::Checked;
 
 use crate::{

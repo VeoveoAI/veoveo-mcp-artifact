@@ -51,7 +51,7 @@ where
 
 /// Artifact's store over a server login, with Artifact's audit classes declared through
 /// that login as the server declares them at startup.
-pub async fn declared_store(platform: veoveo_platform_store::PlatformStore) -> ArtifactStore {
+pub async fn declared_store(platform: veoveo_store::PlatformStore) -> ArtifactStore {
     let registry = std::sync::Arc::new(veoveo_mcp_artifact::contract::audit_registry().unwrap());
     veoveo_audit::AuditStore::new(platform.clone(), registry.clone())
         .declare_as_server(&server())

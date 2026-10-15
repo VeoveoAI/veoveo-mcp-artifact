@@ -20,7 +20,7 @@ use veoveo_mcp_artifact::{
     migrator, server,
     store::{AccessRequestPageSize, ArtifactStore, ArtifactStoreError},
 };
-use veoveo_platform_store::PlatformStore;
+use veoveo_store::PlatformStore;
 use veoveo_test_fixtures::store::TestDb;
 use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, WorkContextMembershipLevel};
 

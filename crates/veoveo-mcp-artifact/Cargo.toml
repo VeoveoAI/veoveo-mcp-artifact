@@ -75,8 +75,8 @@ server = [
     "dep:url",
     "dep:veoveo-audit",
     "veoveo-audit-contract/postgres",
-    "dep:veoveo-platform-store",
-    "dep:veoveo-task-runtime",
+    "dep:veoveo-store",
+    "dep:veoveo-task",
 ]
 
 [dependencies]
@@ -112,13 +112,13 @@ tokio-util = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 veoveo-audit = { workspace = true, optional = true }
-veoveo-platform-store = { workspace = true, optional = true }
-veoveo-task-runtime = { workspace = true, optional = true }
+veoveo-store = { workspace = true, optional = true }
+veoveo-task = { workspace = true, optional = true }
 
 [dev-dependencies]
 veoveo-audit.workspace = true
 veoveo-audit-contract.workspace = true
-veoveo-platform-store.workspace = true
+veoveo-store.workspace = true
 veoveo-sdk-rust = { workspace = true, features = ["server", "testing", "client-credentials"] }
 veoveo-sdk-rust-fixture.workspace = true
 # The acceptance tests call Artifact through the Gateway as an MCP client.

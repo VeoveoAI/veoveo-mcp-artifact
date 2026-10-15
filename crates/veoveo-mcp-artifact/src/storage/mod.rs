@@ -16,7 +16,7 @@ use aws_sdk_s3::config::{
 };
 use base64::Engine as _;
 use url::Url;
-use veoveo_platform_store::TenantId as StoredTenant;
+use veoveo_store::TenantId as StoredTenant;
 use veoveo_types::Sha256Digest;
 
 use crate::contract::ArtifactId;
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn keys_name_the_tenant_and_artifact() {
-        let tenant = veoveo_platform_store::deterministic_tenant_id("acme").unwrap();
+        let tenant = veoveo_store::deterministic_tenant_id("acme").unwrap();
         let artifact = ArtifactId::new();
         let key = ObjectKey::for_artifact(tenant, artifact);
         assert_eq!(

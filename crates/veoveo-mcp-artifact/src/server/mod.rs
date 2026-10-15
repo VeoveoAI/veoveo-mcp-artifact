@@ -16,7 +16,7 @@ use veoveo_sdk_rust::{
     init_server_telemetry,
     registration::client::Registration,
 };
-use veoveo_task_runtime::{TaskRuntime, TaskRuntimeConfig};
+use veoveo_task::{TaskRuntime, TaskRuntimeConfig};
 
 use veoveo_audit::AuditStore;
 

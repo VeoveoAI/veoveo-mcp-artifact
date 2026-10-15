@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use veoveo_audit_contract::AuditContext;
-use veoveo_platform_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
 use veoveo_sdk_rust::OpaqueTaskId;
+use veoveo_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
 use veoveo_types::{
     AccessLevel, DataLabelId, GroupId, PrincipalId, ServerSlug, TenantId, WorkContextId,
     WorkContextMembershipLevel,
@@ -65,10 +65,10 @@ impl Caller {
         if audit.actor.tenant.as_ref() != Some(&tenant) {
             return Err(ArtifactStoreError::InvalidCaller);
         }
-        let stored_tenant = veoveo_platform_store::deterministic_tenant_id(tenant.as_str())
+        let stored_tenant = veoveo_store::deterministic_tenant_id(tenant.as_str())
             .map_err(|_| ArtifactStoreError::InvalidCaller)?;
         let stored_principal =
-            veoveo_platform_store::deterministic_principal_id(tenant.as_str(), principal.as_str())
+            veoveo_store::deterministic_principal_id(tenant.as_str(), principal.as_str())
                 .map_err(|_| ArtifactStoreError::InvalidCaller)?;
         Ok(Self {
             tenant_key: tenant,

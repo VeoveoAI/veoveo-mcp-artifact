@@ -7,7 +7,7 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use tokio_util::sync::CancellationToken;
-use veoveo_platform_store::MaintenanceBatch;
+use veoveo_store::MaintenanceBatch;
 
 use crate::{
     service::{ArtifactError, ArtifactService, VERIFICATION_DEADLINE},

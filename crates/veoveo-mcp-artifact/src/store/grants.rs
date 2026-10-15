@@ -1,7 +1,7 @@
 //! Grants: giving a principal or group a level on an artifact, revoking it, and listing
 //! an artifact's grants for its administrators.
 use chrono::{DateTime, Utc};
-use veoveo_platform_store::TenantId as StoredTenant;
+use veoveo_store::TenantId as StoredTenant;
 use veoveo_types::{AccessLevel, AccessSubject, GroupId, PrincipalId};
 
 use crate::contract::{ArtifactGrant, ArtifactId, GrantArtifactRequest, GrantChanged};

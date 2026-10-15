@@ -6,7 +6,7 @@ mod transfers;
 mod verification;
 
 use chrono::{DateTime, Utc};
-use veoveo_task_runtime::TaskRuntime;
+use veoveo_task::TaskRuntime;
 use veoveo_types::{AccessLevel, AccessSubject, TenantId};
 
 use crate::{
@@ -40,7 +40,7 @@ pub enum ArtifactError {
     #[error("the upload takes one signed PutObject, not parts")]
     NotMultipart,
     #[error("the verification Task failed: {0}")]
-    Tasks(#[from] veoveo_task_runtime::TaskError),
+    Tasks(#[from] veoveo_task::TaskError),
     #[error("the operating system's random source failed: {0}")]
     Random(getrandom::Error),
 }
@@ -53,7 +53,7 @@ impl ArtifactError {
             Self::Store(ArtifactStoreError::Database(error))
             | Self::Store(ArtifactStoreError::AuditAppend(
                 veoveo_audit_contract::AuditAppendError::Database(error),
-            )) => veoveo_platform_store::is_connection_error(error),
+            )) => veoveo_store::is_connection_error(error),
             Self::Tasks(error) => error.is_connection(),
             _ => false,
         }
@@ -70,10 +70,7 @@ impl veoveo_sdk_rust::durable_tasks::TaskWorkError for ArtifactError {
     fn is_lost(&self) -> bool {
         matches!(
             self,
-            Self::Tasks(
-                veoveo_task_runtime::TaskError::NotOwner(_)
-                    | veoveo_task_runtime::TaskError::Conflict(_)
-            )
+            Self::Tasks(veoveo_task::TaskError::NotOwner(_) | veoveo_task::TaskError::Conflict(_))
         )
     }
 

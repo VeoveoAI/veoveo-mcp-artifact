@@ -1,6 +1,6 @@
 //! Why a store operation refused or failed. Refusals name the rule; none repeats a
 //! caller's value or a stored secret.
-use veoveo_platform_store::CursorError;
+use veoveo_store::CursorError;
 use veoveo_types::AccessLevel;
 
 use crate::contract::{AccessRequestState, ArtifactState, MediaType, UploadState};

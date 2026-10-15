@@ -18,7 +18,7 @@ fn forbidden_to_clients(name: &str) -> bool {
     const FAMILIES: [&str; 4] = ["sqlx", "axum", "jsonwebtoken", "opentelemetry"];
     in_family(name, &FAMILIES)
         || server_only(name)
-        || matches!(name, "veoveo-task-runtime" | "veoveo-audit")
+        || matches!(name, "veoveo-task" | "veoveo-audit")
 }
 
 fn in_family(name: &str, families: &[&str]) -> bool {
@@ -31,7 +31,7 @@ fn in_family(name: &str, families: &[&str]) -> bool {
 }
 
 fn server_only(name: &str) -> bool {
-    name.starts_with("aws-") || matches!(name, "veoveo-platform-store" | "veoveo-test-fixtures")
+    name.starts_with("aws-") || matches!(name, "veoveo-store" | "veoveo-test-fixtures")
 }
 
 /// The packages the crate reaches with only `feature` on, as a consumer's build
@@ -105,7 +105,7 @@ fn the_boundary_names_server_dependencies() {
         "tokio",
         "aws-sdk-s3",
         "aws-smithy-runtime",
-        "veoveo-platform-store",
+        "veoveo-store",
     ] {
         assert!(forbidden(name), "{name}");
     }
@@ -116,7 +116,7 @@ fn the_boundary_names_server_dependencies() {
         "sqlx-postgres",
         "aws-sdk-s3",
         "axum",
-        "veoveo-task-runtime",
+        "veoveo-task",
         "veoveo-audit",
         "opentelemetry_sdk",
     ] {
