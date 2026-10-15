@@ -11,6 +11,7 @@ use veoveo_audit::AuditStore;
 use veoveo_audit_contract::{
     AuditDetailType, AuditPartition, AuditQuery, AuditReadScope, AuditRecord,
 };
+use veoveo_fixtures::store::TestDb;
 use veoveo_mcp_artifact::{
     contract::{
         AccessRequestCancelled, AccessRequestDecided, AccessRequestDecision, AccessRequestRole,
@@ -21,7 +22,6 @@ use veoveo_mcp_artifact::{
     store::{AccessRequestPageSize, ArtifactStore, ArtifactStoreError},
 };
 use veoveo_store::PlatformStore;
-use veoveo_test_fixtures::store::TestDb;
 use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, WorkContextMembershipLevel};
 
 async fn with_database<F, Fut>(test: F)

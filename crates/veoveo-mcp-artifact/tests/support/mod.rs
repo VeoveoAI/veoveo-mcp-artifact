@@ -11,6 +11,7 @@ use std::{collections::BTreeSet, future::Future, time::Duration};
 
 use chrono::{DateTime, TimeZone, Utc};
 use veoveo_audit_contract::{AuditActor, AuditContext, AuditPrincipalKind, AuditRequest, AuditVia};
+use veoveo_fixtures::store::TestDb;
 use veoveo_mcp_artifact::{
     contract::{
         ArtifactId, ArtifactLabels, ArtifactName, CreateUploadRequest, IdempotencyKey, MediaType,
@@ -19,7 +20,6 @@ use veoveo_mcp_artifact::{
     migrator, server,
     store::{ArtifactStore, Caller, CallerContext, CompletedObject, CreatedUpload},
 };
-use veoveo_test_fixtures::store::TestDb;
 use veoveo_types::{
     AccessLevel, Checked, DataLabelId, GroupId, PrincipalId, ServerSlug, Sha256Digest, TenantId,
     WorkContextId, WorkContextMembershipLevel,

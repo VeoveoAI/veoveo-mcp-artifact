@@ -31,7 +31,7 @@ fn in_family(name: &str, families: &[&str]) -> bool {
 }
 
 fn server_only(name: &str) -> bool {
-    name.starts_with("aws-") || matches!(name, "veoveo-store" | "veoveo-test-fixtures")
+    name.starts_with("aws-") || matches!(name, "veoveo-store" | "veoveo-fixtures")
 }
 
 /// The packages the crate reaches with only `feature` on, as a consumer's build

@@ -11,6 +11,7 @@ use veoveo_audit::AuditStore;
 use veoveo_audit_contract::{
     AuditDetailType, AuditPartition, AuditQuery, AuditReadScope, AuditRecord,
 };
+use veoveo_fixtures::store::TestDb;
 use veoveo_mcp_artifact::{
     contract::{
         ArtifactId, ArtifactState, ReleaseChanged, ReleaseState, ShareLinkCreated,
@@ -20,7 +21,6 @@ use veoveo_mcp_artifact::{
     store::{ArtifactStore, ArtifactStoreError, NewShareLink, ShareLinkPageSize},
 };
 use veoveo_store::PlatformStore;
-use veoveo_test_fixtures::store::TestDb;
 use veoveo_types::{Sha256Digest, TenantId, WorkContextMembershipLevel};
 
 /// A share-link test with the database at hand, bounded to 60 seconds.

@@ -87,7 +87,7 @@ storage, on the installation's network.
 The server owns the PostgreSQL schema `artifact`. Every statement is a `.sql` file that
 sqlx checks at compile time against the migrated schema, and the statements and tables
 follow the server schema rules of veoveo-core's
-[database design](https://github.com/VeoveoAI/veoveo-core/blob/af12a7f52e5e7a445bfc4dca7bac853d5c3bebc9/docs/DATABASE.md).
+[database design](https://github.com/VeoveoAI/veoveo-core/blob/9a6b3ff95469ff19f9ccb513421a57ba6751aa9e/docs/DATABASE.md).
 Tests need the PostgreSQL 18 server programs on `PATH`; each test clones its own
 database from a migrated template.
 

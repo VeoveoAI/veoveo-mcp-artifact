@@ -5,12 +5,12 @@
 use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
 
 use sha2::{Digest as _, Sha256};
+use veoveo_fixtures::store::TestDb;
 use veoveo_mcp_artifact::{
     migrator, server, service::ArtifactService, share::ShareBase, storage::ObjectStorage,
 };
 use veoveo_store::{Instance, PlatformStore};
 use veoveo_task::{PrincipalKind, TaskOwner, TaskRuntime, TaskSurface};
-use veoveo_test_fixtures::store::TestDb;
 use veoveo_types::{
     AccessSubject, DataLabelId, InvocationAuthority, InvocationProvenance, PolicyVersion,
     PrincipalId, Sha256Digest, TenantId, TokenIssuer, TokenSubject, WorkContextId,

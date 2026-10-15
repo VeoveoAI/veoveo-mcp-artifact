@@ -17,6 +17,7 @@ use veoveo_audit_contract::{
     AuditDetailType, AuditOutcome, AuditPartition, AuditQuery, AuditReadScope, AuditReason,
     AuditRecord, AuditRegistry, AuditTarget, AuditVia,
 };
+use veoveo_fixtures::store::TestDb;
 use veoveo_mcp_artifact::{
     contract::{
         AccessRequestCancelled, AccessRequestDecided, AccessRequestDecision, AccessRequested,
@@ -30,7 +31,6 @@ use veoveo_mcp_artifact::{
     store::{ArtifactStore, ArtifactStoreError, CompletedObject},
 };
 use veoveo_store::PlatformStore;
-use veoveo_test_fixtures::store::TestDb;
 use veoveo_types::{AccessLevel, AccessSubject, Checked, PrincipalId, ServerSlug, TenantId};
 
 /// Every record of `tenant`, oldest first, read as the installation owner.
