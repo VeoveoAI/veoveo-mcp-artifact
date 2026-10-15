@@ -4060,7 +4060,7 @@ dependencies = [
 [[package]]
 name = "veoveo-sdk-rust"
 version = "0.1.0"
-source = "git+https://github.com/VeoveoAI/veoveo-sdk-rust?rev=e5ba205728409b33eb0ab4e608c8c8cb647a3462#e5ba205728409b33eb0ab4e608c8c8cb647a3462"
+source = "git+https://github.com/VeoveoAI/veoveo-sdk-rust?rev=f6b5f588265d5fe79da4aec5acea8a93adb6bbe3#f6b5f588265d5fe79da4aec5acea8a93adb6bbe3"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -4107,7 +4107,7 @@ dependencies = [
 [[package]]
 name = "veoveo-sdk-rust-fixture"
 version = "0.1.0"
-source = "git+https://github.com/VeoveoAI/veoveo-sdk-rust?rev=e5ba205728409b33eb0ab4e608c8c8cb647a3462#e5ba205728409b33eb0ab4e608c8c8cb647a3462"
+source = "git+https://github.com/VeoveoAI/veoveo-sdk-rust?rev=f6b5f588265d5fe79da4aec5acea8a93adb6bbe3#f6b5f588265d5fe79da4aec5acea8a93adb6bbe3"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
