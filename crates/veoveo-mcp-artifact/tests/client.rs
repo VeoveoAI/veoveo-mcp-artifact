@@ -19,6 +19,18 @@ use veoveo_audit::AuditStore;
 use veoveo_audit_contract::{
     AuditDetailType, AuditPartition, AuditQuery, AuditReadScope, AuditVia,
 };
+use veoveo_hub_sdk::{
+    AccessTokenSubject, ForwardedRequest, HubInternalTokenIssuer, HubProfileId, HubRequestContext,
+    IssuedHubInternalToken, OAuthClientId, OpaqueTaskId, ProtectedResourceId, ServerSlug,
+    TokenIssuer,
+    client::{CallError, HubClient},
+    hosting::{
+        ForwardedBearer, Hosted, ListenOnly, ServerCalls,
+        testing::{self, MESH_PROFILE, RunningMesh, TestMesh},
+    },
+    registration::ResourceIndicator,
+};
+use veoveo_hub_sdk_fixture::ledger::{self, LedgerDomain, LedgerTasks};
 use veoveo_mcp_artifact::{
     client::{ArtifactClient, ArtifactClientError, UploadBody},
     contract::{
@@ -32,18 +44,6 @@ use veoveo_mcp_artifact::{
     service::run_verifications,
     store::{Caller, UploadPageSize},
 };
-use veoveo_sdk_rust::{
-    AccessTokenSubject, ForwardedRequest, GatewayInternalTokenIssuer, GatewayProfileId,
-    GatewayRequestContext, IssuedGatewayInternalToken, OAuthClientId, OpaqueTaskId,
-    ProtectedResourceId, ServerSlug, TokenIssuer,
-    client::{CallError, GatewayClient},
-    hosting::{
-        ForwardedBearer, Hosted, ListenOnly, ServerCalls,
-        testing::{self, MESH_PROFILE, RunningMesh, TestMesh},
-    },
-    registration::ResourceIndicator,
-};
-use veoveo_sdk_rust_fixture::ledger::{self, LedgerDomain, LedgerTasks};
 use veoveo_types::{InvocationMode, PermissionName, Sha256Digest, TaskId, TenantId};
 
 const MIB: u64 = 1024 * 1024;
@@ -83,16 +83,13 @@ fn sha256_of(length: u64) -> Sha256Digest {
     Sha256Digest::from_bytes(hasher.finalize().into())
 }
 
-/// A forwarded token for the test user, as the Gateway forwards one to `server` with
+/// A forwarded token for the test user, as the Hub forwards one to `server` with
 /// its signed request context.
-fn forwarded(
-    server: ServerSlug,
-    permissions: BTreeSet<PermissionName>,
-) -> IssuedGatewayInternalToken {
+fn forwarded(server: ServerSlug, permissions: BTreeSet<PermissionName>) -> IssuedHubInternalToken {
     let principal = testing::principal();
     let authority = testing::authority();
     let now = Utc::now();
-    let context = GatewayRequestContext {
+    let context = HubRequestContext {
         audit: veoveo_audit_contract::AuditRequest::background(),
         access_token: AccessTokenSubject {
             issuer: principal.issuer.clone(),
@@ -112,13 +109,13 @@ fn forwarded(
         },
         principal: principal.clone(),
     };
-    GatewayInternalTokenIssuer::new(
+    HubInternalTokenIssuer::new(
         TokenIssuer::parse(testing::TEST_ISSUER).unwrap(),
         testing::signing_key(),
     )
     .unwrap()
     .issue(ForwardedRequest {
-        profile: GatewayProfileId::parse(MESH_PROFILE).unwrap(),
+        profile: HubProfileId::parse(MESH_PROFILE).unwrap(),
         server,
         audience: ResourceIndicator::parse(testing::TEST_RESOURCE).unwrap(),
         client: OAuthClientId::parse(testing::TEST_CLIENT).unwrap(),
@@ -204,7 +201,7 @@ impl Mesh {
             ledger_slug(),
             [PermissionName::parse("ledger.entries.read").unwrap()].into(),
         );
-        let calls: GatewayClient = self
+        let calls: HubClient = self
             .ledger
             .for_request(&issued.identity, &ForwardedBearer::new(issued.bearer_token));
         ArtifactClient::new(calls, self.http.clone())
@@ -222,7 +219,7 @@ impl Mesh {
             .unwrap_or_else(|| panic!("no Task started: {started}"));
         let calls = self.ledger.for_task_id(
             TaskId::parse(task).unwrap(),
-            &GatewayProfileId::parse(MESH_PROFILE).unwrap(),
+            &HubProfileId::parse(MESH_PROFILE).unwrap(),
         );
         (
             ArtifactClient::new(calls, self.http.clone()),

@@ -4,5 +4,5 @@
 
 #[test]
 fn sql_names_only_the_artifact_schema() {
-    veoveo_sdk_rust::testing::assert_sql_confined(env!("CARGO_MANIFEST_DIR"), "artifact");
+    veoveo_hub_sdk::testing::assert_sql_confined(env!("CARGO_MANIFEST_DIR"), "artifact");
 }

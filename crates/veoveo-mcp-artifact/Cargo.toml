@@ -23,7 +23,7 @@ contract = [
     "dep:thiserror",
     "dep:uuid",
     "dep:veoveo-audit-contract",
-    "dep:veoveo-sdk-rust",
+    "dep:veoveo-hub-sdk",
     "dep:veoveo-types",
 ]
 # Uploads and downloads for servers and programs that call Artifact: `ArtifactClient` on
@@ -31,7 +31,7 @@ contract = [
 # database, server runtime or object-storage SDK.
 client = [
     "contract",
-    "veoveo-sdk-rust/client",
+    "veoveo-hub-sdk/client",
     "dep:bytes",
     "dep:futures",
     "dep:reqwest",
@@ -48,7 +48,7 @@ client = [
 server = [
     "contract",
     "chrono/clock",
-    "veoveo-sdk-rust/server",
+    "veoveo-hub-sdk/server",
     "dep:anyhow",
     "dep:axum",
     "dep:aws-sdk-s3",
@@ -87,7 +87,7 @@ serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 veoveo-audit-contract = { workspace = true, optional = true }
-veoveo-sdk-rust = { workspace = true, features = ["contract"], optional = true }
+veoveo-hub-sdk = { workspace = true, features = ["contract"], optional = true }
 veoveo-types = { workspace = true, optional = true }
 
 anyhow = { workspace = true, optional = true }
@@ -119,9 +119,9 @@ veoveo-task = { workspace = true, optional = true }
 veoveo-audit.workspace = true
 veoveo-audit-contract.workspace = true
 veoveo-store.workspace = true
-veoveo-sdk-rust = { workspace = true, features = ["server", "testing", "client-credentials"] }
-veoveo-sdk-rust-fixture.workspace = true
-# The acceptance tests call Artifact through the Gateway as an MCP client.
+veoveo-hub-sdk = { workspace = true, features = ["server", "testing", "client-credentials"] }
+veoveo-hub-sdk-fixture.workspace = true
+# The acceptance tests call Artifact through the Hub as an MCP client.
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
 # `database-conformance` holds the crate's queries and schema to core's database rules.
 veoveo-fixtures = { workspace = true, features = ["store", "database-conformance"] }

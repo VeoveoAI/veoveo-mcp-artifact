@@ -1,10 +1,10 @@
 //! Acceptance through a running local installation: Artifact registered with the
-//! Gateway, called through the Gateway by the installation's member and admin callers,
+//! Hub, called through the Hub by the installation's member and admin callers,
 //! with bytes moving between the test and the installation's object store through the
 //! URLs Artifact signs.
 //!
 //! The tests need a running installation, so they are ignored by default. Inside the
-//! Artifact environment, set `VEOVEO_ACCEPTANCE_GATEWAY` to the Gateway origin and
+//! Artifact environment, set `VEOVEO_ACCEPTANCE_HUB` to the Hub origin and
 //! `VEOVEO_ACCEPTANCE_KEY_DIRECTORY` to the directory holding the callers' keys, then
 //! run `cargo nextest run --test acceptance --run-ignored only`. The tests share the
 //! tenant's usage and upload limits, so nextest runs them one at a time.
@@ -29,6 +29,7 @@ use rmcp::{
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
+use veoveo_hub_sdk::client::{BearerSource as _, ClientCredentialsBearer, caller_signer};
 use veoveo_mcp_artifact::contract::{
     AbortUploadResult, AccessRequestListing, AccessRequestResult, AccessRequestState,
     ArtifactEntry, ArtifactId, ArtifactResult, ArtifactState, CompleteUploadResult,
@@ -36,7 +37,6 @@ use veoveo_mcp_artifact::contract::{
     GrantArtifactResult, GrantListing, ReleaseState, RevokeArtifactGrantResult, ShareLinkListing,
     SignedTransfer, StorageUsage, UploadLimits, UploadLimitsResult, UploadTransfer,
 };
-use veoveo_sdk_rust::client::{BearerSource as _, ClientCredentialsBearer, caller_signer};
 use veoveo_types::{AccessLevel, AccessSubject, OAuthClientId, ScopeName};
 
 const MEMBER: &str = "acceptance-member";
@@ -59,7 +59,7 @@ impl ClientHandler for Caller {
 type Client = RunningService<RoleClient, Caller>;
 
 struct Installation {
-    gateway: url::Url,
+    hub: url::Url,
     keys: PathBuf,
 }
 
@@ -67,18 +67,18 @@ impl Installation {
     fn from_env() -> Result<Self> {
         // reqwest is built without a TLS provider; Artifact uses rustls with ring.
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let gateway = std::env::var("VEOVEO_ACCEPTANCE_GATEWAY")
-            .context("VEOVEO_ACCEPTANCE_GATEWAY names the Gateway origin")?;
+        let hub = std::env::var("VEOVEO_ACCEPTANCE_HUB")
+            .context("VEOVEO_ACCEPTANCE_HUB names the Hub origin")?;
         let keys = std::env::var("VEOVEO_ACCEPTANCE_KEY_DIRECTORY")
             .context("VEOVEO_ACCEPTANCE_KEY_DIRECTORY names the callers' key directory")?;
         Ok(Self {
-            gateway: url::Url::parse(&gateway)?,
+            hub: url::Url::parse(&hub)?,
             keys: PathBuf::from(keys),
         })
     }
 
     fn mcp(&self) -> Result<url::Url> {
-        Ok(self.gateway.join("/mcp/local")?)
+        Ok(self.hub.join("/mcp/local")?)
     }
 
     /// The caller's client-credentials token for the profile, through the SDK's bearer,
@@ -133,7 +133,7 @@ async fn call<T: DeserializeOwned>(client: &Client, name: &str, arguments: Value
         .with_context(|| format!("{name} returned a result of another shape"))
 }
 
-/// The Gateway or Artifact refuses a tool call with a protocol error or a tool error
+/// The Hub or Artifact refuses a tool call with a protocol error or a tool error
 /// result. A transport failure proves no refusal.
 async fn refused(client: &Client, name: &str, arguments: Value) -> Result<()> {
     match client.call_tool(tool(name, arguments)?).await {
@@ -291,7 +291,7 @@ async fn bounded<F: Future<Output = Result<()>>>(seconds: u64, test: F) -> Resul
 async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_rest() -> Result<()> {
     bounded(120, async {
         let installation = Installation::from_env()?;
-        // The Gateway lists the tools a caller's role may call: the member's role carries
+        // The Hub lists the tools a caller's role may call: the member's role carries
         // no sensitive, destructive or administer risk, and the admin's carries all three.
         let member = installation.connect(MEMBER).await?;
         let admin = installation.connect(ADMIN).await?;
@@ -323,11 +323,11 @@ async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_res
             "set_upload_limits",
         ];
         let seen = listed(member.list_all_tools().await?);
-        ensure!(seen == risk_free, "the Gateway lists the member {seen:?}");
+        ensure!(seen == risk_free, "the Hub lists the member {seen:?}");
         let mut every: Vec<&str> = risk_free.iter().chain(&risky).copied().collect();
         every.sort_unstable();
         let seen = listed(admin.list_all_tools().await?);
-        ensure!(seen == every, "the Gateway lists the admin {seen:?}");
+        ensure!(seen == every, "the Hub lists the admin {seen:?}");
         // A call the member's role does not admit is refused, with arguments that would
         // otherwise be served.
         let artifact_id = upload_declared(&admin, "risks.bin", &part_bytes(1, 1024)).await?;

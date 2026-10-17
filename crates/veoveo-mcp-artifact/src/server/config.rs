@@ -1,12 +1,12 @@
 //! The server's configuration. Every flag has its `VEOVEO_` environment variable. The
-//! Gateway issues the database login and the access-token trust when Artifact
+//! Hub issues the database login and the access-token trust when Artifact
 //! registers, so neither is configured here.
 use std::path::PathBuf;
 
 use clap::Parser;
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
-use veoveo_sdk_rust::{PublicDeployment, PublicOrigin, parse_allowed_host_authority};
+use veoveo_hub_sdk::{PublicDeployment, PublicOrigin, parse_allowed_host_authority};
 
 use crate::{share::ShareBase, storage::StorageConfig};
 
@@ -15,7 +15,7 @@ use crate::{share::ShareBase, storage::StorageConfig};
 pub(super) struct Args {
     #[arg(long, env = "VEOVEO_PORT", default_value_t = 8801)]
     pub port: u16,
-    /// The origin where the Gateway reaches Artifact; Artifact serves MCP at
+    /// The origin where the Hub reaches Artifact; Artifact serves MCP at
     /// `{public_base_url}/artifact/mcp` and registers that URL.
     #[arg(long, env = "VEOVEO_PUBLIC_BASE_URL")]
     pub public_base_url: String,
@@ -25,9 +25,9 @@ pub(super) struct Args {
     /// links name the public base URL.
     #[arg(long, env = "VEOVEO_PUBLIC_ORIGIN")]
     pub public_origin: Option<PublicOrigin>,
-    /// The Gateway's RFC 8414 issuer; registration discovers its endpoint from there.
-    #[arg(long, env = "VEOVEO_GATEWAY_ISSUER")]
-    pub gateway_issuer: Url,
+    /// The Hub's RFC 8414 issuer; registration discovers its endpoint from there.
+    #[arg(long, env = "VEOVEO_HUB_ISSUER")]
+    pub hub_issuer: Url,
     /// The installation's registration secret, or the placeholder the installation's edge replaces.
     #[arg(
         long,
@@ -139,8 +139,8 @@ mod tests {
             "veoveo-mcp-artifact",
             "--public-base-url",
             "http://vv-mcp-artifact.internal:8801",
-            "--gateway-issuer",
-            "http://vv-gateway.internal:8080",
+            "--hub-issuer",
+            "http://vv-hub.internal:8080",
             "--registration-secret",
             "placeholder",
             "--storage-endpoint",
@@ -170,8 +170,8 @@ mod tests {
             "http://vv-mcp-artifact.internal:8801",
             "--public-origin",
             "https://veoveo.example.com",
-            "--gateway-issuer",
-            "http://vv-gateway.internal:8080",
+            "--hub-issuer",
+            "http://vv-hub.internal:8080",
             "--registration-secret",
             "placeholder",
             "--storage-endpoint",
@@ -185,7 +185,7 @@ mod tests {
         assert_eq!(args.share_base().unwrap().authority(), "veoveo.example.com");
         let deployment = args.public_deployment().unwrap();
         assert_eq!(
-            veoveo_sdk_rust::public_allowed_hosts(&deployment, false),
+            veoveo_hub_sdk::public_allowed_hosts(&deployment, false),
             vec!["vv-mcp-artifact.internal:8801", "veoveo.example.com"]
         );
         assert!(
@@ -195,8 +195,8 @@ mod tests {
                 "http://vv-mcp-artifact.internal:8801",
                 "--public-origin",
                 "http://veoveo.example.com",
-                "--gateway-issuer",
-                "http://vv-gateway.internal:8080",
+                "--hub-issuer",
+                "http://vv-hub.internal:8080",
                 "--registration-secret",
                 "placeholder",
                 "--storage-endpoint",

@@ -14,7 +14,7 @@ use rmcp::{
     service::{SubscriptionContext, SubscriptionSendError},
 };
 use tokio::sync::broadcast;
-use veoveo_sdk_rust::hosting::{SubscriptionListener, requested_addresses};
+use veoveo_hub_sdk::hosting::{SubscriptionListener, requested_addresses};
 use veoveo_store::{
     ChangeSignal, ChangeStream, Channel, PlatformStore, ServerSchema, TenantId as StoredTenant,
 };
@@ -184,7 +184,7 @@ impl SubscriptionListener for ArtifactSubscriptions {
                 None,
             ));
         }
-        let identity = veoveo_sdk_rust::hosting::gateway_identity(context.request_context())?;
+        let identity = veoveo_hub_sdk::hosting::hub_identity(context.request_context())?;
         for uri in &uris {
             authorize(&identity, Target::Resource(uri))?;
         }

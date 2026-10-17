@@ -1,4 +1,4 @@
-//! The hosted process: prepare the bucket, register with the Gateway, connect with the
+//! The hosted process: prepare the bucket, register with the Hub, connect with the
 //! registration's database login, migrate, then serve MCP and the share route while the
 //! sweep, the verification worker and the change watcher run. Stopping deletes the
 //! registration.
@@ -10,7 +10,7 @@ use std::{net::SocketAddr, sync::Arc};
 use anyhow::{Context, Result};
 use clap::Parser;
 use tokio_util::sync::CancellationToken;
-use veoveo_sdk_rust::{
+use veoveo_hub_sdk::{
     PublicDeployment, TelemetryGuard,
     hosting::{Hosted, HostedServer, ListenOnly},
     init_server_telemetry,
@@ -81,7 +81,7 @@ async fn serve(
 ) -> Result<()> {
     let grant = registration
         .database()
-        .context("the Gateway issued no database login for Artifact")?;
+        .context("the Hub issued no database login for Artifact")?;
     let tasks = TaskRuntime::connect(
         TaskRuntimeConfig::new(
             grant.url.as_str(),
@@ -133,7 +133,7 @@ async fn serve(
                 .with_tasks(ListenOnly::new(ArtifactSubscriptions::new(app.clone())))
         })
         // Share links work for people without an account, so their route needs no
-        // Gateway authentication; it verifies the link's secret itself.
+        // Hub authentication; it verifies the link's secret itself.
         .public_routes(share::routes(service.clone()))
         // Artifact serves only while its bucket answers.
         .readiness(move || {

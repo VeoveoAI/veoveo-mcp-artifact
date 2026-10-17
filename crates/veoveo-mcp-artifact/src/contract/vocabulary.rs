@@ -71,7 +71,7 @@ pub enum AccessRequestDecision {
 }
 
 /// Artifact's permissions. Each names one action on one resource type; installation
-/// roles grant them and the Gateway forwards the granted ones with every request. The
+/// roles grant them and the Hub forwards the granted ones with every request. The
 /// access kind and risks join each permission through the SDK's permission declaration
 /// when the server is hosted.
 /// ```compile_fail

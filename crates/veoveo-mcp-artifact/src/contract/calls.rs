@@ -1,9 +1,9 @@
 //! Artifact as a provider of calls between servers. Each served tool's request names its
 //! tool and its typed result, and `ReadArtifact` names one artifact's resource and its
 //! content, so a server that declares uses of Artifact's permissions calls and reads
-//! Artifact through the Gateway with the SDK's `GatewayClient`. The `client` feature's
+//! Artifact through the Hub with the SDK's `HubClient`. The `client` feature's
 //! `ArtifactClient` builds uploads and downloads on these calls.
-use veoveo_sdk_rust::calls::{ProviderContract, ResourceRead, ToolCall};
+use veoveo_hub_sdk::calls::{ProviderContract, ResourceRead, ToolCall};
 use veoveo_types::ServerSlug;
 
 use super::{
@@ -162,15 +162,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_request_names_its_tool_through_the_gateway() {
+    fn each_request_names_its_tool_through_the_hub() {
         assert_eq!(
-            CreateUploadRequest::gateway_tool_name()
-                .unwrap()
-                .to_string(),
+            CreateUploadRequest::hub_tool_name().unwrap().to_string(),
             "artifact__create_upload"
         );
         for tool in served_tools() {
-            veoveo_sdk_rust::LocalToolName::parse(tool).unwrap();
+            veoveo_hub_sdk::LocalToolName::parse(tool).unwrap();
         }
     }
 }

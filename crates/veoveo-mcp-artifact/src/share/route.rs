@@ -16,7 +16,7 @@ use chrono::Utc;
 
 use crate::service::ArtifactService;
 
-/// The share route, which the hosted process serves under its mount without Gateway
+/// The share route, which the hosted process serves under its mount without Hub
 /// authentication.
 pub fn routes(service: Arc<ArtifactService>) -> Router {
     Router::new()

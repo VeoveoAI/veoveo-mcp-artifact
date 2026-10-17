@@ -1,4 +1,4 @@
-//! The MCP surface through the SDK's in-process Gateway: discovery, permission checks on
+//! The MCP surface through the SDK's in-process Hub: discovery, permission checks on
 //! tools and resources, and a tool call that reaches the store and object storage. The
 //! test user is `user-1` of `tenant-a`, owner of Work Context `mission`.
 mod support;
@@ -12,6 +12,15 @@ use support::seaweedfs::send;
 use support::service::{Harness, with_service};
 use tower::ServiceExt as _;
 use veoveo_audit_contract::AuditRequest;
+use veoveo_hub_sdk::{
+    AccessTokenSubject, ForwardedRequest, HubInternalTokenIssuer, HubProfileId, HubRequestContext,
+    OAuthClientId, ProtectedResourceId, TokenIssuer,
+    hosting::{
+        Hosted, ListenOnly,
+        testing::{self, TestHub},
+    },
+    registration::ResourceIndicator,
+};
 use veoveo_mcp_artifact::{
     contract::{
         AccessRequestId, AccessRequestListing, ArtifactId, ArtifactPermission,
@@ -20,25 +29,16 @@ use veoveo_mcp_artifact::{
     mcp::{ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs},
     share,
 };
-use veoveo_sdk_rust::{
-    AccessTokenSubject, ForwardedRequest, GatewayInternalTokenIssuer, GatewayProfileId,
-    GatewayRequestContext, OAuthClientId, ProtectedResourceId, TokenIssuer,
-    hosting::{
-        Hosted, ListenOnly,
-        testing::{self, TestGateway},
-    },
-    registration::ResourceIndicator,
-};
 use veoveo_types::InvocationMode;
 
-/// The test Gateway, and the permissions every call through it carries.
-struct Gateway {
-    inner: TestGateway,
+/// The test Hub, and the permissions every call through it carries.
+struct Hub {
+    inner: TestHub,
     granted: Vec<ArtifactPermission>,
 }
 
-impl Gateway {
-    /// Call `method` as the test user with a token that carries the Gateway's signed
+impl Hub {
+    /// Call `method` as the test user with a token that carries the Hub's signed
     /// request context, as every forwarded MCP request does.
     async fn rpc(&self, method: &str, params: Value) -> Value {
         let token = token(&self.granted);
@@ -51,7 +51,7 @@ fn token(granted: &[ArtifactPermission]) -> String {
     let principal = testing::principal();
     let authority = testing::authority();
     let now = Utc::now();
-    let context = GatewayRequestContext {
+    let context = HubRequestContext {
         audit: AuditRequest::background(),
         access_token: AccessTokenSubject {
             issuer: principal.issuer.clone(),
@@ -71,13 +71,13 @@ fn token(granted: &[ArtifactPermission]) -> String {
         },
         principal: principal.clone(),
     };
-    GatewayInternalTokenIssuer::new(
+    HubInternalTokenIssuer::new(
         TokenIssuer::parse(testing::TEST_ISSUER).unwrap(),
         testing::signing_key(),
     )
     .unwrap()
     .issue(ForwardedRequest {
-        profile: GatewayProfileId::parse("operations").unwrap(),
+        profile: HubProfileId::parse("operations").unwrap(),
         server: veoveo_mcp_artifact::server(),
         audience: ResourceIndicator::parse(testing::TEST_RESOURCE).unwrap(),
         client: OAuthClientId::parse(testing::TEST_CLIENT).unwrap(),
@@ -93,13 +93,13 @@ fn token(granted: &[ArtifactPermission]) -> String {
     .bearer_token
 }
 
-fn gateway(harness: &Harness, granted: &[ArtifactPermission]) -> Gateway {
+fn hub(harness: &Harness, granted: &[ArtifactPermission]) -> Hub {
     let app = Arc::new(ArtifactApp {
         service: (*harness.service).clone(),
         hubs: Arc::new(TenantHubs::default()),
     });
-    Gateway {
-        inner: TestGateway::new(
+    Hub {
+        inner: TestHub::new(
             testing::for_domain::<ArtifactMcp>()
                 .handler(move || {
                     Hosted::new(ArtifactMcp::new(app.clone()))
@@ -121,8 +121,8 @@ fn error_message(response: &Value) -> String {
 #[tokio::test]
 async fn discovery_lists_every_tool_and_resource() {
     with_service(|harness| async move {
-        let gateway = gateway(&harness, &[ArtifactPermission::ArtifactsRead]);
-        let tools = gateway.rpc("tools/list", json!({})).await;
+        let hub = hub(&harness, &[ArtifactPermission::ArtifactsRead]);
+        let tools = hub.rpc("tools/list", json!({})).await;
         let mut names: Vec<&str> = tools["result"]["tools"]
             .as_array()
             .expect("tools")
@@ -154,7 +154,7 @@ async fn discovery_lists_every_tool_and_resource() {
         let mut typed = veoveo_mcp_artifact::contract::served_tools().to_vec();
         typed.sort_unstable();
         assert_eq!(names, typed);
-        let resources = gateway.rpc("resources/list", json!({})).await;
+        let resources = hub.rpc("resources/list", json!({})).await;
         let uris: Vec<&str> = resources["result"]["resources"]
             .as_array()
             .expect("resources")
@@ -170,7 +170,7 @@ async fn discovery_lists_every_tool_and_resource() {
         ] {
             assert!(uris.contains(&expected), "{expected} in {uris:?}");
         }
-        let prompts = gateway.rpc("prompts/list", json!({})).await;
+        let prompts = hub.rpc("prompts/list", json!({})).await;
         let names: Vec<&str> = prompts["result"]["prompts"]
             .as_array()
             .expect("prompts")
@@ -185,8 +185,8 @@ async fn discovery_lists_every_tool_and_resource() {
 #[tokio::test]
 async fn a_tool_without_its_permission_is_refused() {
     with_service(|harness| async move {
-        let gateway = gateway(&harness, &[ArtifactPermission::ArtifactsRead]);
-        let response = gateway
+        let hub = hub(&harness, &[ArtifactPermission::ArtifactsRead]);
+        let response = hub
             .rpc(
                 "tools/call",
                 json!({
@@ -206,14 +206,14 @@ async fn a_tool_without_its_permission_is_refused() {
 #[tokio::test]
 async fn create_upload_signs_a_put_and_storage_usage_counts_the_reservation() {
     with_service(|harness| async move {
-        let gateway = gateway(
+        let hub = hub(
             &harness,
             &[
                 ArtifactPermission::ArtifactsRead,
                 ArtifactPermission::ArtifactsWrite,
             ],
         );
-        let created = gateway
+        let created = hub
             .rpc(
                 "tools/call",
                 json!({
@@ -226,7 +226,7 @@ async fn create_upload_signs_a_put_and_storage_usage_counts_the_reservation() {
         assert_eq!(result["transfer"]["form"], "single", "{created}");
         assert_eq!(result["transfer"]["put"]["method"], "PUT");
         assert_eq!(result["artifact"]["workContext"], "mission");
-        let usage = gateway
+        let usage = hub
             .rpc("resources/read", json!({"uri": "artifact://storage-usage"}))
             .await;
         let text = usage["result"]["contents"][0]["text"]
@@ -236,7 +236,7 @@ async fn create_upload_signs_a_put_and_storage_usage_counts_the_reservation() {
         assert_eq!(usage["reservedBytes"], 3);
 
         let artifact_id = result["artifact"]["artifactId"].as_str().unwrap();
-        let read = gateway
+        let read = hub
             .rpc(
                 "resources/read",
                 json!({"uri": format!("artifact://artifacts/{artifact_id}")}),
@@ -255,8 +255,8 @@ async fn create_upload_signs_a_put_and_storage_usage_counts_the_reservation() {
 #[tokio::test]
 async fn a_resource_without_its_permission_is_refused() {
     with_service(|harness| async move {
-        let gateway = gateway(&harness, &[ArtifactPermission::ArtifactsWrite]);
-        let response = gateway
+        let hub = hub(&harness, &[ArtifactPermission::ArtifactsWrite]);
+        let response = hub
             .rpc("resources/read", json!({"uri": "artifact://storage-usage"}))
             .await;
         assert!(
@@ -279,14 +279,14 @@ async fn upload_limits_need_the_administer_permission() {
                 "activeUploads": 2
             }
         });
-        let refused = gateway(&harness, &[ArtifactPermission::ArtifactsWrite])
+        let refused = hub(&harness, &[ArtifactPermission::ArtifactsWrite])
             .rpc(
                 "tools/call",
                 json!({"name": "set_upload_limits", "arguments": arguments}),
             )
             .await;
         assert!(error_message(&refused).contains("upload-limits"), "{refused}");
-        let administrator = gateway(
+        let administrator = hub(
             &harness,
             &[
                 ArtifactPermission::UploadLimitsAdminister,
@@ -319,7 +319,7 @@ async fn upload_limits_need_the_administer_permission() {
 }
 
 /// The hosted router with the share route, as the binary serves it: a request reaches
-/// `/artifact/shares/{token}` on the test host without Gateway authentication.
+/// `/artifact/shares/{token}` on the test host without Hub authentication.
 fn hosted_router(harness: &Harness) -> axum::Router {
     let app = Arc::new(ArtifactApp {
         service: (*harness.service).clone(),
@@ -342,8 +342,8 @@ fn structured(response: &Value) -> &Value {
 }
 
 /// Upload `body` through the tools and a signed PUT, and return the artifact's ID.
-async fn upload(gateway: &Gateway, name: &str, body: &[u8]) -> String {
-    let created = gateway
+async fn upload(hub: &Hub, name: &str, body: &[u8]) -> String {
+    let created = hub
         .rpc(
             "tools/call",
             json!({
@@ -355,7 +355,7 @@ async fn upload(gateway: &Gateway, name: &str, body: &[u8]) -> String {
     let created = structured(&created);
     let put: SignedTransfer = serde_json::from_value(created["transfer"]["put"].clone()).unwrap();
     assert!(send(&put, body.to_vec(), &[]).await.status().is_success());
-    let completed = gateway
+    let completed = hub
         .rpc(
             "tools/call",
             json!({
@@ -388,7 +388,7 @@ async fn redeem(router: &axum::Router, token: &str) -> axum::response::Response 
 #[tokio::test]
 async fn sharing_tools_need_their_permissions() {
     with_service(|harness| async move {
-        let reader = gateway(&harness, &[ArtifactPermission::ArtifactsRead]);
+        let reader = hub(&harness, &[ArtifactPermission::ArtifactsRead]);
         let artifact = ArtifactId::new();
         for (tool, arguments, permission) in [
             (
@@ -437,7 +437,7 @@ async fn sharing_tools_need_their_permissions() {
 #[tokio::test]
 async fn an_owner_releases_shares_and_the_link_redeems_through_the_share_route() {
     with_service(|harness| async move {
-        let owner = gateway(
+        let owner = hub(
             &harness,
             &[
                 ArtifactPermission::ArtifactsRead,
@@ -546,7 +546,7 @@ async fn an_owner_releases_shares_and_the_link_redeems_through_the_share_route()
 #[tokio::test]
 async fn an_owner_holds_every_level_and_cannot_request_more() {
     with_service(|harness| async move {
-        let owner = gateway(
+        let owner = hub(
             &harness,
             &[
                 ArtifactPermission::ArtifactsRead,

@@ -1,7 +1,7 @@
-//! Registration with the Gateway: Artifact's key, its declarations, and the client that
+//! Registration with the Hub: Artifact's key, its declarations, and the client that
 //! removes the registration when Artifact stops.
 use anyhow::{Context, Result};
-use veoveo_sdk_rust::registration::{
+use veoveo_hub_sdk::registration::{
     ClientMetadata, RegistrationDeclaration,
     client::{KeyDirectory, Registration, RegistrationClient},
 };
@@ -10,8 +10,8 @@ use super::config::Args;
 use crate::mcp::AUTHORIZATION;
 
 /// Register Artifact. Returns the client that later removes the registration, the
-/// registration, and the HTTP client that reached the Gateway, which also fetches the
-/// Gateway's token keys when a forwarded token names a key the registration lacks.
+/// registration, and the HTTP client that reached the Hub, which also fetches the
+/// Hub's token keys when a forwarded token names a key the registration lacks.
 pub(super) async fn register(
     args: &Args,
     declaration: RegistrationDeclaration,
@@ -23,9 +23,9 @@ pub(super) async fn register(
     let http = reqwest::Client::builder()
         .build()
         .context("building the registration HTTP client")?;
-    let endpoint = RegistrationClient::discover(&http, &args.gateway_issuer)
+    let endpoint = RegistrationClient::discover(&http, &args.hub_issuer)
         .await
-        .context("discovering the Gateway's registration endpoint")?;
+        .context("discovering the Hub's registration endpoint")?;
     let client = RegistrationClient::new(
         http.clone(),
         endpoint,
@@ -36,7 +36,7 @@ pub(super) async fn register(
     let registration = client
         .register()
         .await
-        .context("registering Artifact with the Gateway")?;
-    tracing::info!(client_id = %registration.client_id(), "registered with the Gateway");
+        .context("registering Artifact with the Hub")?;
+    tracing::info!(client_id = %registration.client_id(), "registered with the Hub");
     Ok((client, registration, http))
 }

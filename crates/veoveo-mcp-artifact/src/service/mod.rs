@@ -62,7 +62,7 @@ impl ArtifactError {
 
 /// How the SDK's Task worker reads a verification's error: a lost database connection
 /// interrupted the work, and a Task error carries its own parked and lost states.
-impl veoveo_sdk_rust::durable_tasks::TaskWorkError for ArtifactError {
+impl veoveo_hub_sdk::durable_tasks::TaskWorkError for ArtifactError {
     fn is_parked(&self) -> bool {
         matches!(self, Self::Tasks(error) if error.is_parked())
     }

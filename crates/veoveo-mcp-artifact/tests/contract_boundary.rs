@@ -84,7 +84,7 @@ fn the_contract_feature_reaches_no_server_dependency() {
 #[test]
 fn the_client_feature_reaches_no_database_storage_sdk_or_server_stack() {
     let reached = reached("client");
-    for expected in ["veoveo-sdk-rust", "reqwest", "tokio"] {
+    for expected in ["veoveo-hub-sdk", "reqwest", "tokio"] {
         assert!(reached.contains(expected), "{expected} in {reached:?}");
     }
     let found: Vec<&String> = reached
@@ -126,7 +126,7 @@ fn the_boundary_names_server_dependencies() {
         "reqwest",
         "tokio",
         "veoveo-audit-contract",
-        "veoveo-sdk-rust",
+        "veoveo-hub-sdk",
     ] {
         assert!(!forbidden_to_clients(name), "{name}");
     }

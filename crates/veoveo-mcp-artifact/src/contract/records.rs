@@ -5,7 +5,7 @@ use std::{borrow::Cow, collections::BTreeSet, fmt, num::NonZeroU32};
 use chrono::{DateTime, Utc};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use veoveo_sdk_rust::OpaqueTaskId;
+use veoveo_hub_sdk::OpaqueTaskId;
 use veoveo_types::{
     AccessLevel, AccessSubject, PrincipalId, ServerSlug, Sha256Digest, WorkContextId,
 };

@@ -1,10 +1,10 @@
-//! The caller facts Artifact decides on, taken from the identity the Gateway forwards:
+//! The caller facts Artifact decides on, taken from the identity the Hub forwards:
 //! tenant, principal, groups and their roles, data labels, and the selected Work
 //! Context with its membership and output policy.
 use std::collections::BTreeSet;
 
 use rmcp::ErrorData as McpError;
-use veoveo_sdk_rust::GatewayInternalIdentity;
+use veoveo_hub_sdk::HubInternalIdentity;
 use veoveo_task::{TaskOwner, TaskSurface};
 use veoveo_types::AccessLevel;
 
@@ -12,7 +12,7 @@ use crate::store::{Caller, CallerContext, GroupAccess};
 
 /// The store caller of a forwarded identity. A group the caller belongs to without a
 /// named role counts as a read role.
-pub fn caller(identity: &GatewayInternalIdentity) -> Result<Caller, McpError> {
+pub fn caller(identity: &HubInternalIdentity) -> Result<Caller, McpError> {
     let actor = &identity.actor;
     let authority = &identity.authority;
     let mut groups: BTreeSet<GroupAccess> = actor
@@ -38,10 +38,10 @@ pub fn caller(identity: &GatewayInternalIdentity) -> Result<Caller, McpError> {
         .chain(&policy.data_labels)
         .cloned()
         .collect();
-    // The Gateway forwards every MCP request with its signed request context, which
+    // The Hub forwards every MCP request with its signed request context, which
     // carries the attribution of the caller's audit records.
     let audit = identity.audit_context().map_err(|_| {
-        McpError::invalid_request("the Gateway forwarded no valid request context", None)
+        McpError::invalid_request("the Hub forwarded no valid request context", None)
     })?;
     Caller::new(
         authority.tenant.clone(),
@@ -63,19 +63,19 @@ pub fn caller(identity: &GatewayInternalIdentity) -> Result<Caller, McpError> {
 }
 
 /// The owner of a Task the caller's call starts: its principal, authority and labels on
-/// the Gateway profile the call arrived through.
-pub fn task_owner(identity: &GatewayInternalIdentity) -> Result<TaskOwner, McpError> {
+/// the Hub profile the call arrived through.
+pub fn task_owner(identity: &HubInternalIdentity) -> Result<TaskOwner, McpError> {
     let actor = &identity.actor;
     Ok(TaskOwner {
         principal_key: actor.id.clone(),
         principal_kind: match actor.kind {
-            veoveo_sdk_rust::PrincipalKind::User => veoveo_task::PrincipalKind::User,
-            veoveo_sdk_rust::PrincipalKind::Service => veoveo_task::PrincipalKind::Service,
+            veoveo_hub_sdk::PrincipalKind::User => veoveo_task::PrincipalKind::User,
+            veoveo_hub_sdk::PrincipalKind::Service => veoveo_task::PrincipalKind::Service,
         },
         issuer: actor.issuer.clone(),
         subject: actor.subject.clone(),
         surface: TaskSurface::parse(identity.profile.as_str())
-            .map_err(|_| McpError::invalid_request("the Gateway profile names no surface", None))?,
+            .map_err(|_| McpError::invalid_request("the Hub profile names no surface", None))?,
         tenant_key: actor.tenant.clone(),
         data_labels: actor.data_labels.clone(),
         authority: identity.authority.clone(),

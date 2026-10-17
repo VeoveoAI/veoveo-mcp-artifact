@@ -1,6 +1,6 @@
 //! Artifact's OAuth scope and the access kind and risks of each permission, as the
 //! `ai.veoveo/authorization` declaration carries them.
-use veoveo_sdk_rust::registration::{Access, PermissionDefinition, Risk};
+use veoveo_hub_sdk::registration::{Access, PermissionDefinition, Risk};
 use veoveo_types::{PermissionName, Vocabulary};
 
 use super::ArtifactPermission;

@@ -1,5 +1,5 @@
 //! The share route as the hosted process serves it, at `/artifact/shares/{token}` without
-//! Gateway authentication, over a private SeaweedFS: a live link redirects to a fresh signed
+//! Hub authentication, over a private SeaweedFS: a live link redirects to a fresh signed
 //! GET, and every refused link answers the same `404`.
 mod support;
 
@@ -18,6 +18,7 @@ use support::{
     upload_request,
 };
 use tower::ServiceExt as _;
+use veoveo_hub_sdk::hosting::{Hosted, ListenOnly, testing};
 use veoveo_mcp_artifact::{
     contract::{
         ArtifactId, CreateShareLinkRequest, ObjectSize, ReleaseState, ShareLinkDays, UploadTransfer,
@@ -25,7 +26,6 @@ use veoveo_mcp_artifact::{
     mcp::{ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs},
     share::{self, ShareLinkSecret},
 };
-use veoveo_sdk_rust::hosting::{Hosted, ListenOnly, testing};
 use veoveo_types::Checked;
 
 fn router(harness: &Harness) -> axum::Router {

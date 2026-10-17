@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, time::Duration};
 
 use bytes::Bytes;
 use chrono::{TimeDelta, Utc};
-use veoveo_sdk_rust::client::GatewayClient;
+use veoveo_hub_sdk::client::HubClient;
 
 use crate::contract::{
     MAX_PARTS_PER_SIGNING, PartNumber, PartRequest, SignUploadPartsRequest, SignedPart,
@@ -136,7 +136,7 @@ pub(super) async fn put_single(
 /// parts after it, up to 100 at once, when the upload first needs it or when its
 /// signature is about to expire.
 pub(super) struct PartSigner {
-    calls: GatewayClient,
+    calls: HubClient,
     upload_id: UploadId,
     /// The highest part number the upload's bound allows.
     last_part: u16,
@@ -145,7 +145,7 @@ pub(super) struct PartSigner {
 
 impl PartSigner {
     pub(super) fn new(
-        calls: GatewayClient,
+        calls: HubClient,
         upload_id: UploadId,
         last_part: u16,
         initial: Vec<SignedPart>,

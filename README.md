@@ -2,7 +2,7 @@
 
 The Artifact MCP server stores files for a tenant and decides who may read, change,
 share and delete each one. People, agents and other servers reach it through the
-Gateway over MCP. Bytes move directly between the client and object storage through
+Hub over MCP. Bytes move directly between the client and object storage through
 URLs the server signs, so MCP carries only metadata and decisions.
 
 [`crates/veoveo-mcp-artifact/DESIGN.md`](crates/veoveo-mcp-artifact/DESIGN.md) is the
@@ -79,7 +79,7 @@ Artifact computes its SHA-256; `until_verified` waits for it through the artifac
 resource updates and resolves available. Artifact records the calling server, and the
 Task when the call came from one, in the artifact's provenance and as the `via` of its
 audit records.
-The consumer reaches the Gateway's `/oauth/token` and `/mcp/{profile}`, and object
+The consumer reaches the Hub's `/oauth/token` and `/mcp/{profile}`, and object
 storage, on the installation's network.
 
 ## Database
@@ -109,7 +109,7 @@ fresh bucket for each test, the way they start PostgreSQL.
 ## Running
 
 The server takes the registration settings every server takes (`VEOVEO_PUBLIC_BASE_URL`,
-`VEOVEO_GATEWAY_ISSUER`, `VEOVEO_REGISTRATION_SECRET`, `VEOVEO_KEY_DIRECTORY`) and its
+`VEOVEO_HUB_ISSUER`, `VEOVEO_REGISTRATION_SECRET`, `VEOVEO_KEY_DIRECTORY`) and its
 storage settings: `VEOVEO_STORAGE_ENDPOINT`, `VEOVEO_STORAGE_SIGNING_ENDPOINT`,
 `VEOVEO_STORAGE_REGION`, `VEOVEO_STORAGE_BUCKET`, `VEOVEO_STORAGE_ACCESS_KEY`,
 `VEOVEO_STORAGE_SECRET_KEY` and `VEOVEO_STORAGE_CORS_ORIGINS`. It listens on port 8801
@@ -117,7 +117,7 @@ and serves MCP at `{public_base_url}/artifact/mcp`. Share links name
 `{origin}/artifact/shares/{token}` under the installation's public origin,
 `VEOVEO_PUBLIC_ORIGIN`, such as `https://veoveo.example.com`, or under the public base
 URL when the installation has no public origin. That route answers people without an
-account, so the installation routes it to the server without the Gateway.
+account, so the installation routes it to the server without the Hub.
 
 ## Gate
 
@@ -139,7 +139,7 @@ A local installation from
 [veoveo-template-installation](https://github.com/VeoveoAI/veoveo-template-installation)
 runs this image, under its own layer, as the Compose service `vv-mcp-artifact`, which
 works in the installation's Lore repository at `/sandbox/src`. The environment reaches
-the Gateway at `vv-gateway.internal:8080`, PostgreSQL at `vv-postgres.internal:5432` and
+the Hub at `vv-hub.internal:8080`, PostgreSQL at `vv-postgres.internal:5432` and
 the object store at `vv-seaweedfs.internal:9000` on the installation's network. Signed
 requests to the object store go there directly, because a proxy that changed a signed
 header would void the signature. Run the commands below from the installation's
@@ -147,8 +147,8 @@ directory.
 
 ### Running Artifact in the environment
 
-Artifact runs inside `vv-mcp-artifact` on port 8801 and registers with the Gateway at
-`http://vv-gateway.internal:8080`. The environment holds a placeholder for
+Artifact runs inside `vv-mcp-artifact` on port 8801 and registers with the Hub at
+`http://vv-hub.internal:8080`. The environment holds a placeholder for
 `VEOVEO_REGISTRATION_SECRET`, which the installation's edge replaces with the secret on
 the registration request. The storage credential cannot work that way, because the
 server signs URLs with the secret itself, so the installation pipes it into an
@@ -164,14 +164,14 @@ docker compose exec vv-mcp-artifact bash -lc 'cd /sandbox/src \
   && cargo build --locked --target-dir /sandbox/target-serve --bin veoveo-mcp-artifact \
   && set -a && . /sandbox/state/storage.env && set +a \
   && VEOVEO_PUBLIC_BASE_URL=http://vv-mcp-artifact.internal:8801 \
-     VEOVEO_GATEWAY_ISSUER=http://vv-gateway.internal:8080 \
+     VEOVEO_HUB_ISSUER=http://vv-hub.internal:8080 \
      VEOVEO_KEY_DIRECTORY=/sandbox/artifact/keys \
      VEOVEO_STORAGE_ENDPOINT=http://vv-seaweedfs.internal:9000 \
      exec /sandbox/target-serve/debug/veoveo-mcp-artifact'
 ```
 
 The command keeps running in its terminal. Artifact prepares its bucket and registers
-before it listens, and the Gateway reaches it as
+before it listens, and the Hub reaches it as
 `http://vv-mcp-artifact.internal:8801/artifact/mcp`. Signed URLs name the object store as
 `http://vv-seaweedfs.internal:9000` and share links name
 `http://vv-mcp-artifact.internal:8801`; a browser on the host follows them once the host
@@ -180,7 +180,7 @@ SIGTERM or Ctrl-C.
 
 ## Acceptance
 
-`tests/acceptance.rs` calls Artifact through the Gateway as the installation's
+`tests/acceptance.rs` calls Artifact through the Hub as the installation's
 `acceptance-member` and `acceptance-admin` callers and moves bytes through the URLs
 Artifact signs: each caller lists exactly the tools its role may call, and the member
 is refused the tools whose permissions carry a risk; a small upload with a declared SHA-256 through one signed PUT, available at
@@ -199,7 +199,7 @@ copied to `/sandbox/acceptance`, run them:
 
 ```sh
 docker compose exec vv-mcp-artifact bash -lc 'cd /sandbox/src \
-  && VEOVEO_ACCEPTANCE_GATEWAY=http://vv-gateway.internal:8080 \
+  && VEOVEO_ACCEPTANCE_HUB=http://vv-hub.internal:8080 \
      VEOVEO_ACCEPTANCE_KEY_DIRECTORY=/sandbox/acceptance \
      cargo nextest run --test acceptance --run-ignored only'
 ```

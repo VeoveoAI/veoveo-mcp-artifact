@@ -1,8 +1,8 @@
 //! `ArtifactClient`: uploads and downloads built on Artifact's typed calls. The calls go
-//! through the Gateway for the caller a `GatewayClient` is bound to: the request a
+//! through the Hub for the caller a `HubClient` is bound to: the request a
 //! handler serves (`ctx.client()`), a Task (`ServerCalls::for_task`), or a program with
 //! its own access token. The bytes go straight to object storage through the URLs
-//! Artifact signs, and the Gateway carries none of them.
+//! Artifact signs, and the Hub carries none of them.
 //!
 //! ```ignore
 //! let artifacts = ArtifactClient::new(ctx.client()?, http);
@@ -16,7 +16,7 @@ mod download;
 mod parts;
 mod upload;
 
-use veoveo_sdk_rust::client::{CallError, GatewayClient};
+use veoveo_hub_sdk::client::{CallError, HubClient};
 use veoveo_types::Sha256Digest;
 
 use crate::contract::{ArtifactId, ArtifactName, MediaType};
@@ -24,23 +24,23 @@ use crate::contract::{ArtifactId, ArtifactName, MediaType};
 pub use download::{Download, DownloadStream, Downloaded};
 pub use upload::{DEFAULT_IN_FLIGHT_BYTES, SINGLE_PUT_BYTES, Upload, UploadBody};
 
-/// Uploads and downloads of artifacts through one Gateway binding.
+/// Uploads and downloads of artifacts through one Hub binding.
 #[derive(Clone, Debug)]
 pub struct ArtifactClient {
-    calls: GatewayClient,
+    calls: HubClient,
     http: reqwest::Client,
 }
 
 impl ArtifactClient {
     /// Artifact through `calls`, moving bytes with `http`. `http` reaches object storage
     /// directly and carries the TLS configuration the program chose.
-    pub fn new(calls: GatewayClient, http: reqwest::Client) -> Self {
+    pub fn new(calls: HubClient, http: reqwest::Client) -> Self {
         Self { calls, http }
     }
 
-    /// The Gateway binding the client calls Artifact through, for Artifact's other
+    /// The Hub binding the client calls Artifact through, for Artifact's other
     /// tools, such as `grant_artifact`.
-    pub fn calls(&self) -> &GatewayClient {
+    pub fn calls(&self) -> &HubClient {
         &self.calls
     }
 
@@ -60,7 +60,7 @@ impl ArtifactClient {
 /// Why an upload or a download did not finish.
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactClientError {
-    /// A call to Artifact through the Gateway failed or was refused.
+    /// A call to Artifact through the Hub failed or was refused.
     #[error(transparent)]
     Call(#[from] CallError),
     /// Object storage refused a signed request or could not be reached. The message

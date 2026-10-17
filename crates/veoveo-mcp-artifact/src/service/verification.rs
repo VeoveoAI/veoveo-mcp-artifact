@@ -7,7 +7,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use veoveo_audit_contract::{AuditActor, AuditContext, AuditPrincipalKind, AuditRequest};
-use veoveo_sdk_rust::durable_tasks::{TaskContext, TaskWorker};
+use veoveo_hub_sdk::durable_tasks::{TaskContext, TaskWorker};
 use veoveo_task::{
     CreateTask, PrincipalKind, RecoveryClass, ResumeCancellationPolicy, TaskFailure, TaskOwner,
     TaskSnapshot, TaskStatus, TaskTransition,

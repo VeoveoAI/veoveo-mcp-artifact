@@ -5,7 +5,7 @@ crate.
 
 Artifact stores files for a tenant and decides who may read, change, share and delete
 each one. People, agents and other servers ask it through MCP. Bytes move directly
-between the client and object storage through URLs the server signs, so the Gateway
+between the client and object storage through URLs the server signs, so the Hub
 and MCP carry only metadata and decisions.
 
 ## Service Identity
@@ -28,7 +28,7 @@ port         8801
 
 | Standard or protocol | Implemented profile |
 |---|---|
-| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-sdk-rust` 9bf0a3a implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
+| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-hub-sdk` 9bf0a3a implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
 | [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/) | Tool inputs and results, resource contents and the audit detail types Artifact declares. |
 | [Veoveo audit record](https://github.com/VeoveoAI/veoveo-core/blob/9a6b3ff95469ff19f9ccb513421a57ba6751aa9e/platform/audit/contract/DESIGN.md), after NIST SP 800-53 Rev. 5 AU-3 and mapped to [OCSF 1.9](https://schema.ocsf.io/1.9.0/) | Each record carries core's envelope: Artifact's class with its OCSF API Activity (6003) and activity, an outcome, Artifact's reason code when a decision fails, the caller, the acting server and Task as `via`, the Artifact resource the decision concerns as its target, and a closed detail. |
 | [URI Template RFC 6570](https://www.rfc-editor.org/rfc/rfc6570) | Discovery declares simple variables, and collection pages continue through a `cursor` query parameter. |
@@ -38,12 +38,12 @@ port         8801
 | [RFC 6266](https://www.rfc-editor.org/rfc/rfc6266) | Download responses carry an attachment disposition with the artifact's name as `filename*`. |
 | [RFC 6838](https://www.rfc-editor.org/rfc/rfc6838) media types | An artifact's media type is a bare `type/subtype` without parameters. |
 | SHA-256 | Every available artifact records its SHA-256 in the foundational `Sha256Digest` spelling, `sha256:` followed by 64 lowercase hexadecimal digits. |
-| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Gateway forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, and the server's Task when the call came from one, which Artifact records in each artifact's provenance and as the `via` of its audit records. `ArtifactClient` calls through a Gateway profile with a token the SDK obtains by exchange. |
+| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Hub forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, and the server's Task when the call came from one, which Artifact records in each artifact's provenance and as the `via` of its audit records. `ArtifactClient` calls through a Hub profile with a token the SDK obtains by exchange. |
 | [HTTP range requests, RFC 9110 §14](https://www.rfc-editor.org/rfc/rfc9110#name-range-requests) | `ArtifactClient` sends one `bytes=first-last` or `bytes=first-` range with a signed GET and expects `206 Partial Content`. |
 | [HTTP semantics, RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) `303 See Other` and `Cache-Control: no-store` ([RFC 9111](https://www.rfc-editor.org/rfc/rfc9111)) | The share route answers a live link with `303` to a signed GET, and every answer carries `no-store`. |
 | [Base64url, RFC 4648 §5](https://www.rfc-editor.org/rfc/rfc4648#section-5) | A share link's secret is 32 random bytes in unpadded canonical base64url, 43 characters. |
 | [Referrer Policy](https://www.w3.org/TR/referrer-policy/) | The share route's answers carry `Referrer-Policy: no-referrer`. |
-| [Veoveo server registration](https://github.com/VeoveoAI/veoveo-sdk-rust) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions in `ai.veoveo/authorization`. |
+| [Veoveo server registration](https://github.com/VeoveoAI/veoveo-hub-sdk) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions in `ai.veoveo/authorization`. |
 | [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/9a6b3ff95469ff19f9ccb513421a57ba6751aa9e/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. |
 | SeaweedFS 4.48 | The installation's object store, run as `weed mini` and pinned by image digest. Artifact uses only the S3 calls listed above through aws-sdk-s3 1.152.0, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
 
@@ -70,7 +70,7 @@ The crate is a library and a binary.
 | Feature | Contains | Depends on |
 |---|---|---|
 | `contract` | `ArtifactId`, the typed resource addresses, every tool request and result, metadata, grant levels and subjects, access requests, upload limits, the `ArtifactPermission` vocabulary, the audit detail types, and `ArtifactProvider` with a `ToolCall` for each served tool and `ReadArtifact`, a `ResourceRead` of one artifact | `veoveo-types`, the SDK's `contract` feature, Serde and Schemars |
-| `client` | `contract` plus `ArtifactClient`, which uploads a stream of known or unknown size and downloads through signed URLs, built on the SDK's `GatewayClient` | the SDK's `client` feature, reqwest, Tokio and sha2 |
+| `client` | `contract` plus `ArtifactClient`, which uploads a stream of known or unknown size and downloads through signed URLs, built on the SDK's `HubClient` | the SDK's `client` feature, reqwest, Tokio and sha2 |
 | `server` (default) | the hosted server, persistence and object storage | the SDK's `server` feature, sqlx and aws-sdk-s3 |
 
 A consumer such as Media selects `default-features = false, features = ["client"]` and
@@ -79,7 +79,7 @@ boundaries with `cargo tree`.
 
 ### Hosted Process
 
-The binary parses configuration, prepares its bucket, registers with the Gateway,
+The binary parses configuration, prepares its bucket, registers with the Hub,
 connects to PostgreSQL with the login its registration returned, applies its
 migrations and serves MCP. Three loops run on every replica beside it: the sweep, which
 claims rows with `FOR UPDATE SKIP LOCKED`; the verification worker, which claims
@@ -145,7 +145,7 @@ Each prompt requires `artifact.artifacts.read`, and acts only through the tools 
 
 `GET /artifact/shares/{token}` is the only route outside MCP, because a share link must
 work for someone without an account. The hosted process serves it under its mount
-without Gateway authentication; the link's secret authenticates the request.
+without Hub authentication; the link's secret authenticates the request.
 
 | The request names | The answer |
 |---|---|
@@ -226,7 +226,7 @@ own calls on the installation network.
 
 ## Access Control
 
-The Gateway admits a tool by its permission. Artifact then decides the specific
+The Hub admits a tool by its permission. Artifact then decides the specific
 artifact, and both must allow the call. One SQL function, `artifact.effective_level`,
 makes the per-artifact decision from the caller's facts, so lists filter inside the
 query before their row limit.
@@ -275,9 +275,9 @@ without a role, both, newest first.
 ## Calls From Other Servers
 
 A server such as Media declares uses of `artifact.artifacts.read` and
-`artifact.artifacts.write` when it registers, and calls Artifact through the Gateway with
+`artifact.artifacts.write` when it registers, and calls Artifact through the Hub with
 a token from token exchange. The token names the original caller and an `act` chain of
-the calling server and the Gateway, and carries only the Artifact permissions the
+the calling server and the Hub, and carries only the Artifact permissions the
 calling server declared and the caller holds. Artifact authorizes the call for the
 caller, records the acting server in the artifact's provenance, and names it as the
 `via` of the audit record of every decision the call makes. A call that one of the
@@ -292,11 +292,11 @@ that restarts after a crash does not store an output twice.
 The `contract` feature publishes each served tool as a typed call. `ArtifactProvider`
 names the `artifact` slug, and each request type names its tool and result, such as
 `CreateUploadRequest` with `CreateUploadResult`, so a consumer calls
-`client.call(request)` on the SDK's `GatewayClient` and never spells a tool name.
+`client.call(request)` on the SDK's `HubClient` and never spells a tool name.
 
 ### ArtifactClient
 
-`ArtifactClient::new(calls, http)` wraps a `GatewayClient`: the one `ctx.client()` binds
+`ArtifactClient::new(calls, http)` wraps a `HubClient`: the one `ctx.client()` binds
 to a request's caller, the one `ServerCalls::for_task` binds to a Task's caller, or a
 program's own. `http` moves the bytes straight to object storage, and the program
 chooses its TLS configuration. `upload(name, media_type, body)` and `download(id)` are
@@ -334,7 +334,7 @@ A failure names object storage's status and S3 error code, never the signed URL.
 
 A call bound to a request lasts as long as the forwarded token, at most a minute, so a
 handler starts a Task for an upload that may take longer. A consumer reaches the
-Gateway's `/oauth/token` and `/mcp/{profile}`, and object storage, on the installation's
+Hub's `/oauth/token` and `/mcp/{profile}`, and object storage, on the installation's
 network, as Artifact does.
 
 ## Lists And Paging
@@ -415,7 +415,7 @@ A target is the Artifact resource address the decision concerns, such as
 `artifact://artifacts/{artifact_id}/grants`. Artifact records the decisions it makes;
 a refused request changes nothing and records nothing, so its reason codes are
 `size_mismatch` and `digest_mismatch`. A record's actor and request come from the
-Gateway's signed request context, and its `via` names the server that made the call for
+Hub's signed request context, and its `via` names the server that made the call for
 the caller and that server's Task, so details carry Artifact's facts only. A
 verification Task's records carry its owner and a background request that names the
 Task. Startup declares the classes through the server's own login with core's
@@ -437,7 +437,7 @@ forwarded token. A target the declaration omits is denied.
 
 ## Registration
 
-Artifact prepares its bucket, then registers with the Gateway at startup like any
+Artifact prepares its bucket, then registers with the Hub at startup like any
 server: it loads its key, discovers the registration endpoint, registers its slug,
 scheme, endpoint and permissions, connects with the database login the response grants,
 applies its migrations, declares its audit classes and serves. On SIGTERM it stops serving, stops its loops, ends
@@ -457,7 +457,7 @@ or under the public base URL when the installation has none. The server accepts 
 origin's host in the `Host` header, and the installation routes the origin's
 `/artifact/shares/*` to the server for people without an account.
 SigV4 signs with the secret key inside the server, so the server's environment holds the
-credential itself, the way the Gateway's holds the database owner's password; a
+credential itself, the way the Hub's holds the database owner's password; a
 placeholder that a proxy substitutes cannot sign. The credential is limited to the
 bucket. Locally the signed address is `http://vv-seaweedfs.internal:9000`, and without a
 public origin share links name `http://vv-mcp-artifact.internal:8801`, Artifact's own
@@ -482,9 +482,9 @@ signed header would void the signature.
 | Database | Core's database checks over every statement and table; `tests/sql_confinement.rs` holds every query, migration and test query to the `artifact` schema with the SDK's `assert_sql_confined`; `effective_level` against a matrix of owners, grants, groups, Work Context roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
 | Object storage | A private SeaweedFS per test process, from the binary in the pinned image: signed single and multipart uploads, a wrong size, checksum or part checksum refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
 | Service | The store and SeaweedFS together: declared and undeclared uploads, refused bytes, aborts, a large object verified in a Task, a verification whose database sessions end while its digest write waits, which runs again from its recovery, a digest mismatch, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
-| MCP | The SDK's in-process Gateway with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
+| MCP | The SDK's in-process Hub with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
 | Sharing | Database tests: returning to private ends only live links and releasing again revives none; links need an administrator and a released, available artifact without labels; twelve concurrent redemptions of a link limited to three count exactly three; expired, revoked, deleted and unknown links redeem nothing, and a dropped redemption counts nothing; share-link pages and their cursors. Access requests: an approval writes the requested grant and records each step, visibility and the held level bound a request, only the requester withdraws and only an administrator decides, an approval keeps a stronger grant, and listings page by role and state |
 | Share route | `tests/share_route.rs` through the hosted router and a private SeaweedFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
 | Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private SeaweedFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves verifying, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and waits for its verification through the artifact's resource updates, which resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size or digest mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |
-| Acceptance | `tests/acceptance.rs` through a running installation's Gateway and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |
+| Acceptance | `tests/acceptance.rs` through a running installation's Hub and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use veoveo_audit_contract::AuditContext;
-use veoveo_sdk_rust::OpaqueTaskId;
+use veoveo_hub_sdk::OpaqueTaskId;
 use veoveo_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
 use veoveo_types::{
     AccessLevel, DataLabelId, GroupId, PrincipalId, ServerSlug, TenantId, WorkContextId,
