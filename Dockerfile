@@ -75,10 +75,16 @@ FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d
 ARG COMPONENT
 ARG VERSION
 ARG REVISION
-RUN useradd --system --uid 10001 --no-create-home "${COMPONENT}"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* /var/log/apt /var/log/dpkg.log \
+    && useradd --system --uid 10001 --create-home --home-dir /var/lib/veoveo "${COMPONENT}" \
+    && mkdir -p /var/lib/veoveo/artifact/keys \
+    && chown -R "${COMPONENT}:${COMPONENT}" /var/lib/veoveo/artifact
 COPY --from=build "/home/sandbox/${COMPONENT}" "/usr/local/bin/${COMPONENT}"
 USER ${COMPONENT}
 # The exec form cannot expand build arguments, so the binary path is fixed here.
+EXPOSE 8801
 ENTRYPOINT ["/usr/local/bin/veoveo-mcp-artifact"]
 LABEL org.opencontainers.image.title="${COMPONENT}" \
       org.opencontainers.image.source="https://github.com/VeoveoAI/${COMPONENT}" \

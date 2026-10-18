@@ -4277,7 +4277,6 @@ dependencies = [
  "url",
  "uuid",
  "veoveo-audit-contract",
- "veoveo-oauth",
  "veoveo-store",
  "veoveo-task",
  "veoveo-types",
@@ -4365,21 +4364,6 @@ dependencies = [
  "veoveo-store",
  "veoveo-task",
  "veoveo-types",
-]
-
-[[package]]
-name = "veoveo-oauth"
-version = "0.1.0"
-source = "git+https://github.com/VeoveoAI/veoveo-core?rev=0e4f26ab0f15b27509bdf6a3796df2f8041cbfb0#0e4f26ab0f15b27509bdf6a3796df2f8041cbfb0"
-dependencies = [
- "jsonwebtoken",
- "schemars",
- "serde",
- "thiserror 2.0.21",
- "url",
- "uuid",
- "veoveo-types",
- "zeroize",
 ]
 
 [[package]]

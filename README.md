@@ -135,74 +135,94 @@ feature and the nextest `ci` profile with every feature on. It runs the same way
 docker build --target dev -t veoveo-mcp-artifact:dev .
 ```
 
-A local installation from
-[veoveo-template-installation](https://github.com/VeoveoAI/veoveo-template-installation)
-runs this image, under its own layer, as the Compose service `vv-mcp-artifact`, which
-works in the installation's Lore repository at `/sandbox/src`. The environment reaches
-the Hub at `vv-hub.internal:8080`, PostgreSQL at `vv-postgres.internal:5432` and
-the object store at `vv-seaweedfs.internal:9000` on the installation's network. Signed
-requests to the object store go there directly, because a proxy that changed a signed
-header would void the signature. Run the commands below from the installation's
-directory.
+The native [installation setup](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/openshell/ARTIFACT.md)
+uses the reviewed runtime image in OpenShell workspace `vv-services`, sandbox
+`artifact`. It listens privately on 8801, advertises
+`http://artifact.internal:8801/artifact/mcp` and registers at the approved native
+HTTPS Hub origin. Hub reaches it through its explicit native `ForwardTcp` binding.
+No public service exposure or Compose application container is required.
 
-### Running Artifact in the environment
+Keep `/var/lib/veoveo/artifact/keys` on the approved persistent named volume, owned
+by runtime UID10001. Recover the existing installation key before creating any new
+identity. Registration client IDs may change on restart; the persisted signing key,
+service slug, registered endpoint and public-key thumbprint must remain stable.
+OpenShell supplies registration's opaque reference and workload CA trust. Do not
+copy private caller keys or replace TLS verification.
 
-Artifact runs inside `vv-mcp-artifact` on port 8801 and registers with the Hub at
-`http://vv-hub.internal:8080`. The environment holds a placeholder for
-`VEOVEO_REGISTRATION_SECRET`, which the installation's edge replaces with the secret on
-the registration request. The storage credential cannot work that way, because the
-server signs URLs with the secret itself, so the installation pipes it into an
-owner-only file, `/sandbox/state/storage.env`, that holds `VEOVEO_STORAGE_ACCESS_KEY` and
-`VEOVEO_STORAGE_SECRET_KEY`.
-
-The served binary builds into its own target directory, `/sandbox/target-serve`, apart
-from `target/`, where the gate and acceptance builds enable test-only dependency
-features, so a test build is never served:
-
-```sh
-docker compose exec vv-mcp-artifact bash -lc 'cd /sandbox/src \
-  && cargo build --locked --target-dir /sandbox/target-serve --bin veoveo-mcp-artifact \
-  && set -a && . /sandbox/state/storage.env && set +a \
-  && VEOVEO_PUBLIC_BASE_URL=http://vv-mcp-artifact.internal:8801 \
-     VEOVEO_HUB_ISSUER=http://vv-hub.internal:8080 \
-     VEOVEO_KEY_DIRECTORY=/sandbox/artifact/keys \
-     VEOVEO_STORAGE_ENDPOINT=http://vv-seaweedfs.internal:9000 \
-     exec /sandbox/target-serve/debug/veoveo-mcp-artifact'
-```
-
-The command keeps running in its terminal. Artifact prepares its bucket and registers
-before it listens, and the Hub reaches it as
-`http://vv-mcp-artifact.internal:8801/artifact/mcp`. Signed URLs name the object store as
-`http://vv-seaweedfs.internal:9000` and share links name
-`http://vv-mcp-artifact.internal:8801`; a browser on the host follows them once the host
-maps those names to `127.0.0.1`. Artifact removes its registration when it receives
-SIGTERM or Ctrl-C.
+The trusted service receives a dedicated bucket-scoped S3 credential through its
+private environment mount. SigV4 needs the real secret inside Artifact; opaque
+references cannot sign requests. Both storage endpoints use the same canonical
+`http://host.openshell.internal:9000`, region `us-east-1`, bucket `artifacts`, and
+path-style addressing. Native TCP policy lets Artifact and authorized clients reach
+that endpoint directly without changing signed hosts/headers. Neither signing keys
+nor S3 credentials belong in a factory or acceptance runner. Keep
+`VEOVEO_PUBLIC_ORIGIN` unset; public share ingress is a separate qualification.
 
 ## Acceptance
 
-`tests/acceptance.rs` calls Artifact through the Hub as the installation's
-`acceptance-member` and `acceptance-admin` callers and moves bytes through the URLs
-Artifact signs: each caller lists exactly the tools its role may call, and the member
-is refused the tools whose permissions carry a risk; a small upload with a declared SHA-256 through one signed PUT, available at
-completion, read by the owner and by a member of its Work Context, and fetched as a
-range; a gibibyte of unknown size uploaded in parts, verified by the server's Task,
-fetched as a range across a part boundary, then deleted and released by the sweep; a
-grant listed and revoked; an upload refused by the quota the admin sets, then
-admitted once the limits are restored; a released artifact's share link opened through
-the share route, redirected to the object store and spent after its one redemption; and
-the member's request to administer an artifact, approved by the admin. The tests share the tenant's usage and limits,
-so nextest runs them one at a time. The local installation has one tenant, so a read
-refused across tenants is covered by the database tests.
+`tests/acceptance.rs` calls Artifact through Hub as typed member/admin roles. Native
+inputs select `vv-hub-member` and `vv-hub-admin` credentials. A declared upload also
+checks the exact admin principal retained as owner/provenance. The six private live
+cases cover role/tool refusals, SHA-256 upload and range download, a multipart
+upload over a gibibyte verified by Artifact's Task and released by the sweep,
+grant listing/revocation, quota enforcement, and access-request approval. They share
+one tenant's usage and limits, so run serially. Both callers belong to the same
+Work Context: object-level isolation and cross-tenant refusal remain component-test
+coverage, not deployed multi-tenant acceptance.
 
-The tests are ignored by default. With the installation running and the callers' keys
-copied to `/sandbox/acceptance`, run them:
+Prepare a trusted runner with the installation's qualification policy and native
+dual-credential provider. Set selectors, never token values on command arguments:
 
 ```sh
-docker compose exec vv-mcp-artifact bash -lc 'cd /sandbox/src \
-  && VEOVEO_ACCEPTANCE_HUB=http://vv-hub.internal:8080 \
-     VEOVEO_ACCEPTANCE_KEY_DIRECTORY=/sandbox/acceptance \
-     cargo nextest run --test acceptance --run-ignored only'
+export VEOVEO_ACCEPTANCE_HUB=https://vv-control--hub--http.openshell.localhost:17670
+export VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV=HUB_MEMBER_REFERENCE
+export VEOVEO_ACCEPTANCE_ADMIN_BEARER_ENV=HUB_ADMIN_REFERENCE
+/sandbox/bin/artifact-acceptance --ignored --skip restart_persistence_ \
+  --skip a_share_link_redeems_through_the_share_route_until_its_limit \
+  --nocapture --test-threads=1
 ```
+
+The equivalent source invocation is `cargo nextest run --locked --all-features
+--test acceptance --run-ignored only -E 'not (test(restart_persistence_) or
+test(a_share_link_redeems_through_the_share_route_until_its_limit))'`.
+The retained seventh live case qualifies public share redemption only when that
+separate ingress is deliberately configured. It is excluded from native private
+acceptance. No test result is inferred from compilation.
+
+Native credential renewal intentionally fences existing connections. It can
+interrupt transfers/subscriptions; preserve that evidence and use an explicit fresh
+client after an applied refresh. Do not replay mutating operations automatically.
+Signed-transfer errors omit signed URLs and signatures.
+
+### Restart persistence
+
+Run the phases separately, outside the ordinary suite, after a known applied
+credential refresh with sufficient margin before the next update:
+
+```sh
+/sandbox/bin/artifact-acceptance --ignored --exact restart_persistence_prepare \
+  --nocapture --test-threads=1
+```
+
+It retains a small available object and prints only
+`VEOVEO_ACCEPTANCE_RESTART_ARTIFACT_ID` and
+`VEOVEO_ACCEPTANCE_RESTART_AVAILABLE_AT`. The trusted operator records the Artifact
+key's public thumbprint, sandbox/volume/process identities and native stop/start
+readiness for Artifact and Hub, retaining the state volume and keys. Set the two
+printed domain inputs in a fresh runner invocation, then run:
+
+```sh
+/sandbox/bin/artifact-acceptance --ignored --exact restart_persistence_verify \
+  --nocapture --test-threads=1
+```
+
+Verification opens a fresh resource subscription, requires its opening update,
+checks the same available timestamp, size, digest, name, owner, provenance, Work
+Context and access, downloads the exact retained bytes, then deletes the test
+artifact. Independently compare the public signing-key thumbprint before/after.
+These phases carry no management authority and never restart a workload. They
+qualify retained object/metadata state; in-flight verification-Task recovery is not
+claimed by this probe.
 
 ## License
 

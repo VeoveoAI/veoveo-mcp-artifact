@@ -119,7 +119,7 @@ veoveo-task = { workspace = true, optional = true }
 veoveo-audit.workspace = true
 veoveo-audit-contract.workspace = true
 veoveo-store.workspace = true
-veoveo-hub-sdk = { workspace = true, features = ["server", "testing", "client-credentials"] }
+veoveo-hub-sdk = { workspace = true, features = ["server", "testing"] }
 veoveo-hub-sdk-fixture.workspace = true
 # The acceptance tests call Artifact through the Hub as an MCP client.
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }

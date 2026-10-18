@@ -4,14 +4,16 @@
 //! URLs Artifact signs.
 //!
 //! The tests need a running installation, so they are ignored by default. Inside the
-//! Artifact environment, set `VEOVEO_ACCEPTANCE_HUB` to the Hub origin and
-//! `VEOVEO_ACCEPTANCE_KEY_DIRECTORY` to the directory holding the callers' keys, then
-//! run `cargo nextest run --test acceptance --run-ignored only`. The tests share the
-//! tenant's usage and upload limits, so nextest runs them one at a time.
+//! qualification environment, set `VEOVEO_ACCEPTANCE_HUB` to the native HTTPS Hub
+//! origin and `VEOVEO_ACCEPTANCE_{MEMBER,ADMIN}_BEARER_ENV` to distinct variables
+//! holding the prepared bearer/opaque references. No caller signing keys are copied.
+//! Run the six private cases serially, excluding the public share-route case and
+//! `restart_persistence_` phases; see the README for exact commands. The tests share
+//! the tenant's usage and upload limits.
 //!
 //! The local installation has one tenant, so a read refused across tenants is covered by
 //! the database tests and not here.
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
 use futures::{StreamExt as _, TryStreamExt as _};
@@ -29,7 +31,7 @@ use rmcp::{
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use veoveo_hub_sdk::client::{BearerSource as _, ClientCredentialsBearer, caller_signer};
+use veoveo_hub_sdk::client::{BearerSource as _, StaticBearer};
 use veoveo_mcp_artifact::contract::{
     AbortUploadResult, AccessRequestListing, AccessRequestResult, AccessRequestState,
     ArtifactEntry, ArtifactId, ArtifactResult, ArtifactState, CompleteUploadResult,
@@ -37,10 +39,80 @@ use veoveo_mcp_artifact::contract::{
     GrantArtifactResult, GrantListing, ReleaseState, RevokeArtifactGrantResult, ShareLinkListing,
     SignedTransfer, StorageUsage, UploadLimits, UploadLimitsResult, UploadTransfer,
 };
-use veoveo_types::{AccessLevel, AccessSubject, OAuthClientId, ScopeName};
+use veoveo_types::{AccessLevel, AccessSubject, PrincipalId};
 
-const MEMBER: &str = "acceptance-member";
-const ADMIN: &str = "acceptance-admin";
+#[derive(Clone, Copy)]
+enum CallerRole {
+    Member,
+    Admin,
+}
+
+struct AcceptanceBearers {
+    member: StaticBearer,
+    admin: Option<StaticBearer>,
+}
+
+impl AcceptanceBearers {
+    /// Injectable lookup keeps input regression tests independent of process state.
+    fn load(lookup: impl Fn(&str) -> Option<String>) -> Result<Self> {
+        ensure!(
+            lookup("VEOVEO_ACCEPTANCE_KEY_DIRECTORY").is_none(),
+            "VEOVEO_ACCEPTANCE_KEY_DIRECTORY is retired; supply prepared bearer inputs"
+        );
+        let member_env = lookup("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV")
+            .context("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV must name the member bearer variable")?;
+        let admin_env = lookup("VEOVEO_ACCEPTANCE_ADMIN_BEARER_ENV");
+        ensure!(
+            admin_env.as_ref() != Some(&member_env),
+            "member and admin bearer selectors must name distinct variables"
+        );
+        let member = Self::read(&lookup, &member_env, "member")?;
+        let admin = admin_env
+            .as_deref()
+            .map(|name| Self::read(&lookup, name, "admin"))
+            .transpose()?;
+        ensure!(
+            admin.as_ref() != Some(&member),
+            "member and admin bearer inputs must be distinct"
+        );
+        Ok(Self {
+            member: StaticBearer::new(member),
+            admin: admin.map(StaticBearer::new),
+        })
+    }
+
+    fn read(lookup: &impl Fn(&str) -> Option<String>, name: &str, role: &str) -> Result<String> {
+        ensure!(
+            !name.is_empty()
+                && name.bytes().enumerate().all(|(index, byte)| {
+                    byte == b'_'
+                        || byte.is_ascii_alphabetic()
+                        || (index > 0 && byte.is_ascii_digit())
+                }),
+            "{role} bearer selector must be an environment variable name"
+        );
+        let value = lookup(name).with_context(|| format!("{role} bearer variable is missing"))?;
+        ensure!(
+            !value.is_empty() && !value.chars().any(char::is_whitespace),
+            "{role} bearer variable must contain a nonempty bearer without whitespace"
+        );
+        Ok(value)
+    }
+
+    fn source(&self, role: CallerRole) -> Result<&StaticBearer> {
+        match role {
+            CallerRole::Member => Ok(&self.member),
+            CallerRole::Admin => self
+                .admin
+                .as_ref()
+                .context("VEOVEO_ACCEPTANCE_ADMIN_BEARER_ENV is required for admin qualification"),
+        }
+    }
+}
+
+const MEMBER: CallerRole = CallerRole::Member;
+const ADMIN: CallerRole = CallerRole::Admin;
+const ADMIN_PRINCIPAL: &str = "https://auth.localhost:8443/realms/veoveo#vv-hub-admin";
 /// The local installation's one tenant, whose upload limits the quota test changes.
 const TENANT: &str = "local";
 const MIB: u64 = 1024 * 1024;
@@ -50,7 +122,7 @@ struct Caller;
 impl ClientHandler for Caller {
     fn get_info(&self) -> ClientConfig {
         ClientConfig::new(
-            ClientCapabilities::default(),
+            ClientCapabilities::builder().enable_tasks().build(),
             Implementation::new("veoveo-mcp-artifact-acceptance", env!("CARGO_PKG_VERSION")),
         )
     }
@@ -60,7 +132,8 @@ type Client = RunningService<RoleClient, Caller>;
 
 struct Installation {
     hub: url::Url,
-    keys: PathBuf,
+    bearers: AcceptanceBearers,
+    http: reqwest::Client,
 }
 
 impl Installation {
@@ -69,11 +142,13 @@ impl Installation {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let hub = std::env::var("VEOVEO_ACCEPTANCE_HUB")
             .context("VEOVEO_ACCEPTANCE_HUB names the Hub origin")?;
-        let keys = std::env::var("VEOVEO_ACCEPTANCE_KEY_DIRECTORY")
-            .context("VEOVEO_ACCEPTANCE_KEY_DIRECTORY names the callers' key directory")?;
+        let bearers = AcceptanceBearers::load(|name| std::env::var(name).ok())?;
+        // Keep platform certificate verification, including provisioned Linux roots.
+        let http = reqwest::Client::builder().build()?;
         Ok(Self {
             hub: url::Url::parse(&hub)?,
-            keys: PathBuf::from(keys),
+            bearers,
+            http,
         })
     }
 
@@ -81,27 +156,12 @@ impl Installation {
         Ok(self.hub.join("/mcp/local")?)
     }
 
-    /// The caller's client-credentials token for the profile, through the SDK's bearer,
-    /// which discovers the token endpoint from the profile's metadata.
-    async fn token(&self, caller: &str) -> Result<String> {
-        let caller = OAuthClientId::parse(caller)?;
-        let signer = caller_signer(&self.keys, &caller)?;
-        let bearer = ClientCredentialsBearer::discover(
-            &self.mcp()?,
-            caller,
-            signer,
-            ScopeName::parse("mcp")?,
-            reqwest::Client::new(),
-        )
-        .await?;
-        Ok(bearer.caller_bearer().await?.expose().to_owned())
-    }
-
-    async fn connect(&self, caller: &str) -> Result<Client> {
-        let token = self.token(caller).await?;
-        let transport = StreamableHttpClientTransport::from_config(
+    async fn connect(&self, role: CallerRole) -> Result<Client> {
+        let bearer = self.bearers.source(role)?.caller_bearer().await?;
+        let transport = StreamableHttpClientTransport::with_client(
+            self.http.clone(),
             StreamableHttpClientTransportConfig::with_uri(self.mcp()?.to_string())
-                .auth_header(token),
+                .auth_header(bearer.expose().to_owned()),
         );
         Ok(Caller
             .serve_with_lifecycle(
@@ -211,7 +271,11 @@ async fn send(
     if let Some(range) = range {
         request = request.header(reqwest::header::RANGE, range);
     }
-    Ok(request.body(body).send().await?)
+    Ok(request
+        .body(body)
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url)?)
 }
 
 /// Deterministic bytes for one part, so a test can regenerate any range it uploaded.
@@ -387,6 +451,11 @@ async fn a_declared_upload_is_available_and_serves_a_range_to_the_work_context()
             "the owner reads at {:?}",
             entry.level
         );
+        let owner = PrincipalId::parse(ADMIN_PRINCIPAL)?;
+        ensure!(
+            artifact.owner == owner && artifact.provenance.caller == owner,
+            "the upload did not retain the admitted admin principal"
+        );
         let usage: StorageUsage = read(&admin, USAGE).await?;
         ensure!(
             usage.stored_bytes >= body.len() as u64,
@@ -415,7 +484,12 @@ async fn a_declared_upload_is_available_and_serves_a_range_to_the_work_context()
             fetched.status()
         );
         ensure!(
-            fetched.bytes().await?.as_ref() == &body[1000..5000],
+            fetched
+                .bytes()
+                .await
+                .map_err(reqwest::Error::without_url)?
+                .as_ref()
+                == &body[1000..5000],
             "the range holds other bytes"
         );
         delete(&admin, artifact_id).await
@@ -539,7 +613,12 @@ async fn a_gibibyte_of_unknown_size_verifies_serves_a_range_and_releases_its_byt
         let mut range = part_bytes(0, part)[usize::try_from(start)?..].to_vec();
         range.extend_from_slice(&part_bytes(1, part)[..100]);
         ensure!(
-            fetched.bytes().await?.as_ref() == range.as_slice(),
+            fetched
+                .bytes()
+                .await
+                .map_err(reqwest::Error::without_url)?
+                .as_ref()
+                == range.as_slice(),
             "the range across the part boundary holds other bytes"
         );
 
@@ -700,7 +779,11 @@ async fn a_share_link_redeems_through_the_share_route_until_its_limit() -> Resul
         let browser = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
-        let redirected = browser.get(link.url.expose()).send().await?;
+        let redirected = browser
+            .get(link.url.expose())
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)?;
         ensure!(
             redirected.status() == reqwest::StatusCode::SEE_OTHER,
             "the share route answered {}",
@@ -712,17 +795,30 @@ async fn a_share_link_redeems_through_the_share_route_until_its_limit() -> Resul
             .context("the redirect names no location")?
             .to_str()?
             .to_owned();
-        let fetched = browser.get(location).send().await?;
+        let fetched = browser
+            .get(location)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)?;
         ensure!(
             fetched.status().is_success(),
             "the signed GET answered {}",
             fetched.status()
         );
         ensure!(
-            fetched.bytes().await?.as_ref() == body,
+            fetched
+                .bytes()
+                .await
+                .map_err(reqwest::Error::without_url)?
+                .as_ref()
+                == body,
             "the link serves other bytes"
         );
-        let spent = browser.get(link.url.expose()).send().await?;
+        let spent = browser
+            .get(link.url.expose())
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)?;
         ensure!(
             spent.status() == reqwest::StatusCode::NOT_FOUND,
             "a spent link answered {}",
@@ -797,4 +893,279 @@ async fn the_admin_approves_the_members_request_for_more_access() -> Result<()> 
         delete(&admin, artifact_id).await
     })
     .await
+}
+
+/// Nonsecret domain coordinates carried across a restart controlled by the operator.
+struct RestartInputs {
+    artifact_id: ArtifactId,
+    available_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl RestartInputs {
+    fn load(lookup: impl Fn(&str) -> Option<String>) -> Result<Self> {
+        let artifact_id = lookup("VEOVEO_ACCEPTANCE_RESTART_ARTIFACT_ID")
+            .context("VEOVEO_ACCEPTANCE_RESTART_ARTIFACT_ID names the prepared artifact")?;
+        let available_at = lookup("VEOVEO_ACCEPTANCE_RESTART_AVAILABLE_AT").context(
+            "VEOVEO_ACCEPTANCE_RESTART_AVAILABLE_AT is the prepared availability timestamp",
+        )?;
+        Ok(Self {
+            artifact_id: serde_json::from_value(json!(artifact_id))
+                .context("the restart artifact ID must be a canonical Artifact identifier")?,
+            available_at: chrono::DateTime::parse_from_rfc3339(&available_at)
+                .context("the restart availability timestamp must be RFC3339")?
+                .with_timezone(&chrono::Utc),
+        })
+    }
+}
+
+fn check_retained(entry: &ArtifactEntry, body: &[u8]) -> Result<()> {
+    let artifact = &entry.artifact;
+    let owner = PrincipalId::parse(ADMIN_PRINCIPAL)?;
+    ensure!(
+        artifact.name.as_str() == "restart-persistence.bin"
+            && artifact.media_type.as_str() == "application/octet-stream"
+            && artifact.state == ArtifactState::Available
+            && artifact.release_state == ReleaseState::Private
+            && artifact.size.map(|size| size.bytes()) == Some(body.len() as u64)
+            && artifact.sha256.as_ref().map(ToString::to_string) == Some(digest(body))
+            && artifact.owner == owner
+            && artifact.provenance.caller == owner
+            && artifact.work_context.as_str() == "local"
+            && artifact.available_at.is_some(),
+        "the prepared artifact's metadata, identity or integrity changed"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "explicit phase before a trusted operator restarts Artifact and Hub"]
+async fn restart_persistence_prepare() -> Result<()> {
+    bounded(120, async {
+        let installation = Installation::from_env()?;
+        let admin = installation.connect(ADMIN).await?;
+        let body = part_bytes(23, 256 * 1024);
+        let artifact_id = upload_declared(&admin, "restart-persistence.bin", &body).await?;
+        let entry: ArtifactEntry = read(&admin, &artifact_uri(artifact_id)).await?;
+        check_retained(&entry, &body)?;
+        println!("VEOVEO_ACCEPTANCE_RESTART_ARTIFACT_ID={artifact_id}");
+        println!(
+            "VEOVEO_ACCEPTANCE_RESTART_AVAILABLE_AT={}",
+            entry
+                .artifact
+                .available_at
+                .context("available timestamp")?
+                .to_rfc3339()
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+#[ignore = "explicit phase after independently verified native Artifact and Hub restarts"]
+async fn restart_persistence_verify() -> Result<()> {
+    bounded(120, async {
+        let inputs = RestartInputs::load(|name| std::env::var(name).ok())?;
+        let installation = Installation::from_env()?;
+        let member = installation.connect(MEMBER).await?;
+        let uri = artifact_uri(inputs.artifact_id);
+        let body = part_bytes(23, 256 * 1024);
+        let mut listener = watch(&member, &uri).await?;
+        next_update(&mut listener, &uri).await.context(
+            "the fresh post-restart subscription must deliver its opening resource update",
+        )?;
+        let entry: ArtifactEntry = read(&member, &uri).await?;
+        check_retained(&entry, &body)?;
+        ensure!(
+            entry.artifact.available_at == Some(inputs.available_at)
+                && entry.level == AccessLevel::Write,
+            "availability timestamp or Work Context access changed across restart"
+        );
+        let download: CreateDownloadResult = call(
+            &member,
+            "create_download",
+            json!({"artifactId": inputs.artifact_id}),
+        )
+        .await?;
+        let response = send(&download.get, Vec::new(), None).await?;
+        ensure!(
+            response.status().is_success(),
+            "retained download answered {}",
+            response.status()
+        );
+        ensure!(
+            response
+                .bytes()
+                .await
+                .map_err(reqwest::Error::without_url)?
+                .as_ref()
+                == body,
+            "the retained object holds different bytes"
+        );
+        drop(listener);
+        let admin = installation.connect(ADMIN).await?;
+        delete(&admin, inputs.artifact_id).await
+    })
+    .await
+}
+
+#[cfg(test)]
+mod bearer_inputs {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn load(entries: &[(&str, &str)]) -> Result<AcceptanceBearers> {
+        let values: BTreeMap<_, _> = entries.iter().copied().collect();
+        AcceptanceBearers::load(|name| values.get(name).map(|value| (*value).to_owned()))
+    }
+
+    #[tokio::test]
+    async fn selects_each_role_without_exposing_bearers() -> Result<()> {
+        let bearers = load(&[
+            ("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "MEMBER_REFERENCE"),
+            ("VEOVEO_ACCEPTANCE_ADMIN_BEARER_ENV", "ADMIN_REFERENCE"),
+            ("MEMBER_REFERENCE", "opaque-member-reference"),
+            ("ADMIN_REFERENCE", "opaque-admin-reference"),
+        ])?;
+        assert_eq!(
+            bearers.source(CallerRole::Member)?.caller_bearer().await?,
+            veoveo_hub_sdk::client::Bearer::new("opaque-member-reference")
+        );
+        assert_eq!(
+            bearers.source(CallerRole::Admin)?.caller_bearer().await?,
+            veoveo_hub_sdk::client::Bearer::new("opaque-admin-reference")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn member_only_input_does_not_require_admin_custody() -> Result<()> {
+        let bearers = load(&[
+            ("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "MEMBER_REFERENCE"),
+            ("MEMBER_REFERENCE", "opaque-member-reference"),
+        ])?;
+        assert!(bearers.source(CallerRole::Member).is_ok());
+        assert!(
+            bearers
+                .source(CallerRole::Admin)
+                .err()
+                .context("admin must be unavailable")?
+                .to_string()
+                .contains("ADMIN_BEARER_ENV")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_missing_invalid_ambiguous_and_retired_inputs_without_secret_diagnostics() {
+        let cases: &[&[(&str, &str)]] = &[
+            &[],
+            &[("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "MEMBER_REFERENCE")],
+            &[("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "secret-selector!")],
+            &[("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "9INVALID")],
+            &[
+                ("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "MEMBER_REFERENCE"),
+                ("MEMBER_REFERENCE", ""),
+            ],
+            &[
+                ("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "MEMBER_REFERENCE"),
+                ("MEMBER_REFERENCE", "secret with-whitespace"),
+            ],
+            &[
+                ("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "MEMBER_REFERENCE"),
+                ("VEOVEO_ACCEPTANCE_ADMIN_BEARER_ENV", "MEMBER_REFERENCE"),
+                ("MEMBER_REFERENCE", "secret-duplicate"),
+            ],
+            &[
+                ("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "MEMBER_REFERENCE"),
+                ("VEOVEO_ACCEPTANCE_ADMIN_BEARER_ENV", "ADMIN_REFERENCE"),
+                ("MEMBER_REFERENCE", "secret-duplicate"),
+                ("ADMIN_REFERENCE", "secret-duplicate"),
+            ],
+            &[
+                ("VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV", "MEMBER_REFERENCE"),
+                ("VEOVEO_ACCEPTANCE_ADMIN_BEARER_ENV", "ADMIN_REFERENCE"),
+                ("MEMBER_REFERENCE", "opaque-member-reference"),
+            ],
+            &[("VEOVEO_ACCEPTANCE_KEY_DIRECTORY", "secret-key-path")],
+        ];
+        let expected = [
+            "MEMBER_BEARER_ENV must name",
+            "member bearer variable is missing",
+            "member bearer selector must be an environment variable name",
+            "member bearer selector must be an environment variable name",
+            "member bearer variable must contain a nonempty bearer",
+            "member bearer variable must contain a nonempty bearer",
+            "selectors must name distinct variables",
+            "bearer inputs must be distinct",
+            "admin bearer variable is missing",
+            "KEY_DIRECTORY is retired",
+        ];
+        assert_eq!(cases.len(), expected.len());
+        for (entries, expected) in cases.iter().zip(expected) {
+            let error = load(entries)
+                .err()
+                .expect("invalid input must fail")
+                .to_string();
+            assert!(
+                !error.contains("secret"),
+                "credential data reached diagnostics"
+            );
+            assert!(
+                error.contains(expected),
+                "input rejected for the wrong reason: {error}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod restart_inputs {
+    use super::*;
+
+    #[test]
+    fn requires_exact_domain_coordinates() -> Result<()> {
+        let id = ArtifactId::new();
+        let values = |name: &str| match name {
+            "VEOVEO_ACCEPTANCE_RESTART_ARTIFACT_ID" => Some(id.to_string()),
+            "VEOVEO_ACCEPTANCE_RESTART_AVAILABLE_AT" => Some("2026-10-17T12:00:00Z".to_owned()),
+            _ => None,
+        };
+        assert_eq!(RestartInputs::load(values)?.artifact_id, id);
+        assert!(RestartInputs::load(|_| None).is_err());
+        for (field, invalid) in [
+            ("VEOVEO_ACCEPTANCE_RESTART_ARTIFACT_ID", "not-an-artifact"),
+            ("VEOVEO_ACCEPTANCE_RESTART_AVAILABLE_AT", "not-a-timestamp"),
+        ] {
+            assert!(
+                RestartInputs::load(|name| {
+                    if name == field {
+                        Some(invalid.to_owned())
+                    } else {
+                        values(name)
+                    }
+                })
+                .is_err()
+            );
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn signed_transfer_errors_do_not_expose_the_url_or_signature() -> Result<()> {
+    let error = reqwest::Client::new()
+        .get("https://storage.invalid/object?X-Amz-Signature=private-signature")
+        .header("invalid header", "value")
+        .send()
+        .await
+        .err()
+        .context("an invalid header must fail before any network operation")?
+        .without_url();
+    ensure!(error.url().is_none(), "the error retained a signed URL");
+    ensure!(
+        !error.to_string().contains("private-signature"),
+        "the error exposed a signature"
+    );
+    Ok(())
 }
