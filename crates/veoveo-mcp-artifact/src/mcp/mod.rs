@@ -185,7 +185,7 @@ impl ArtifactMcp {
 
     #[tool(
         title = "Create a download",
-        description = "Receive a signed GET URL, valid for 5 minutes, for an available artifact you may read. The response names the artifact as an attachment with its media type; ranges and resumed transfers use the same URL.",
+        description = "Receive a signed GET URL in `get.url`, valid for 5 minutes, for an available artifact you may read. Fetch it with `get.method` and the unchanged `get.headers`. The HTTP download names the artifact as an attachment with its media type; ranges and resumed transfers use the same URL.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<CreateDownloadResult>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]

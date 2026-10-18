@@ -24,7 +24,8 @@ use veoveo_hub_sdk::{
 use veoveo_mcp_artifact::{
     contract::{
         AccessRequestId, AccessRequestListing, ArtifactId, ArtifactPermission,
-        CreateShareLinkResult, ShareLinkId, ShareLinkListing, SignedTransfer,
+        CreateDownloadResult, CreateShareLinkResult, ShareLinkId, ShareLinkListing, SignedTransfer,
+        TransferMethod,
     },
     mcp::{ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs},
     share,
@@ -198,6 +199,78 @@ async fn a_tool_without_its_permission_is_refused() {
         assert!(
             error_message(&response).contains("artifact.artifacts.write"),
             "{response}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn create_download_returns_the_signed_request_and_storage_attachment() {
+    with_service(|harness| async move {
+        let hub = hub(
+            &harness,
+            &[
+                ArtifactPermission::ArtifactsRead,
+                ArtifactPermission::ArtifactsWrite,
+            ],
+        );
+        let body = b"the client fetches these bytes directly from object storage";
+        let artifact_id = upload(&hub, "download.txt", body).await;
+        let response = hub
+            .rpc(
+                "tools/call",
+                json!({"name": "create_download", "arguments": {"artifactId": artifact_id}}),
+            )
+            .await;
+        let json_text = response["result"]["content"]
+            .as_array()
+            .expect("tool content")
+            .iter()
+            .filter(|block| block["type"] == "text")
+            .filter_map(|block| block["text"].as_str())
+            .find_map(|text| serde_json::from_str::<Value>(text).ok())
+            .expect("the tool exposes its typed output as JSON text");
+        assert!(
+            &json_text == structured(&response),
+            "JSON text must preserve the complete structured download output"
+        );
+        let output: CreateDownloadResult =
+            serde_json::from_value(structured(&response).clone()).unwrap();
+        let text_output: CreateDownloadResult = serde_json::from_value(json_text)
+            .unwrap_or_else(|_| panic!("JSON text must decode to the typed download result"));
+        assert!(
+            text_output.get == output.get,
+            "text consumers must receive the identical signed method, URL, headers and expiry"
+        );
+        assert_eq!(output.artifact.artifact_id.to_string(), artifact_id);
+        assert_eq!(output.get.method, TransferMethod::Get);
+        assert!(output.get.expires_at > Utc::now());
+        // Fetch from the text projection, without exposing a signed URL in errors.
+        let mut download = reqwest::Client::new().get(text_output.get.url.as_str());
+        for (name, value) in &text_output.get.headers {
+            download = download.header(name, value);
+        }
+        let downloaded = download
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .expect("the signed download request reaches storage");
+        assert_eq!(downloaded.status(), StatusCode::OK);
+        assert_eq!(downloaded.headers()[header::CONTENT_TYPE], "text/plain");
+        assert!(
+            downloaded.headers()[header::CONTENT_DISPOSITION]
+                .to_str()
+                .unwrap()
+                .contains("download.txt")
+        );
+        assert_eq!(
+            downloaded
+                .bytes()
+                .await
+                .map_err(reqwest::Error::without_url)
+                .unwrap()
+                .as_ref(),
+            body
         );
     })
     .await;
