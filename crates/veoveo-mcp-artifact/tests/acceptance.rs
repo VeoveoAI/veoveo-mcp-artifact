@@ -6,7 +6,9 @@
 //! The tests need a running installation, so they are ignored by default. Inside the
 //! qualification environment, set `VEOVEO_ACCEPTANCE_HUB` to the native HTTPS Hub
 //! origin and `VEOVEO_ACCEPTANCE_{MEMBER,ADMIN}_BEARER_ENV` to distinct variables
-//! holding the prepared bearer/opaque references. No caller signing keys are copied.
+//! holding the prepared bearer/opaque references. Explicit tenant, admin principal and
+//! Work Context inputs retain exact identity assertions; see the README. No caller
+//! signing keys are copied.
 //! Run the six private cases serially, excluding the public share-route case and
 //! `restart_persistence_` phases; see the README for exact commands. The tests share
 //! the tenant's usage and upload limits.
@@ -39,7 +41,7 @@ use veoveo_mcp_artifact::contract::{
     GrantArtifactResult, GrantListing, ReleaseState, RevokeArtifactGrantResult, ShareLinkListing,
     SignedTransfer, StorageUsage, UploadLimits, UploadLimitsResult, UploadTransfer,
 };
-use veoveo_types::{AccessLevel, AccessSubject, PrincipalId};
+use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, WorkContextId};
 
 #[derive(Clone, Copy)]
 enum CallerRole {
@@ -112,9 +114,6 @@ impl AcceptanceBearers {
 
 const MEMBER: CallerRole = CallerRole::Member;
 const ADMIN: CallerRole = CallerRole::Admin;
-const ADMIN_PRINCIPAL: &str = "https://auth.localhost:8443/realms/veoveo#vv-hub-admin";
-/// The local installation's one tenant, whose upload limits the quota test changes.
-const TENANT: &str = "local";
 const MIB: u64 = 1024 * 1024;
 
 struct Caller;
@@ -130,8 +129,38 @@ impl ClientHandler for Caller {
 
 type Client = RunningService<RoleClient, Caller>;
 
+struct AcceptanceCoordinates {
+    tenant: TenantId,
+    admin_principal: PrincipalId,
+    work_context: WorkContextId,
+}
+
+impl AcceptanceCoordinates {
+    fn load(lookup: impl Fn(&str) -> Option<String>) -> Result<Self> {
+        let required = |name: &str| lookup(name).with_context(|| format!("{name} is required"));
+        Ok(Self {
+            tenant: TenantId::parse(required("VEOVEO_ACCEPTANCE_TENANT")?).map_err(|_| {
+                anyhow::anyhow!("VEOVEO_ACCEPTANCE_TENANT must be a valid tenant ID")
+            })?,
+            admin_principal: PrincipalId::parse(required("VEOVEO_ACCEPTANCE_ADMIN_PRINCIPAL")?)
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "VEOVEO_ACCEPTANCE_ADMIN_PRINCIPAL must be a valid principal ID"
+                    )
+                })?,
+            work_context: WorkContextId::parse(required("VEOVEO_ACCEPTANCE_WORK_CONTEXT")?)
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "VEOVEO_ACCEPTANCE_WORK_CONTEXT must be a valid Work Context ID"
+                    )
+                })?,
+        })
+    }
+}
+
 struct Installation {
     hub: url::Url,
+    coordinates: AcceptanceCoordinates,
     bearers: AcceptanceBearers,
     http: reqwest::Client,
 }
@@ -143,10 +172,12 @@ impl Installation {
         let hub = std::env::var("VEOVEO_ACCEPTANCE_HUB")
             .context("VEOVEO_ACCEPTANCE_HUB names the Hub origin")?;
         let bearers = AcceptanceBearers::load(|name| std::env::var(name).ok())?;
+        let coordinates = AcceptanceCoordinates::load(|name| std::env::var(name).ok())?;
         // Keep platform certificate verification, including provisioned Linux roots.
         let http = reqwest::Client::builder().build()?;
         Ok(Self {
             hub: url::Url::parse(&hub)?,
+            coordinates,
             bearers,
             http,
         })
@@ -420,7 +451,7 @@ async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_res
         refused(
             &member,
             "set_upload_limits",
-            json!({"tenant": TENANT, "limits": UploadLimits::default()}),
+            json!({"tenant": installation.coordinates.tenant, "limits": UploadLimits::default()}),
         )
         .await
         .context("the member set upload limits")?;
@@ -451,9 +482,9 @@ async fn a_declared_upload_is_available_and_serves_a_range_to_the_work_context()
             "the owner reads at {:?}",
             entry.level
         );
-        let owner = PrincipalId::parse(ADMIN_PRINCIPAL)?;
+        let owner = &installation.coordinates.admin_principal;
         ensure!(
-            artifact.owner == owner && artifact.provenance.caller == owner,
+            artifact.owner == *owner && artifact.provenance.caller == *owner,
             "the upload did not retain the admitted admin principal"
         );
         let usage: StorageUsage = read(&admin, USAGE).await?;
@@ -706,7 +737,7 @@ async fn the_admins_quota_refuses_an_upload_that_would_exceed_it() -> Result<()>
         let set: UploadLimitsResult = call(
             &admin,
             "set_upload_limits",
-            json!({"tenant": TENANT, "limits": limits}),
+            json!({"tenant": installation.coordinates.tenant, "limits": limits}),
         )
         .await?;
         ensure!(set.limits.quota_bytes == Some(quota), "the limits are {:?}", set.limits);
@@ -726,7 +757,7 @@ async fn the_admins_quota_refuses_an_upload_that_would_exceed_it() -> Result<()>
         let restored: UploadLimitsResult = call(
             &admin,
             "set_upload_limits",
-            json!({"tenant": TENANT, "limits": UploadLimits::default()}),
+            json!({"tenant": installation.coordinates.tenant, "limits": UploadLimits::default()}),
         )
         .await?;
         refusal?;
@@ -918,9 +949,13 @@ impl RestartInputs {
     }
 }
 
-fn check_retained(entry: &ArtifactEntry, body: &[u8]) -> Result<()> {
+fn check_retained(
+    entry: &ArtifactEntry,
+    body: &[u8],
+    coordinates: &AcceptanceCoordinates,
+) -> Result<()> {
     let artifact = &entry.artifact;
-    let owner = PrincipalId::parse(ADMIN_PRINCIPAL)?;
+    let owner = &coordinates.admin_principal;
     ensure!(
         artifact.name.as_str() == "restart-persistence.bin"
             && artifact.media_type.as_str() == "application/octet-stream"
@@ -928,9 +963,9 @@ fn check_retained(entry: &ArtifactEntry, body: &[u8]) -> Result<()> {
             && artifact.release_state == ReleaseState::Private
             && artifact.size.map(|size| size.bytes()) == Some(body.len() as u64)
             && artifact.sha256.as_ref().map(ToString::to_string) == Some(digest(body))
-            && artifact.owner == owner
-            && artifact.provenance.caller == owner
-            && artifact.work_context.as_str() == "local"
+            && artifact.owner == *owner
+            && artifact.provenance.caller == *owner
+            && artifact.work_context == coordinates.work_context
             && artifact.available_at.is_some(),
         "the prepared artifact's metadata, identity or integrity changed"
     );
@@ -946,7 +981,7 @@ async fn restart_persistence_prepare() -> Result<()> {
         let body = part_bytes(23, 256 * 1024);
         let artifact_id = upload_declared(&admin, "restart-persistence.bin", &body).await?;
         let entry: ArtifactEntry = read(&admin, &artifact_uri(artifact_id)).await?;
-        check_retained(&entry, &body)?;
+        check_retained(&entry, &body, &installation.coordinates)?;
         println!("VEOVEO_ACCEPTANCE_RESTART_ARTIFACT_ID={artifact_id}");
         println!(
             "VEOVEO_ACCEPTANCE_RESTART_AVAILABLE_AT={}",
@@ -975,7 +1010,7 @@ async fn restart_persistence_verify() -> Result<()> {
             "the fresh post-restart subscription must deliver its opening resource update",
         )?;
         let entry: ArtifactEntry = read(&member, &uri).await?;
-        check_retained(&entry, &body)?;
+        check_retained(&entry, &body, &installation.coordinates)?;
         ensure!(
             entry.artifact.available_at == Some(inputs.available_at)
                 && entry.level == AccessLevel::Write,
@@ -1168,4 +1203,56 @@ async fn signed_transfer_errors_do_not_expose_the_url_or_signature() -> Result<(
         "the error exposed a signature"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod coordinate_inputs {
+    use super::*;
+
+    fn reference(name: &str) -> Option<String> {
+        match name {
+            "VEOVEO_ACCEPTANCE_TENANT" => Some("reference".into()),
+            "VEOVEO_ACCEPTANCE_ADMIN_PRINCIPAL" => {
+                Some("https://idp.example.com/tenant/v2.0#operator".into())
+            }
+            "VEOVEO_ACCEPTANCE_WORK_CONTEXT" => Some("reference-work".into()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn retains_explicit_installation_identity_without_local_defaults() -> Result<()> {
+        let coordinates = AcceptanceCoordinates::load(reference)?;
+        assert_eq!(coordinates.tenant.as_str(), "reference");
+        assert_eq!(
+            coordinates.admin_principal.as_str(),
+            "https://idp.example.com/tenant/v2.0#operator"
+        );
+        assert_eq!(coordinates.work_context.as_str(), "reference-work");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_missing_and_invalid_coordinates_with_field_diagnostics() {
+        for field in [
+            "VEOVEO_ACCEPTANCE_TENANT",
+            "VEOVEO_ACCEPTANCE_ADMIN_PRINCIPAL",
+            "VEOVEO_ACCEPTANCE_WORK_CONTEXT",
+        ] {
+            for invalid in [None, Some(""), Some("invalid\ncoordinate")] {
+                let error = AcceptanceCoordinates::load(|name| {
+                    if name == field {
+                        invalid.map(str::to_owned)
+                    } else {
+                        reference(name)
+                    }
+                })
+                .err()
+                .expect("invalid coordinates must fail")
+                .to_string();
+                assert!(error.contains(field), "wrong field diagnostic: {error}");
+                assert!(!error.contains("invalid\ncoordinate"));
+            }
+        }
+    }
 }

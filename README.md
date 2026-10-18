@@ -161,7 +161,10 @@ nor S3 credentials belong in a factory or acceptance runner. Keep
 ## Acceptance
 
 `tests/acceptance.rs` calls Artifact through Hub as typed member/admin roles. Native
-inputs select `vv-hub-member` and `vv-hub-admin` credentials. A declared upload also
+inputs select the installation's distinct member and admin credentials (locally
+`vv-hub-member` and `vv-hub-admin`). Explicit typed tenant, admin-principal and
+Work Context inputs must match the reviewed installation, rather than values
+inferred from returned metadata. A declared upload also
 checks the exact admin principal retained as owner/provenance. The six private live
 cases cover role/tool refusals, SHA-256 upload and range download, a multipart
 upload over a gibibyte verified by Artifact's Task and released by the sweep,
@@ -177,10 +180,19 @@ dual-credential provider. Set selectors, never token values on command arguments
 export VEOVEO_ACCEPTANCE_HUB=https://vv-control--hub--http.openshell.localhost:17670
 export VEOVEO_ACCEPTANCE_MEMBER_BEARER_ENV=HUB_MEMBER_REFERENCE
 export VEOVEO_ACCEPTANCE_ADMIN_BEARER_ENV=HUB_ADMIN_REFERENCE
+export VEOVEO_ACCEPTANCE_TENANT=local
+export VEOVEO_ACCEPTANCE_ADMIN_PRINCIPAL=https://auth.localhost:8443/realms/veoveo#vv-hub-admin
+export VEOVEO_ACCEPTANCE_WORK_CONTEXT=local
 /sandbox/bin/artifact-acceptance --ignored --skip restart_persistence_ \
   --skip a_share_link_redeems_through_the_share_route_until_its_limit \
   --nocapture --test-threads=1
 ```
+
+The three coordinate values above describe the Mac installation. For Entra/reference
+qualification, supply its actual tenant, stable admitted admin principal and Work
+Context. The Hub profile path remains independent of these coordinates. Missing or
+invalid inputs fail before connecting; owner/provenance, quota tenant and retained
+Work Context assertions remain exact.
 
 The equivalent source invocation is `cargo nextest run --locked --all-features
 --test acceptance --run-ignored only -E 'not (test(restart_persistence_) or
