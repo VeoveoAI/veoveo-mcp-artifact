@@ -15,10 +15,11 @@
 //!
 //! The local installation has one tenant, so a read refused across tenants is covered by
 //! the database tests and not here.
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use anyhow::{Context, Result, bail, ensure};
-use futures::{StreamExt as _, TryStreamExt as _};
+use bytes::Bytes;
+use futures::{StreamExt as _, stream};
 use rmcp::{
     ClientHandler, ClientLifecycleMode, ClientServiceExt, RoleClient,
     model::{
@@ -33,12 +34,17 @@ use rmcp::{
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use veoveo_hub_sdk::client::{BearerSource as _, StaticBearer};
+use veoveo_hub_sdk::{
+    calls::ResourceRead,
+    client::{BearerSource as _, HubClient, StaticBearer},
+};
+use veoveo_mcp_artifact::client::{ArtifactClient, UploadBody};
 use veoveo_mcp_artifact::contract::{
     AbortUploadResult, AccessRequestListing, AccessRequestResult, AccessRequestState,
-    ArtifactEntry, ArtifactId, ArtifactResult, ArtifactState, CompleteUploadResult,
-    CreateDownloadResult, CreateShareLinkResult, CreateUploadResult, DeleteArtifactResult,
-    GrantArtifactResult, GrantListing, ReleaseState, RevokeArtifactGrantResult, ShareLinkListing,
+    ArtifactEntry, ArtifactId, ArtifactName, ArtifactProvider, ArtifactResource, ArtifactResult,
+    ArtifactState, CompleteUploadResult, CreateDownloadResult, CreateShareLinkResult,
+    CreateUploadResult, DeleteArtifactResult, GrantArtifactResult, GrantListing, MediaType,
+    ObjectSize, PartSize, ReadArtifact, ReleaseState, RevokeArtifactGrantResult, ShareLinkListing,
     SignedTransfer, StorageUsage, UploadLimits, UploadLimitsResult, UploadTransfer,
 };
 use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, WorkContextId};
@@ -255,6 +261,19 @@ fn artifact_uri(artifact_id: ArtifactId) -> String {
 }
 
 const USAGE: &str = "artifact://storage-usage";
+
+/// Test binding to Artifact's existing typed storage-usage resource.
+struct ReadStorageUsage;
+
+impl ResourceRead for ReadStorageUsage {
+    type Provider = ArtifactProvider;
+    type Address = ArtifactResource;
+    type Content = StorageUsage;
+
+    fn address(&self) -> ArtifactResource {
+        ArtifactResource::StorageUsage
+    }
+}
 
 /// Subscribe to one resource; Artifact must accept it unchanged.
 async fn watch(client: &Client, uri: &str) -> Result<Subscription> {
@@ -533,84 +552,70 @@ async fn a_declared_upload_is_available_and_serves_a_range_to_the_work_context()
 async fn a_gibibyte_of_unknown_size_verifies_serves_a_range_and_releases_its_bytes() -> Result<()> {
     bounded(900, async {
         let installation = Installation::from_env()?;
-        let admin = installation.connect(ADMIN).await?;
-        let created: CreateUploadResult = call(
-            &admin,
-            "create_upload",
-            json!({
-                "name": "gibibyte.bin",
-                "mediaType": "application/octet-stream",
-                "maxSize": 2 * 1024 * MIB,
-            }),
-        )
-        .await?;
-        let Some(UploadTransfer::Multipart { part_size, parts }) = &created.transfer else {
-            bail!("an upload of unknown size did not take parts");
-        };
-        let part = part_size.bytes();
+        let calls = HubClient::new(
+            installation.mcp()?,
+            installation.http.clone(),
+            installation.bearers.source(ADMIN)?.clone(),
+        );
+        let artifacts = ArtifactClient::new(calls, installation.http.clone());
+        let part = PartSize::DEFAULT;
         // Whole parts that make a gibibyte, then a shorter last part.
         let full = (1024 * MIB).div_ceil(part);
         let tail = 3 * MIB;
         let lengths: Vec<u64> = (0..full).map(|_| part).chain([tail]).collect();
-        ensure!(
-            parts.len() >= lengths.len(),
-            "create_upload signed {} parts for {} needed",
-            parts.len(),
-            lengths.len()
-        );
         let mut whole = Sha256::new();
         for (index, length) in lengths.iter().enumerate() {
             whole.update(part_bytes(index as u64, *length));
         }
         let expected = format!("sha256:{}", hex::encode(whole.finalize()));
         let total: u64 = lengths.iter().sum();
-        futures::stream::iter(lengths.iter().enumerate())
-            .map(|(index, length)| {
-                let transfer = &parts[index].transfer;
-                async move {
-                    let sent = send(transfer, part_bytes(index as u64, *length), None).await?;
-                    ensure!(
-                        sent.status().is_success(),
-                        "part {} answered {}",
-                        index + 1,
-                        sent.status()
-                    );
-                    Ok::<_, anyhow::Error>(())
-                }
-            })
-            .buffer_unordered(4)
-            .try_collect::<Vec<_>>()
-            .await?;
-        let completed: CompleteUploadResult = call(
-            &admin,
-            "complete_upload",
-            json!({"uploadId": created.upload.upload_id}),
-        )
-        .await?;
-        let artifact_id = completed.artifact.artifact_id;
+        // Generate only the next chunk when the public client reads it. Its existing
+        // bounded PUTPart retries retain the same bytes and part identity across a
+        // transport interruption; create_upload and complete_upload are not replayed.
+        let body = UploadBody::stream(stream::iter(
+            lengths
+                .into_iter()
+                .enumerate()
+                .map(|(index, length)| Ok(Bytes::from(part_bytes(index as u64, length)))),
+        ));
+        let completed = artifacts
+            .upload(
+                ArtifactName::parse("gibibyte.bin")?,
+                MediaType::parse("application/octet-stream")?,
+                body,
+            )
+            .max_size(ObjectSize::new(2 * 1024 * MIB)?)
+            .parallelism(NonZeroUsize::new(4).unwrap())
+            .await
+            .context("the public client's multipart upload failed")?;
+        let artifact_id = completed.artifact_id;
         ensure!(
-            completed.artifact.state == ArtifactState::Verifying,
+            completed.state == ArtifactState::Verifying,
             "a gibibyte of unknown size completed {:?}",
-            completed.artifact.state
+            completed.state
         );
-
-        // The server hashes the object in a Task; its update reaches the subscription.
-        let uri = artifact_uri(artifact_id);
-        let mut listener = watch(&admin, &uri).await?;
-        let verified = tokio::time::timeout(Duration::from_secs(600), async {
-            loop {
-                next_update(&mut listener, &uri).await?;
-                let entry: ArtifactEntry = read(&admin, &uri).await?;
-                match entry.artifact.state {
-                    ArtifactState::Verifying => {}
-                    ArtifactState::Available => return Ok::<_, anyhow::Error>(entry.artifact),
-                    state => bail!("the verified artifact is {state:?}"),
-                }
-            }
-        })
-        .await
-        .context("the artifact was not verified within 600 seconds")??;
-        drop(listener);
+        // Reconcile resource state through the SDK's bounded subscription reopenings.
+        // An initial or reopened snapshot may observe completion; this does not claim
+        // an uninterrupted pushed update across credential-generation fencing.
+        let observer = HubClient::new(
+            installation.mcp()?,
+            installation.http.clone(),
+            installation.bearers.source(ADMIN)?.clone(),
+        );
+        let verified = observer
+            .read(ReadArtifact {
+                artifact: artifact_id,
+            })
+            .until(|entry| entry.artifact.state != ArtifactState::Verifying)
+            .timeout(Duration::from_secs(600))
+            .await
+            .context("following artifact verification within 600 seconds")?
+            .artifact;
+        ensure!(
+            verified.state == ArtifactState::Available,
+            "the verified artifact is {:?}",
+            verified.state
+        );
         ensure!(
             verified.size.map(|size| size.bytes()) == Some(total),
             "the artifact holds {:?} bytes of {total}",
@@ -622,6 +627,13 @@ async fn a_gibibyte_of_unknown_size_verifies_serves_a_range_and_releases_its_byt
             verified.sha256
         );
 
+        // Open the checker after verification rather than retain an idle connection
+        // through credential renewal while the server hashes the object.
+        let admin = installation
+            .connect(ADMIN)
+            .await
+            .context("connecting the range and deletion checker")?;
+        let uri = artifact_uri(artifact_id);
         // A range that crosses the first part boundary.
         let download: CreateDownloadResult = call(
             &admin,
@@ -653,22 +665,29 @@ async fn a_gibibyte_of_unknown_size_verifies_serves_a_range_and_releases_its_byt
             "the range across the part boundary holds other bytes"
         );
 
-        // Deletion hides the artifact at once, and the sweep releases its bytes.
-        let before: StorageUsage = read(&admin, USAGE).await?;
-        let mut usage = watch(&admin, USAGE).await?;
-        delete(&admin, artifact_id).await?;
+        // Establish the usage subscription and read its initial snapshot BEFORE
+        // deleting once, so a change between deletion and the wait cannot be missed.
+        let mut usage = observer.read(ReadStorageUsage).updates();
+        let before = usage
+            .next()
+            .await
+            .context("storage-usage subscription ended before its initial snapshot")?
+            .context("reading the subscribed storage usage before deletion")?;
+        delete(&admin, artifact_id)
+            .await
+            .context("deleting the verified artifact")?;
         ensure!(
             read::<ArtifactEntry>(&admin, &uri).await.is_err(),
             "a deleted artifact is still readable"
         );
         tokio::time::timeout(Duration::from_secs(180), async {
-            loop {
-                next_update(&mut usage, USAGE).await?;
-                let now: StorageUsage = read(&admin, USAGE).await?;
+            while let Some(now) = usage.next().await {
+                let now = now.context("following storage usage after deletion")?;
                 if now.stored_bytes + total <= before.stored_bytes {
                     return Ok::<_, anyhow::Error>(());
                 }
             }
+            bail!("storage-usage subscription ended before the deleted bytes were released")
         })
         .await
         .context("the sweep did not release the deleted artifact's bytes within 180 seconds")?

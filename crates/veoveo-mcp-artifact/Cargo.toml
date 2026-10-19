@@ -142,7 +142,7 @@ required-features = ["server"]
 
 [[test]]
 name = "acceptance"
-required-features = ["server"]
+required-features = ["server", "client"]
 
 [[test]]
 name = "client"
