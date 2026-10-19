@@ -42,7 +42,7 @@ use veoveo_mcp_artifact::{
         watch_changes,
     },
     service::run_verifications,
-    store::{Caller, UploadPageSize},
+    store::Caller,
 };
 use veoveo_types::{InvocationMode, PermissionName, Sha256Digest, TaskId, TenantId};
 
@@ -502,21 +502,21 @@ async fn a_failed_upload_is_aborted_and_releases_its_bytes() {
                 &caller,
                 Some(UploadState::Open),
                 None,
-                UploadPageSize::new(10).unwrap(),
+                veoveo_types::PageSize::<100>::new(10).unwrap(),
             )
             .await
             .unwrap();
-        assert!(open.items.is_empty(), "{:?}", open.items);
+        assert!(open.items().is_empty(), "{:?}", open.items());
         let aborted = store
             .uploads_page(
                 &caller,
                 Some(UploadState::Aborted),
                 None,
-                UploadPageSize::new(10).unwrap(),
+                veoveo_types::PageSize::<100>::new(10).unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(aborted.items.len(), 1, "{:?}", aborted.items);
+        assert_eq!(aborted.items().len(), 1, "{:?}", aborted.items());
         let usage = store.storage_usage(&caller).await.unwrap();
         assert_eq!(usage.reserved_bytes, 0);
         assert_eq!(usage.stored_bytes, 0);

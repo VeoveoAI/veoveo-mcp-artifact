@@ -68,10 +68,7 @@ pub(crate) fn grants_target(artifact_id: ArtifactId) -> AuditTarget {
 
 /// The target of a record about an artifact's share links.
 pub(crate) fn share_links_target(artifact_id: ArtifactId) -> AuditTarget {
-    resource_target(ArtifactResource::ShareLinks {
-        artifact_id,
-        cursor: None,
-    })
+    resource_target(ArtifactResource::ShareLinks { artifact_id })
 }
 
 /// The target of a record about a tenant's storage: its upload limits.

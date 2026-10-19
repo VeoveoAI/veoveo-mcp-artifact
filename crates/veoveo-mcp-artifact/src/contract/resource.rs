@@ -3,8 +3,6 @@
 //! parsing, so no address is built or split by hand.
 use std::{borrow::Cow, error::Error, fmt};
 
-use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
-use serde::{Deserialize, Serialize};
 use veoveo_types::{
     PrincipalId, ResourceFieldCodec, ResourceRouteError, ResourceUriError, WorkContextId,
 };
@@ -13,9 +11,6 @@ use super::{
     AccessRequestState, ArtifactId, MediaType, NamePrefix, ReleaseState, UploadId, UploadState,
 };
 
-/// The most bytes a listing cursor holds on the wire.
-pub const MAX_CURSOR_BYTES: usize = 4096;
-
 /// A resource address that failed admission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactResourceError {
@@ -23,7 +18,6 @@ pub enum ArtifactResourceError {
     UnknownResource,
     InvalidId,
     InvalidFilter,
-    InvalidCursor,
 }
 
 impl fmt::Display for ArtifactResourceError {
@@ -35,7 +29,6 @@ impl fmt::Display for ArtifactResourceError {
             }
             Self::InvalidId => f.write_str("invalid Artifact resource identifier"),
             Self::InvalidFilter => f.write_str("invalid Artifact listing filter"),
-            Self::InvalidCursor => f.write_str("invalid Artifact listing cursor"),
         }
     }
 }
@@ -64,68 +57,8 @@ pub enum AccessRequestRole {
     Decider,
 }
 
-/// An opaque listing cursor as it travels in an address: 1 to 4096 base64url
-/// characters. The server admits it against the listing, tenant and filter that issued
-/// it; this type checks only its spelling.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct ListCursor(String);
-
-impl ListCursor {
-    pub fn parse(value: impl Into<String>) -> Result<Self, ArtifactResourceError> {
-        let value = value.into();
-        let spelled = !value.is_empty()
-            && value.len() <= MAX_CURSOR_BYTES
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
-        if !spelled {
-            return Err(ArtifactResourceError::InvalidCursor);
-        }
-        Ok(Self(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl TryFrom<String> for ListCursor {
-    type Error = ArtifactResourceError;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::parse(value)
-    }
-}
-
-impl From<ListCursor> for String {
-    fn from(value: ListCursor) -> Self {
-        value.0
-    }
-}
-
-impl fmt::Display for ListCursor {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl JsonSchema for ListCursor {
-    fn schema_name() -> Cow<'static, str> {
-        "ListCursor".into()
-    }
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({
-            "type": "string",
-            "minLength": 1,
-            "maxLength": MAX_CURSOR_BYTES,
-            "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "An opaque cursor from the previous page of the same listing."
-        })
-    }
-}
-
-/// An Artifact resource. A usable address carries only the identifiers, filters and
-/// cursor of its own family.
+/// An Artifact resource path and its owner filters. Shared paging selection is
+/// carried by SDK ReadCollection with a nominal family cursor.
 #[veoveo_types::resource_address(routes(ArtifactAddresses), schema = derived, wire, parse = borrowed, display)]
 pub enum ArtifactResource {
     #[resource(template = "artifact://docs")]
@@ -135,7 +68,7 @@ pub enum ArtifactResource {
     #[resource(template = "artifact://contract")]
     Contract,
     #[resource(
-        template = "artifact://artifacts{?work_context,owner,media_type,name,release_state,cursor}",
+        template = "artifact://artifacts{?work_context,owner,media_type,name,release_state}",
         route_error = listing_route_error
     )]
     Artifacts {
@@ -149,8 +82,6 @@ pub enum ArtifactResource {
         name: Option<NamePrefix>,
         #[resource(codec = ArtifactFieldCodec)]
         release_state: Option<ReleaseState>,
-        #[resource(codec = ArtifactFieldCodec)]
-        cursor: Option<ListCursor>,
     },
     #[resource(template = "artifact://artifacts/{artifact_id}")]
     Artifact(
@@ -163,28 +94,24 @@ pub enum ArtifactResource {
         ArtifactId,
     ),
     #[resource(
-        template = "artifact://artifacts/{artifact_id}/share-links{?cursor}",
+        template = "artifact://artifacts/{artifact_id}/share-links",
         route_error = listing_route_error
     )]
     ShareLinks {
         #[resource(variable = "artifact_id", error = |_| ArtifactResourceError::InvalidId)]
         artifact_id: ArtifactId,
-        #[resource(codec = ArtifactFieldCodec)]
-        cursor: Option<ListCursor>,
     },
-    #[resource(template = "artifact://uploads{?state,cursor}", route_error = listing_route_error)]
+    #[resource(template = "artifact://uploads{?state}", route_error = listing_route_error)]
     Uploads {
         #[resource(codec = ArtifactFieldCodec)]
         state: Option<UploadState>,
-        #[resource(codec = ArtifactFieldCodec)]
-        cursor: Option<ListCursor>,
     },
     #[resource(template = "artifact://uploads/{upload_id}")]
     Upload(
         #[resource(variable = "upload_id", error = |_| ArtifactResourceError::InvalidId)] UploadId,
     ),
     #[resource(
-        template = "artifact://access-requests{?role,state,cursor}",
+        template = "artifact://access-requests{?role,state}",
         route_error = listing_route_error
     )]
     AccessRequests {
@@ -192,8 +119,6 @@ pub enum ArtifactResource {
         role: Option<AccessRequestRole>,
         #[resource(codec = ArtifactFieldCodec)]
         state: Option<AccessRequestState>,
-        #[resource(codec = ArtifactFieldCodec)]
-        cursor: Option<ListCursor>,
     },
     #[resource(template = "artifact://storage-usage")]
     StorageUsage,
@@ -209,11 +134,14 @@ impl ArtifactResource {
     /// records accept subscriptions.
     pub fn is_subscribable(&self) -> bool {
         match self {
-            Self::Artifacts { cursor, .. }
-            | Self::ShareLinks { cursor, .. }
-            | Self::Uploads { cursor, .. }
-            | Self::AccessRequests { cursor, .. } => cursor.is_none(),
-            Self::Artifact(_) | Self::Grants(_) | Self::Upload(_) | Self::StorageUsage => true,
+            Self::Artifacts { .. }
+            | Self::ShareLinks { .. }
+            | Self::Uploads { .. }
+            | Self::AccessRequests { .. }
+            | Self::Artifact(_)
+            | Self::Grants(_)
+            | Self::Upload(_)
+            | Self::StorageUsage => true,
             Self::Docs | Self::Document(_) | Self::Contract => false,
         }
     }
@@ -320,16 +248,6 @@ impl ResourceFieldCodec<AccessRequestRole> for ArtifactFieldCodec {
             .map_err(|_| ArtifactResourceError::InvalidFilter)
     }
     fn text(value: &AccessRequestRole) -> Cow<'_, str> {
-        value.as_str().into()
-    }
-}
-
-impl ResourceFieldCodec<ListCursor> for ArtifactFieldCodec {
-    type Error = ArtifactResourceError;
-    fn parse(value: &str) -> Result<ListCursor, Self::Error> {
-        ListCursor::parse(value)
-    }
-    fn text(value: &ListCursor) -> Cow<'_, str> {
         value.as_str().into()
     }
 }

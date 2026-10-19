@@ -7,12 +7,15 @@ use sqlx::{Postgres, Transaction};
 use veoveo_audit_contract::{
     AuditDraft, AuditOutcome, AuditRegistry, AuditRequest, AuditTransactionWrite,
 };
-use veoveo_store::{CursorScope, KeysetCursor, Page, PageSize, TenantId as StoredTenant};
-use veoveo_types::{AccessLevel, PrincipalId, Sha256Digest};
+use veoveo_store::TenantId as StoredTenant;
+use veoveo_types::{
+    AccessLevel, CursorToken, LiveKeyset, Page, PageSize, Pager, PrincipalId, Sha256Digest,
+};
 
 use crate::contract::{
-    ArtifactId, ArtifactName, ArtifactState, ListCursor, MediaType, ReleaseChanged, ReleaseState,
+    ArtifactId, ArtifactName, ArtifactState, MediaType, ReleaseChanged, ReleaseState,
     ShareLinkCreated, ShareLinkId, ShareLinkRecord, ShareLinkRedeemed, ShareLinkRevoked,
+    ShareLinks,
 };
 
 use super::{
@@ -22,13 +25,6 @@ use super::{
 
 /// The most live share links one artifact holds.
 pub const MAX_LIVE_SHARE_LINKS: usize = 256;
-/// The most share links one page holds.
-pub const MAX_SHARE_LINKS_PER_PAGE: u32 = 100;
-/// A page size of a share-link listing.
-pub type ShareLinkPageSize = PageSize<MAX_SHARE_LINKS_PER_PAGE>;
-/// One page of an artifact's share links and the cursor of the next.
-pub type ShareLinkPage = Page<ShareLinkRecord, ListCursor>;
-
 /// A share link to record: its artifact, the digest of its secret, its expiry and its
 /// optional redemption limit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,17 +282,16 @@ impl ArtifactStore {
         &self,
         caller: &Caller,
         artifact_id: ArtifactId,
-        cursor: Option<&ListCursor>,
-        size: ShareLinkPageSize,
+        cursor: Option<&CursorToken<ShareLinks>>,
+        size: PageSize<100>,
         now: DateTime<Utc>,
-    ) -> Result<ShareLinkPage, ArtifactStoreError> {
+    ) -> Result<Page<ShareLinks>, ArtifactStoreError> {
         self.artifact_requiring(caller, artifact_id, AccessLevel::Admin, now)
             .await?;
         let tenant = caller.tenant();
-        let scope = CursorScope::new("artifact.share_links", tenant, &artifact_id)?;
-        let after: Option<KeysetCursor<ShareLinkId>> =
-            cursor.map(|wire| scope.parse(wire.as_str())).transpose()?;
-        let limit = size.fetch_limit();
+        let pager = Pager::<ShareLinks>::new(tenant, artifact_id, size, LiveKeyset, cursor)?;
+        let after = pager.after().copied();
+        let limit = pager.fetch_limit();
         let rows = match after {
             None => {
                 sqlx::query_file_as!(
@@ -315,27 +310,18 @@ impl ArtifactStore {
                     "src/store/sharing/share_links_next.sql",
                     tenant as StoredTenant,
                     artifact_id as ArtifactId,
-                    *after.position() as ShareLinkId,
+                    after as ShareLinkId,
                     limit,
                 )
                 .fetch_all(self.pool())
                 .await?
             }
         };
-        let page = size.page(rows, |last| last.share_link_id);
-        let items = page
-            .items
+        let items = rows
             .into_iter()
             .map(ShareLinkRow::record)
-            .collect::<Result<_, _>>()?;
-        let next = page
-            .next
-            .map(|position| scope.cursor(position))
-            .transpose()?
-            .map(|cursor| ListCursor::parse(cursor.as_str()))
-            .transpose()
-            .map_err(|_| ArtifactStoreError::Corrupt("issued cursor"))?;
-        Ok(Page { items, next })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(pager.finish(items)?)
     }
 
     /// Count one redemption of the live link whose secret has `secret_digest`, when it

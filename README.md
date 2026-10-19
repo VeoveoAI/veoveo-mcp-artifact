@@ -34,11 +34,12 @@ registers, selects the `client` feature and wraps the client the SDK binds to it
 caller:
 
 ```rust
-let declaration = AuthorizationBuilder::<MediaPermission>::new()
-    // ... the server's own tools ...
-    .uses(ArtifactPermission::ArtifactsRead)
-    .uses(ArtifactPermission::ArtifactsWrite)
-    .build(&slug, &scheme)?;
+let routes = Routes::<YourDomain>::builder(RoutePolicy::Authenticated)
+    .uses(ArtifactPermission::ArtifactsRead.name())
+    .uses(ArtifactPermission::ArtifactsWrite.name());
+// Register this server's typed tools and readers, then finish the same table.
+let routes = routes.build();
+let declaration = routes.authorization();
 ```
 
 In a tool handler, the client acts for the request's caller:

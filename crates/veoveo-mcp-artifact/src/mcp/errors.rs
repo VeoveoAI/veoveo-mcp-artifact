@@ -28,8 +28,9 @@ pub(crate) fn store_error(error: ArtifactStoreError) -> McpError {
         ArtifactStoreError::ArtifactNotFound
         | ArtifactStoreError::UploadNotFound
         | ArtifactStoreError::UnknownSource
-        | ArtifactStoreError::MultipleFilters
-        | ArtifactStoreError::Cursor(_)
+        | ArtifactStoreError::Paging(
+            veoveo_types::PagingError::Cursor(_) | veoveo_types::PagingError::Limit,
+        )
         | ArtifactStoreError::TooLarge { .. }
         | ArtifactStoreError::SizeMismatch { .. }
         | ArtifactStoreError::MediaTypeNotAllowed(_)
@@ -54,7 +55,8 @@ pub(crate) fn store_error(error: ArtifactStoreError) -> McpError {
         | ArtifactStoreError::AccessRequestPending
         | ArtifactStoreError::AccessRequestSettled { .. }
         | ArtifactStoreError::InvalidCaller => McpError::invalid_request(error.to_string(), None),
-        ArtifactStoreError::Corrupt(_)
+        ArtifactStoreError::Paging(_)
+        | ArtifactStoreError::Corrupt(_)
         | ArtifactStoreError::AuditDetail(_)
         | ArtifactStoreError::AuditDraft(_)
         | ArtifactStoreError::AuditAppend(_)

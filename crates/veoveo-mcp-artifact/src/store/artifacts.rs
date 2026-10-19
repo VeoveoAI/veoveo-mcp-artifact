@@ -1,16 +1,13 @@
 //! Reading, listing and deleting artifacts, and a tenant's storage usage.
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
-use veoveo_store::{
-    CursorScope, KeysetCursor, Page, PageSize, PrincipalId as StoredPrincipal,
-    TenantId as StoredTenant,
-};
-use veoveo_types::{AccessLevel, PrincipalId, WorkContextId};
+use veoveo_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
+use veoveo_types::{AccessLevel, CursorToken, Page, PageSize, Pager};
 
 use crate::contract::{
-    ArtifactDeleted, ArtifactId, ArtifactMetadataMap, ArtifactProvenance, ArtifactState,
-    ListCursor, MediaType, NamePrefix, ReleaseState, StorageUsage,
+    ArtifactDeleted, ArtifactEntry, ArtifactFilter, ArtifactId, ArtifactMetadataMap,
+    ArtifactPosition, ArtifactProvenance, ArtifactState, Artifacts, NamePrefix, PrincipalKeyset,
+    ReleaseState, StorageUsage,
 };
 
 use super::{
@@ -18,68 +15,6 @@ use super::{
     audit::{Decided, artifact_target},
     rows::{ArtifactRow, VisibleArtifact},
 };
-
-/// The most artifacts one page holds.
-pub const MAX_ARTIFACTS_PER_PAGE: u32 = 100;
-/// A page size of an artifact listing.
-pub type ArtifactPageSize = PageSize<MAX_ARTIFACTS_PER_PAGE>;
-/// One page of readable artifacts and the cursor of the next.
-pub type ArtifactPage = Page<VisibleArtifact, ListCursor>;
-
-/// The one filter an artifact listing applies.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ArtifactFilter {
-    WorkContext(WorkContextId),
-    Owner(PrincipalId),
-    MediaType(MediaType),
-    /// Names that start with the prefix, ordered by name.
-    NamePrefix(NamePrefix),
-    ReleaseState(ReleaseState),
-}
-
-impl ArtifactFilter {
-    /// The filter of a listing address, refusing an address with more than one.
-    pub fn from_parts(
-        work_context: Option<WorkContextId>,
-        owner: Option<PrincipalId>,
-        media_type: Option<MediaType>,
-        name: Option<NamePrefix>,
-        release_state: Option<ReleaseState>,
-    ) -> Result<Option<Self>, ArtifactStoreError> {
-        let filters: Vec<Self> = [
-            work_context.map(Self::WorkContext),
-            owner.map(Self::Owner),
-            media_type.map(Self::MediaType),
-            name.map(Self::NamePrefix),
-            release_state.map(Self::ReleaseState),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        match <[Self; 1]>::try_from(filters) {
-            Ok([filter]) => Ok(Some(filter)),
-            Err(filters) if filters.is_empty() => Ok(None),
-            Err(_) => Err(ArtifactStoreError::MultipleFilters),
-        }
-    }
-
-    fn scope_key(&self) -> (&'static str, String) {
-        match self {
-            Self::WorkContext(value) => ("work_context", value.to_string()),
-            Self::Owner(value) => ("owner", value.to_string()),
-            Self::MediaType(value) => ("media_type", value.to_string()),
-            Self::NamePrefix(value) => ("name", value.to_string()),
-            Self::ReleaseState(value) => ("release_state", value.to_string()),
-        }
-    }
-}
-
-/// Where a name-ordered page ends.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct NamePosition {
-    name: String,
-    artifact_id: ArtifactId,
-}
 
 impl ArtifactStore {
     /// One artifact the caller may read, and its level. An artifact that does not exist
@@ -239,38 +174,43 @@ impl ArtifactStore {
         &self,
         caller: &Caller,
         filter: Option<&ArtifactFilter>,
-        cursor: Option<&ListCursor>,
-        size: ArtifactPageSize,
+        cursor: Option<&CursorToken<Artifacts>>,
+        size: PageSize<100>,
         now: DateTime<Utc>,
-    ) -> Result<ArtifactPage, ArtifactStoreError> {
-        let scope = CursorScope::new(
-            "artifact.artifacts",
+    ) -> Result<Page<Artifacts>, ArtifactStoreError> {
+        let pager = Pager::<Artifacts>::new(
             caller.tenant(),
-            &filter.map(ArtifactFilter::scope_key),
+            filter.cloned(),
+            size,
+            PrincipalKeyset::new(caller.principal_key().clone()),
+            cursor,
         )?;
-        if let Some(ArtifactFilter::NamePrefix(prefix)) = filter {
-            return self
-                .artifacts_by_name(caller, prefix, &scope, cursor, size, now)
-                .await;
-        }
-        let after: Option<KeysetCursor<ArtifactId>> =
-            cursor.map(|wire| scope.parse(wire.as_str())).transpose()?;
-        let rows = self
-            .artifact_rows(
+        let rows = if let Some(ArtifactFilter::NamePrefix(prefix)) = filter {
+            self.artifacts_by_name(caller, prefix, pager.after(), size, now)
+                .await?
+        } else {
+            self.artifact_rows(
                 caller,
                 filter,
-                after.map(|cursor| *cursor.position()),
+                pager.after().map(|position| position.artifact_id),
                 size,
                 now,
             )
-            .await?;
-        let page = size.page(rows, |last| last.artifact_id);
-        visible_page(
-            page.items,
-            page.next
-                .map(|position| scope.cursor(position))
-                .transpose()?,
-        )
+            .await?
+        };
+        let items = rows
+            .into_iter()
+            .map(|row| {
+                let visible = row.visible()?.ok_or(ArtifactStoreError::Corrupt(
+                    "listed artifact without a level",
+                ))?;
+                Ok(ArtifactEntry {
+                    artifact: visible.record,
+                    level: visible.level,
+                })
+            })
+            .collect::<Result<Vec<_>, ArtifactStoreError>>()?;
+        Ok(pager.finish(items)?)
     }
 
     async fn artifact_rows(
@@ -278,7 +218,7 @@ impl ArtifactStore {
         caller: &Caller,
         filter: Option<&ArtifactFilter>,
         after: Option<ArtifactId>,
-        size: ArtifactPageSize,
+        size: PageSize<100>,
         now: DateTime<Utc>,
     ) -> Result<Vec<ArtifactRow>, ArtifactStoreError> {
         let f = caller.facts();
@@ -505,17 +445,14 @@ impl ArtifactStore {
         &self,
         caller: &Caller,
         prefix: &NamePrefix,
-        scope: &CursorScope,
-        cursor: Option<&ListCursor>,
-        size: ArtifactPageSize,
+        after: Option<&ArtifactPosition>,
+        size: PageSize<100>,
         now: DateTime<Utc>,
-    ) -> Result<ArtifactPage, ArtifactStoreError> {
+    ) -> Result<Vec<ArtifactRow>, ArtifactStoreError> {
         let f = caller.facts();
         let lower = prefix.as_str();
         let upper = format!("{lower}\u{10FFFF}");
         let limit = size.fetch_limit();
-        let after: Option<KeysetCursor<NamePosition>> =
-            cursor.map(|wire| scope.parse(wire.as_str())).transpose()?;
         let rows = match after {
             None => {
                 sqlx::query_file_as!(
@@ -538,7 +475,7 @@ impl ArtifactStore {
                 .await?
             }
             Some(after) => {
-                let position = after.position();
+                let position = after;
                 sqlx::query_file_as!(
                     ArtifactRow,
                     "src/store/artifacts/artifacts_by_name_next.sql",
@@ -561,16 +498,7 @@ impl ArtifactStore {
                 .await?
             }
         };
-        let page = size.page(rows, |last| NamePosition {
-            name: last.name.clone(),
-            artifact_id: last.artifact_id,
-        });
-        visible_page(
-            page.items,
-            page.next
-                .map(|position| scope.cursor(position))
-                .transpose()?,
-        )
+        Ok(rows)
     }
 }
 
@@ -580,23 +508,4 @@ fn require(visible: &VisibleArtifact, needed: AccessLevel) -> Result<(), Artifac
     } else {
         Err(ArtifactStoreError::Forbidden { needed })
     }
-}
-
-fn visible_page<P: Serialize + serde::de::DeserializeOwned>(
-    rows: Vec<ArtifactRow>,
-    next: Option<KeysetCursor<P>>,
-) -> Result<ArtifactPage, ArtifactStoreError> {
-    let items = rows
-        .into_iter()
-        .map(|row| {
-            row.visible()?.ok_or(ArtifactStoreError::Corrupt(
-                "listed artifact without a level",
-            ))
-        })
-        .collect::<Result<_, _>>()?;
-    let next = next
-        .map(|cursor| ListCursor::parse(cursor.as_str()))
-        .transpose()
-        .map_err(|_| ArtifactStoreError::Corrupt("issued cursor"))?;
-    Ok(Page { items, next })
 }

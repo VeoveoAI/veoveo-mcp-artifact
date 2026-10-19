@@ -21,10 +21,7 @@ use veoveo_store::{
 
 use crate::contract::{ArtifactId, ArtifactResource, UploadId};
 
-use super::{
-    ArtifactApp, identity,
-    requirements::{Target, authorize},
-};
+use super::{ArtifactApp, identity, requirements::authorize};
 
 /// Changes a hub holds for a slow listener before it falls back to a full refresh.
 const HUB_BUFFER: usize = 256;
@@ -186,7 +183,7 @@ impl SubscriptionListener for ArtifactSubscriptions {
         }
         let identity = veoveo_hub_sdk::hosting::hub_identity(context.request_context())?;
         for uri in &uris {
-            authorize(&identity, Target::Resource(uri))?;
+            authorize(&identity, uri)?;
         }
         let caller = identity::caller(&identity)?;
         let store = self.app.service.store();
@@ -273,14 +270,12 @@ mod tests {
                 media_type: None,
                 name: None,
                 release_state: None,
-                cursor: None,
             }
         ));
         assert!(affects(
             &change,
             &ArtifactResource::ShareLinks {
                 artifact_id: changed,
-                cursor: None,
             }
         ));
         assert!(!affects(&change, &ArtifactResource::StorageUsage));
@@ -289,7 +284,6 @@ mod tests {
             &ArtifactResource::AccessRequests {
                 role: None,
                 state: None,
-                cursor: None,
             }
         ));
         assert!(affects(

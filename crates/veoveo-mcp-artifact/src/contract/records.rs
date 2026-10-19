@@ -491,43 +491,6 @@ pub struct ArtifactEntry {
     pub level: AccessLevel,
 }
 
-/// A page of `artifact://artifacts`, newest first, and the cursor of the next page.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ArtifactListing {
-    pub artifacts: Vec<ArtifactEntry>,
-    pub next_cursor: Option<super::ListCursor>,
-}
-
-/// A page of `artifact://uploads`, newest first, and the cursor of the next page.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct UploadListing {
-    pub uploads: Vec<UploadRecord>,
-    pub next_cursor: Option<super::ListCursor>,
-}
-
-/// The grants on one artifact, at most 256.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct GrantListing {
-    pub artifact_id: ArtifactId,
-    pub grants: Vec<ArtifactGrant>,
-}
-
-/// A page of one artifact's share links, newest first, without their secrets.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ShareLinkListing {
-    pub artifact_id: ArtifactId,
-    pub share_links: Vec<ShareLinkRecord>,
-    pub next_cursor: Option<super::ListCursor>,
-}
-
-/// A page of access requests, newest first.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AccessRequestListing {
-    pub access_requests: Vec<AccessRequestRecord>,
-    pub next_cursor: Option<super::ListCursor>,
-}
+impl veoveo_hub_sdk::definition::SingleOutput for ArtifactEntry {}
+impl veoveo_hub_sdk::definition::SingleOutput for UploadRecord {}
+impl veoveo_hub_sdk::definition::SingleOutput for StorageUsage {}

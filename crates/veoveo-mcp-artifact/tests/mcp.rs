@@ -23,9 +23,8 @@ use veoveo_hub_sdk::{
 };
 use veoveo_mcp_artifact::{
     contract::{
-        AccessRequestId, AccessRequestListing, ArtifactId, ArtifactPermission,
-        CreateDownloadResult, CreateShareLinkResult, ShareLinkId, ShareLinkListing, SignedTransfer,
-        TransferMethod,
+        AccessRequestId, AccessRequests, ArtifactId, ArtifactPermission, CreateDownloadResult,
+        CreateShareLinkResult, ShareLinkId, ShareLinks, SignedTransfer, TransferMethod,
     },
     mcp::{ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs},
     share,
@@ -122,7 +121,7 @@ fn error_message(response: &Value) -> String {
 #[tokio::test]
 async fn discovery_lists_every_tool_and_resource() {
     with_service(|harness| async move {
-        let hub = hub(&harness, &[ArtifactPermission::ArtifactsRead]);
+        let hub = hub(&harness, ArtifactPermission::ALL);
         let tools = hub.rpc("tools/list", json!({})).await;
         let mut names: Vec<&str> = tools["result"]["tools"]
             .as_array()
@@ -151,10 +150,6 @@ async fn discovery_lists_every_tool_and_resource() {
                 "sign_upload_parts",
             ]
         );
-        // Every typed call a consumer can make names one of these tools.
-        let mut typed = veoveo_mcp_artifact::contract::served_tools().to_vec();
-        typed.sort_unstable();
-        assert_eq!(names, typed);
         let resources = hub.rpc("resources/list", json!({})).await;
         let uris: Vec<&str> = resources["result"]["resources"]
             .as_array()
@@ -295,7 +290,23 @@ async fn create_upload_signs_a_put_and_storage_usage_counts_the_reservation() {
                 }),
             )
             .await;
-        let result = &created["result"]["structuredContent"];
+        let product = &created["result"]["structuredContent"];
+        let links: Vec<_> = created["result"]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|content| content["type"] == "resource_link")
+            .collect();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0]["uri"], product["resultUri"]);
+        let result = &product["metadata"];
+        assert_eq!(
+            product["resultUri"],
+            format!(
+                "artifact://uploads/{}",
+                result["upload"]["uploadId"].as_str().unwrap()
+            )
+        );
         assert_eq!(result["transfer"]["form"], "single", "{created}");
         assert_eq!(result["transfer"]["put"]["method"], "PUT");
         assert_eq!(result["artifact"]["workContext"], "mission");
@@ -425,7 +436,7 @@ async fn upload(hub: &Hub, name: &str, body: &[u8]) -> String {
             }),
         )
         .await;
-    let created = structured(&created);
+    let created = &structured(&created)["metadata"];
     let put: SignedTransfer = serde_json::from_value(created["transfer"]["put"].clone()).unwrap();
     assert!(send(&put, body.to_vec(), &[]).await.status().is_success());
     let completed = hub
@@ -437,7 +448,10 @@ async fn upload(hub: &Hub, name: &str, body: &[u8]) -> String {
             }),
         )
         .await;
-    assert_eq!(structured(&completed)["artifact"]["state"], "available");
+    assert_eq!(
+        structured(&completed)["metadata"]["artifact"]["state"],
+        "available"
+    );
     created["artifact"]["artifactId"]
         .as_str()
         .unwrap()
@@ -538,7 +552,7 @@ async fn an_owner_releases_shares_and_the_link_redeems_through_the_share_route()
             )
             .await;
         assert_eq!(
-            structured(&released)["artifact"]["releaseState"],
+            structured(&released)["metadata"]["artifact"]["releaseState"],
             "released"
         );
         let created = owner
@@ -571,8 +585,8 @@ async fn an_owner_releases_shares_and_the_link_redeems_through_the_share_route()
             .as_str()
             .expect("share links");
         assert!(!text.contains(&token), "the listing holds no secret");
-        let listing: ShareLinkListing = serde_json::from_str(text).unwrap();
-        assert_eq!(listing.share_links.len(), 1);
+        let listing: veoveo_types::Page<ShareLinks> = serde_json::from_str(text).unwrap();
+        assert_eq!(listing.items().len(), 1);
 
         let router = hosted_router(&harness);
         let redirected = redeem(&router, &token).await;
@@ -650,8 +664,73 @@ async fn an_owner_holds_every_level_and_cannot_request_more() {
         let text = requests["result"]["contents"][0]["text"]
             .as_str()
             .expect("access requests");
-        let listing: AccessRequestListing = serde_json::from_str(text).unwrap();
-        assert!(listing.access_requests.is_empty());
+        let listing: veoveo_types::Page<AccessRequests> = serde_json::from_str(text).unwrap();
+        assert!(listing.items().is_empty());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn grant_collection_pages_through_its_typed_resource_selection() {
+    with_service(|harness| async move {
+        use veoveo_hub_sdk::{calls::ResourceRead, definition::ReadCollection};
+        use veoveo_mcp_artifact::contract::{Grants, ReadGrants};
+        use veoveo_types::{Page, PageSize};
+        let owner = hub(
+            &harness,
+            &[
+                ArtifactPermission::ArtifactsRead,
+                ArtifactPermission::ArtifactsWrite,
+                ArtifactPermission::GrantsWrite,
+            ],
+        );
+        let artifact: ArtifactId = upload(&owner, "grants.txt", b"one").await.parse().unwrap();
+        for subject in ["alice", "bob", "cara"] {
+            let response = owner
+                .rpc(
+                    "tools/call",
+                    json!({
+                        "name": "grant_artifact",
+                        "arguments": {
+                            "artifactId": artifact,
+                            "subject": {"kind": "principal", "id": subject},
+                            "level": "read"
+                        }
+                    }),
+                )
+                .await;
+            assert!(response.get("error").is_none(), "grant refused");
+        }
+        let selection = ReadCollection::new(ReadGrants { artifact }, PageSize::new(2).unwrap());
+        let first = owner
+            .rpc(
+                "resources/read",
+                json!({"uri": selection.uri().unwrap().as_str()}),
+            )
+            .await;
+        let first: Page<Grants> =
+            serde_json::from_str(first["result"]["contents"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(first.items().len(), 2);
+        let continuation =
+            selection.continuing(first.next_cursor().cloned().expect("continuation"));
+        let second = owner
+            .rpc(
+                "resources/read",
+                json!({"uri": continuation.uri().unwrap().as_str()}),
+            )
+            .await;
+        let second: Page<Grants> =
+            serde_json::from_str(second["result"]["contents"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(second.items().len(), 1);
+        assert!(second.next_cursor().is_none());
+        let ids: std::collections::BTreeSet<_> = first
+            .items()
+            .iter()
+            .chain(second.items())
+            .map(|grant| grant.subject.clone())
+            .collect();
+        assert_eq!(ids.len(), 3);
     })
     .await;
 }

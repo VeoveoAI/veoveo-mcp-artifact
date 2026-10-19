@@ -40,12 +40,12 @@ use veoveo_hub_sdk::{
 };
 use veoveo_mcp_artifact::client::{ArtifactClient, UploadBody};
 use veoveo_mcp_artifact::contract::{
-    AbortUploadResult, AccessRequestListing, AccessRequestResult, AccessRequestState,
-    ArtifactEntry, ArtifactId, ArtifactName, ArtifactProvider, ArtifactResource, ArtifactResult,
-    ArtifactState, CompleteUploadResult, CreateDownloadResult, CreateShareLinkResult,
-    CreateUploadResult, DeleteArtifactResult, GrantArtifactResult, GrantListing, MediaType,
-    ObjectSize, PartSize, ReadArtifact, ReleaseState, RevokeArtifactGrantResult, ShareLinkListing,
-    SignedTransfer, StorageUsage, UploadLimits, UploadLimitsResult, UploadTransfer,
+    AbortUploadResult, AccessRequestResult, AccessRequestState, AccessRequests, ArtifactEntry,
+    ArtifactId, ArtifactName, ArtifactProvider, ArtifactResource, ArtifactResult, ArtifactState,
+    CompleteUploadResult, CreateDownloadResult, CreateShareLinkResult, CreateUploadResult,
+    DeleteArtifactResult, GrantArtifactResult, Grants, MediaType, ObjectSize, PartSize,
+    ReadArtifact, ReleaseState, RevokeArtifactGrantResult, ShareLinks, SignedTransfer,
+    StorageUsage, UploadLimits, UploadLimitsResult, UploadTransfer,
 };
 use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, WorkContextId};
 
@@ -349,7 +349,7 @@ fn digest(bytes: &[u8]) -> String {
 
 /// Upload a small object with a declared SHA-256 through one signed PUT and complete it.
 async fn upload_declared(client: &Client, name: &str, body: &[u8]) -> Result<ArtifactId> {
-    let created: CreateUploadResult = call(
+    let created: veoveo_hub_sdk::definition::Product<CreateUploadResult> = call(
         client,
         "create_upload",
         json!({
@@ -360,6 +360,7 @@ async fn upload_declared(client: &Client, name: &str, body: &[u8]) -> Result<Art
         }),
     )
     .await?;
+    let created = created.metadata().clone();
     let Some(UploadTransfer::Single { put }) = &created.transfer else {
         bail!("a small declared upload did not take one PUT");
     };
@@ -369,12 +370,13 @@ async fn upload_declared(client: &Client, name: &str, body: &[u8]) -> Result<Art
         "the signed PUT answered {}",
         sent.status()
     );
-    let completed: CompleteUploadResult = call(
+    let completed: veoveo_hub_sdk::definition::Product<CompleteUploadResult> = call(
         client,
         "complete_upload",
         json!({"uploadId": created.upload.upload_id}),
     )
     .await?;
+    let completed = completed.metadata().clone();
     ensure!(
         completed.artifact.state == ArtifactState::Available,
         "a PUT whose SHA-256 object storage checked is {:?}",
@@ -718,9 +720,9 @@ async fn grants_are_given_listed_and_revoked() -> Result<()> {
             granted.grant
         );
         let grants_uri = format!("{}/grants", artifact_uri(artifact_id));
-        let listed: GrantListing = read(&admin, &grants_uri).await?;
+        let listed: veoveo_types::Page<Grants> = read(&admin, &grants_uri).await?;
         ensure!(
-            listed.grants.iter().any(|grant| grant.subject == readers),
+            listed.items().iter().any(|grant| grant.subject == readers),
             "the grant is not listed"
         );
         let revoked: RevokeArtifactGrantResult = call(
@@ -730,9 +732,9 @@ async fn grants_are_given_listed_and_revoked() -> Result<()> {
         )
         .await?;
         ensure!(revoked.revoked, "the revocation found no grant");
-        let listed: GrantListing = read(&admin, &grants_uri).await?;
+        let listed: veoveo_types::Page<Grants> = read(&admin, &grants_uri).await?;
         ensure!(
-            !listed.grants.iter().any(|grant| grant.subject == readers),
+            !listed.items().iter().any(|grant| grant.subject == readers),
             "a revoked grant is still listed"
         );
         delete(&admin, artifact_id).await
@@ -782,12 +784,13 @@ async fn the_admins_quota_refuses_an_upload_that_would_exceed_it() -> Result<()>
         refusal?;
         ensure!(restored.limits.quota_bytes.is_none(), "the quota was not lifted");
         // Without the quota the same upload is admitted; aborting releases it.
-        let admitted: CreateUploadResult = call(
+        let admitted: veoveo_hub_sdk::definition::Product<CreateUploadResult> = call(
             &member,
             "create_upload",
             json!({"name": "over.bin", "mediaType": "application/octet-stream", "size": 2 * MIB}),
         )
         .await?;
+        let admitted=admitted.metadata().clone();
         let _: AbortUploadResult = call(
             &member,
             "abort_upload",
@@ -807,12 +810,13 @@ async fn a_share_link_redeems_through_the_share_route_until_its_limit() -> Resul
         let admin = installation.connect(ADMIN).await?;
         let body = part_bytes(4, 4096);
         let artifact_id = upload_declared(&admin, "shared.bin", &body).await?;
-        let released: ArtifactResult = call(
+        let released: veoveo_hub_sdk::definition::Product<ArtifactResult> = call(
             &admin,
             "set_release_state",
             json!({"artifactId": artifact_id, "releaseState": "released"}),
         )
         .await?;
+        let released = released.metadata().clone();
         ensure!(
             released.artifact.release_state == ReleaseState::Released,
             "the artifact is {:?}",
@@ -874,17 +878,17 @@ async fn a_share_link_redeems_through_the_share_route_until_its_limit() -> Resul
             "a spent link answered {}",
             spent.status()
         );
-        let listed: ShareLinkListing = read(
+        let listed: veoveo_types::Page<ShareLinks> = read(
             &admin,
             &format!("{}/share-links", artifact_uri(artifact_id)),
         )
         .await?;
         ensure!(
-            listed.share_links.iter().any(|listed| listed.share_link_id
+            listed.items().iter().any(|listed| listed.share_link_id
                 == link.share_link.share_link_id
                 && listed.redemptions == 1),
             "the listing shows {:?}",
-            listed.share_links
+            listed.items()
         );
         delete(&admin, artifact_id).await
     })
@@ -911,14 +915,14 @@ async fn the_admin_approves_the_members_request_for_more_access() -> Result<()> 
         )
         .await?;
         let request_id = requested.access_request.access_request_id;
-        let pending: AccessRequestListing = read(
+        let pending: veoveo_types::Page<AccessRequests> = read(
             &admin,
             "artifact://access-requests?role=decider&state=pending",
         )
         .await?;
         ensure!(
             pending
-                .access_requests
+                .items()
                 .iter()
                 .any(|request| request.access_request_id == request_id),
             "the admin cannot decide the request"

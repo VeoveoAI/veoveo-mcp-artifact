@@ -5,15 +5,20 @@ mod support;
 
 use support::*;
 use veoveo_mcp_artifact::{
-    contract::{ArtifactId, ListCursor, MediaType, NamePrefix, ReleaseState, UploadState},
-    store::{ArtifactFilter, ArtifactPageSize, ArtifactStoreError, UploadPageSize},
+    contract::{
+        ArtifactFilter, ArtifactId, ArtifactResourceError, Artifacts, MediaType, NamePrefix,
+        ReleaseState, UploadState,
+    },
+    store::ArtifactStoreError,
 };
-use veoveo_types::{PrincipalId, WorkContextId, WorkContextMembershipLevel};
+use veoveo_types::{
+    CursorToken, Page, PageSize, PrincipalId, WorkContextId, WorkContextMembershipLevel,
+};
 
-fn ids(page: &veoveo_mcp_artifact::store::ArtifactPage) -> Vec<ArtifactId> {
-    page.items
+fn ids(page: &Page<Artifacts>) -> Vec<ArtifactId> {
+    page.items()
         .iter()
-        .map(|item| item.record.artifact_id)
+        .map(|item| item.artifact.artifact_id)
         .collect()
 }
 
@@ -42,25 +47,25 @@ async fn pages_walk_newest_first_and_hold_only_readable_artifacts() {
         )
         .await;
 
-        let two = ArtifactPageSize::new(2).unwrap();
+        let two = PageSize::<100>::new(2).unwrap();
         let caller = owner.caller();
         let first = store
             .artifacts_page(&caller, None, None, two, now())
             .await
             .unwrap();
         assert_eq!(ids(&first), vec![created[4], created[3]]);
-        let next = first.next.clone().expect("a second page follows");
+        let next = first.next_cursor().cloned().expect("a second page follows");
         let second = store
             .artifacts_page(&caller, None, Some(&next), two, now())
             .await
             .unwrap();
         assert_eq!(ids(&second), vec![created[2], created[1]]);
         let third = store
-            .artifacts_page(&caller, None, second.next.as_ref(), two, now())
+            .artifacts_page(&caller, None, second.next_cursor(), two, now())
             .await
             .unwrap();
         assert_eq!(ids(&third), vec![created[0]]);
-        assert!(third.next.is_none());
+        assert!(third.next_cursor().is_none());
 
         // A viewer of the Work Context reads every artifact in it; a stranger reads none.
         let viewer = Who::new("vic").in_context("ops", WorkContextMembershipLevel::Viewer);
@@ -69,18 +74,18 @@ async fn pages_walk_newest_first_and_hold_only_readable_artifacts() {
                 &viewer.caller(),
                 None,
                 None,
-                ArtifactPageSize::new(100).unwrap(),
+                PageSize::<100>::new(100).unwrap(),
                 now(),
             )
             .await
             .unwrap();
-        assert_eq!(page.items.len(), 5);
+        assert_eq!(page.items().len(), 5);
         let stranger = Who::new("tom").in_context("elsewhere", WorkContextMembershipLevel::Owner);
         let page = store
             .artifacts_page(&stranger.caller(), None, None, two, now())
             .await
             .unwrap();
-        assert!(page.items.is_empty() && page.next.is_none());
+        assert!(page.items().is_empty() && page.next_cursor().is_none());
 
         // Cursors stay with their tenant, listing and filter.
         let elsewhere = Who::new("owen").tenant("globex");
@@ -88,21 +93,41 @@ async fn pages_walk_newest_first_and_hold_only_readable_artifacts() {
             store
                 .artifacts_page(&elsewhere.caller(), None, Some(&next), two, now())
                 .await,
-            Err(ArtifactStoreError::Cursor(_))
+            Err(ArtifactStoreError::Paging(
+                veoveo_types::PagingError::Cursor(_)
+            ))
         ));
         let owner_filter = ArtifactFilter::Owner(PrincipalId::parse("owen").unwrap());
         assert!(matches!(
             store
                 .artifacts_page(&caller, Some(&owner_filter), Some(&next), two, now())
                 .await,
-            Err(ArtifactStoreError::Cursor(_))
+            Err(ArtifactStoreError::Paging(
+                veoveo_types::PagingError::Cursor(_)
+            ))
         ));
-        let forged = ListCursor::parse("AAAA").unwrap();
+        for (different_caller, limit) in [
+            (viewer.caller(), two),
+            (caller.clone(), PageSize::<100>::new(1).unwrap()),
+        ] {
+            assert!(matches!(
+                store
+                    .artifacts_page(&different_caller, None, Some(&next), limit, now())
+                    .await,
+                Err(ArtifactStoreError::Paging(
+                    veoveo_types::PagingError::Cursor(_)
+                ))
+            ));
+        }
+        let forged: CursorToken<Artifacts> =
+            serde_json::from_value(serde_json::json!("AAAA")).unwrap();
         assert!(matches!(
             store
                 .artifacts_page(&caller, None, Some(&forged), two, now())
                 .await,
-            Err(ArtifactStoreError::Cursor(_))
+            Err(ArtifactStoreError::Paging(
+                veoveo_types::PagingError::Cursor(_)
+            ))
         ));
     })
     .await;
@@ -124,7 +149,7 @@ async fn each_filter_selects_its_artifacts() {
             .await
             .unwrap();
 
-        let all = ArtifactPageSize::new(100).unwrap();
+        let all = PageSize::<100>::new(100).unwrap();
         let list = |who: Who, filter: ArtifactFilter| {
             let store = &store;
             async move {
@@ -152,7 +177,7 @@ async fn each_filter_selects_its_artifacts() {
         );
 
         // A name page continues by name.
-        let one = ArtifactPageSize::new(1).unwrap();
+        let one = PageSize::<100>::new(1).unwrap();
         let prefix = ArtifactFilter::NamePrefix(NamePrefix::parse("report-").unwrap());
         let first = store
             .artifacts_page(&owner.caller(), Some(&prefix), None, one, now())
@@ -163,14 +188,14 @@ async fn each_filter_selects_its_artifacts() {
             .artifacts_page(
                 &owner.caller(),
                 Some(&prefix),
-                first.next.as_ref(),
+                first.next_cursor(),
                 one,
                 now(),
             )
             .await
             .unwrap();
         assert_eq!(ids(&second), vec![report_b]);
-        assert!(second.next.is_none());
+        assert!(second.next_cursor().is_none());
 
         // A listing applies at most one filter.
         assert!(matches!(
@@ -181,7 +206,7 @@ async fn each_filter_selects_its_artifacts() {
                 None,
                 None,
             ),
-            Err(ArtifactStoreError::MultipleFilters)
+            Err(ArtifactResourceError::InvalidFilter)
         ));
         assert_eq!(
             ArtifactFilter::from_parts(None, None, None, None, None).unwrap(),
@@ -203,33 +228,31 @@ async fn upload_pages_hold_the_callers_uploads() {
             .await
             .unwrap();
 
-        let one = UploadPageSize::new(1).unwrap();
+        let one = PageSize::<100>::new(1).unwrap();
         let page = store
             .uploads_page(&owner.caller(), None, None, one)
             .await
             .unwrap();
-        assert_eq!(page.items[0].upload_id, second.upload.upload_id);
-        let next = page
-            .next
-            .map(|cursor| ListCursor::parse(cursor.as_str()).unwrap());
+        assert_eq!(page.items()[0].upload_id, second.upload.upload_id);
+        let next = page.next_cursor().cloned();
         let page = store
             .uploads_page(&owner.caller(), None, next.as_ref(), one)
             .await
             .unwrap();
-        assert_eq!(page.items[0].upload_id, first.upload.upload_id);
-        assert!(page.next.is_none());
+        assert_eq!(page.items()[0].upload_id, first.upload.upload_id);
+        assert!(page.next_cursor().is_none());
 
         let open = store
             .uploads_page(
                 &owner.caller(),
                 Some(UploadState::Open),
                 None,
-                UploadPageSize::new(10).unwrap(),
+                PageSize::<100>::new(10).unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(open.items.len(), 1);
-        assert_eq!(open.items[0].upload_id, second.upload.upload_id);
+        assert_eq!(open.items().len(), 1);
+        assert_eq!(open.items()[0].upload_id, second.upload.upload_id);
     })
     .await;
 }

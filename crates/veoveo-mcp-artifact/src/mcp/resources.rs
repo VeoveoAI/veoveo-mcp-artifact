@@ -1,204 +1,216 @@
-//! Reads of Artifact's resources. Every read is private to its caller and never reused,
-//! because an artifact's access can change between reads.
+//! Typed readers retain current row-level authorization on every page/read.
+use super::{ArtifactMcp, errors::store_error, identity};
+use crate::contract::{
+    AccessRequests, ArtifactEntry, ArtifactPermission, Artifacts, Grants, ReadAccessRequests,
+    ReadArtifact, ReadArtifacts, ReadGrants, ReadShareLinks, ReadStorageUsage, ReadUpload,
+    ReadUploads, ShareLinks, StorageUsage, UploadRecord, Uploads,
+};
 use chrono::Utc;
-use rmcp::{
-    ErrorData as McpError, RoleServer, model::ReadResourceRequestParams, service::RequestContext,
+use rmcp::{ErrorData, RoleServer, service::RequestContext};
+use veoveo_hub_sdk::{
+    definition::ReadCollection,
+    hosting::{ReadCache, ResourceBuilder, RoutePolicy, RoutesBuilder, hub_identity},
 };
-use veoveo_hub_sdk::hosting::{DomainRead, json_read, served_by_host};
-use veoveo_store::PageSize;
+use veoveo_types::{LiveKeyset, Page, Pager};
 
-use crate::{
-    contract::{
-        AccessRequestListing, ArtifactEntry, ArtifactListing, ArtifactResource, GrantListing,
-        ListCursor, ShareLinkListing, UploadListing,
-    },
-    store::ArtifactFilter,
-};
-
-use super::{
-    ArtifactApp,
-    errors::store_error,
-    identity,
-    requirements::{Target, require},
-};
-
-/// Entries a page holds when the address names no size.
-const PAGE_ENTRIES: u32 = 50;
-
-pub(super) async fn read(
-    app: &ArtifactApp,
-    address: ArtifactResource,
-    request: &ReadResourceRequestParams,
-    context: &RequestContext<RoleServer>,
-) -> Result<DomainRead, McpError> {
-    let uri = request.uri.as_str();
-    let store = app.service.store();
-    let now = Utc::now();
-    let result = match address {
-        ArtifactResource::Docs | ArtifactResource::Document(_) | ArtifactResource::Contract => {
-            return Err(served_by_host());
-        }
-        ArtifactResource::Artifacts {
-            work_context,
-            owner,
-            media_type,
-            name,
-            release_state,
-            cursor,
-        } => {
-            let identity = require(context, Target::Resource(uri))?;
-            let caller = identity::caller(&identity)?;
-            let filter =
-                ArtifactFilter::from_parts(work_context, owner, media_type, name, release_state)
-                    .map_err(store_error)?;
-            let page = store
-                .artifacts_page(
-                    &caller,
-                    filter.as_ref(),
-                    cursor.as_ref(),
-                    page_size::<{ crate::store::MAX_ARTIFACTS_PER_PAGE }>(),
-                    now,
-                )
-                .await
-                .map_err(store_error)?;
-            let listing = ArtifactListing {
-                artifacts: page
-                    .items
-                    .into_iter()
-                    .map(|visible| ArtifactEntry {
-                        artifact: visible.record,
-                        level: visible.level,
-                    })
-                    .collect(),
-                next_cursor: page.next,
-            };
-            json_read(uri, &listing)?
-        }
-        ArtifactResource::Artifact(artifact_id) => {
-            let identity = require(context, Target::Resource(uri))?;
-            let caller = identity::caller(&identity)?;
-            let visible = store
-                .artifact(&caller, artifact_id, now)
-                .await
-                .map_err(store_error)?;
-            json_read(
-                uri,
-                &ArtifactEntry {
-                    artifact: visible.record,
-                    level: visible.level,
-                },
-            )?
-        }
-        ArtifactResource::Grants(artifact_id) => {
-            let identity = require(context, Target::Resource(uri))?;
-            let caller = identity::caller(&identity)?;
-            let grants = store
-                .artifact_grants(&caller, artifact_id, now)
-                .await
-                .map_err(store_error)?;
-            json_read(
-                uri,
-                &GrantListing {
-                    artifact_id,
-                    grants,
-                },
-            )?
-        }
-        ArtifactResource::Uploads { state, cursor } => {
-            let identity = require(context, Target::Resource(uri))?;
-            let caller = identity::caller(&identity)?;
-            let page = store
-                .uploads_page(
-                    &caller,
-                    state,
-                    cursor.as_ref(),
-                    page_size::<{ crate::store::MAX_UPLOADS_PER_PAGE }>(),
-                )
-                .await
-                .map_err(store_error)?;
-            let next_cursor = page
-                .next
-                .map(|cursor| ListCursor::parse(cursor.into_wire()))
-                .transpose()
-                .map_err(|_| McpError::internal_error("an upload cursor failed admission", None))?;
-            json_read(
-                uri,
-                &UploadListing {
-                    uploads: page.items,
-                    next_cursor,
-                },
-            )?
-        }
-        ArtifactResource::Upload(upload_id) => {
-            let identity = require(context, Target::Resource(uri))?;
-            let caller = identity::caller(&identity)?;
-            let (upload, _) = store
-                .upload(&caller, upload_id)
-                .await
-                .map_err(store_error)?;
-            json_read(uri, &upload)?
-        }
-        ArtifactResource::StorageUsage => {
-            let identity = require(context, Target::Resource(uri))?;
-            let caller = identity::caller(&identity)?;
-            let usage = store.storage_usage(&caller).await.map_err(store_error)?;
-            json_read(uri, &usage)?
-        }
-        ArtifactResource::ShareLinks {
-            artifact_id,
-            cursor,
-        } => {
-            let identity = require(context, Target::Resource(uri))?;
-            let caller = identity::caller(&identity)?;
-            let page = store
-                .share_links_page(
-                    &caller,
-                    artifact_id,
-                    cursor.as_ref(),
-                    page_size::<{ crate::store::MAX_SHARE_LINKS_PER_PAGE }>(),
-                    now,
-                )
-                .await
-                .map_err(store_error)?;
-            json_read(
-                uri,
-                &ShareLinkListing {
-                    artifact_id,
-                    share_links: page.items,
-                    next_cursor: page.next,
-                },
-            )?
-        }
-        ArtifactResource::AccessRequests {
-            role,
-            state,
-            cursor,
-        } => {
-            let identity = require(context, Target::Resource(uri))?;
-            let caller = identity::caller(&identity)?;
-            let page = store
-                .access_requests_page(
-                    &caller,
-                    role,
-                    state,
-                    cursor.as_ref(),
-                    page_size::<{ crate::store::MAX_ACCESS_REQUESTS_PER_PAGE }>(),
-                    now,
-                )
-                .await
-                .map_err(store_error)?;
-            json_read(
-                uri,
-                &AccessRequestListing {
-                    access_requests: page.items,
-                    next_cursor: page.next,
-                },
-            )?
-        }
-    };
-    Ok(DomainRead::no_store(result))
+fn policy() -> RoutePolicy {
+    RoutePolicy::permission(ArtifactPermission::ArtifactsRead).expect("Artifact read permission")
 }
-
-fn page_size<const MAX: u32>() -> PageSize<MAX> {
-    PageSize::new(PAGE_ENTRIES.min(MAX)).expect("50 entries fit every page bound")
+pub(super) fn register(routes: RoutesBuilder<ArtifactMcp>) -> RoutesBuilder<ArtifactMcp> {
+    routes
+        .template::<ReadArtifact, _, _>(
+            ResourceBuilder::new("Artifact")
+                .reader(read_artifact)
+                .policy(policy())
+                .cache(ReadCache::NoStore),
+        )
+        .template::<ReadUpload, _, _>(
+            ResourceBuilder::new("Upload")
+                .reader(read_upload)
+                .policy(policy())
+                .cache(ReadCache::NoStore),
+        )
+        .singleton(
+            ReadStorageUsage,
+            ResourceBuilder::new("Storage usage")
+                .reader(read_storage_usage)
+                .policy(policy())
+                .cache(ReadCache::NoStore),
+        )
+        .collection_resource::<ReadArtifacts, _, _>(
+            Some(ReadArtifacts { filter: None }),
+            ResourceBuilder::new("Artifacts")
+                .reader(read_artifacts)
+                .policy(policy())
+                .cache(ReadCache::NoStore),
+        )
+        .collection_resource::<ReadUploads, _, _>(
+            Some(ReadUploads { state: None }),
+            ResourceBuilder::new("Uploads")
+                .reader(read_uploads)
+                .policy(policy())
+                .cache(ReadCache::NoStore),
+        )
+        .collection_resource::<ReadShareLinks, _, _>(
+            None,
+            ResourceBuilder::new("Share links")
+                .reader(read_share_links)
+                .policy(policy())
+                .cache(ReadCache::NoStore),
+        )
+        .collection_resource::<ReadGrants, _, _>(
+            None,
+            ResourceBuilder::new("Grants")
+                .reader(read_grants)
+                .policy(policy())
+                .cache(ReadCache::NoStore),
+        )
+        .collection_resource::<ReadAccessRequests, _, _>(
+            Some(ReadAccessRequests {
+                role: None,
+                state: None,
+            }),
+            ResourceBuilder::new("Access requests")
+                .reader(read_access_requests)
+                .policy(policy())
+                .cache(ReadCache::NoStore),
+        )
+}
+async fn read_artifact(
+    domain: ArtifactMcp,
+    read: ReadArtifact,
+    context: RequestContext<RoleServer>,
+) -> Result<ArtifactEntry, ErrorData> {
+    let caller = identity::caller(&hub_identity(&context)?)?;
+    let visible = domain
+        .app
+        .service
+        .store()
+        .artifact(&caller, read.artifact, Utc::now())
+        .await
+        .map_err(store_error)?;
+    Ok(ArtifactEntry {
+        artifact: visible.record,
+        level: visible.level,
+    })
+}
+async fn read_upload(
+    domain: ArtifactMcp,
+    read: ReadUpload,
+    context: RequestContext<RoleServer>,
+) -> Result<UploadRecord, ErrorData> {
+    let caller = identity::caller(&hub_identity(&context)?)?;
+    let (upload, _) = domain
+        .app
+        .service
+        .store()
+        .upload(&caller, read.upload)
+        .await
+        .map_err(store_error)?;
+    Ok(upload)
+}
+async fn read_storage_usage(
+    domain: ArtifactMcp,
+    _: ReadStorageUsage,
+    context: RequestContext<RoleServer>,
+) -> Result<StorageUsage, ErrorData> {
+    let caller = identity::caller(&hub_identity(&context)?)?;
+    domain
+        .app
+        .service
+        .store()
+        .storage_usage(&caller)
+        .await
+        .map_err(store_error)
+}
+async fn read_artifacts(
+    domain: ArtifactMcp,
+    read: ReadCollection<ReadArtifacts>,
+    context: RequestContext<RoleServer>,
+) -> Result<Page<Artifacts>, ErrorData> {
+    let caller = identity::caller(&hub_identity(&context)?)?;
+    let (filter, limit, cursor) = read.into_selection().into_parts();
+    domain
+        .app
+        .service
+        .store()
+        .artifacts_page(&caller, filter.as_ref(), cursor.as_ref(), limit, Utc::now())
+        .await
+        .map_err(store_error)
+}
+async fn read_uploads(
+    domain: ArtifactMcp,
+    read: ReadCollection<ReadUploads>,
+    context: RequestContext<RoleServer>,
+) -> Result<Page<Uploads>, ErrorData> {
+    let caller = identity::caller(&hub_identity(&context)?)?;
+    let (filter, limit, cursor) = read.into_selection().into_parts();
+    domain
+        .app
+        .service
+        .store()
+        .uploads_page(&caller, filter.state, cursor.as_ref(), limit)
+        .await
+        .map_err(store_error)
+}
+async fn read_share_links(
+    domain: ArtifactMcp,
+    read: ReadCollection<ReadShareLinks>,
+    context: RequestContext<RoleServer>,
+) -> Result<Page<ShareLinks>, ErrorData> {
+    let caller = identity::caller(&hub_identity(&context)?)?;
+    let (artifact, limit, cursor) = read.into_selection().into_parts();
+    domain
+        .app
+        .service
+        .store()
+        .share_links_page(&caller, artifact, cursor.as_ref(), limit, Utc::now())
+        .await
+        .map_err(store_error)
+}
+async fn read_grants(
+    domain: ArtifactMcp,
+    read: ReadCollection<ReadGrants>,
+    context: RequestContext<RoleServer>,
+) -> Result<Page<Grants>, ErrorData> {
+    let caller = identity::caller(&hub_identity(&context)?)?;
+    let (artifact, limit, cursor) = read.into_selection().into_parts();
+    let grants = domain
+        .app
+        .service
+        .store()
+        .artifact_grants(&caller, artifact, Utc::now())
+        .await
+        .map_err(store_error)?;
+    Pager::<Grants>::new(
+        caller.tenant(),
+        artifact,
+        limit,
+        LiveKeyset,
+        cursor.as_ref(),
+    )
+    .and_then(|pager| pager.select(grants))
+    .map_err(|error| store_error(error.into()))
+}
+async fn read_access_requests(
+    domain: ArtifactMcp,
+    read: ReadCollection<ReadAccessRequests>,
+    context: RequestContext<RoleServer>,
+) -> Result<Page<AccessRequests>, ErrorData> {
+    let caller = identity::caller(&hub_identity(&context)?)?;
+    let (filter, limit, cursor) = read.into_selection().into_parts();
+    domain
+        .app
+        .service
+        .store()
+        .access_requests_page(
+            &caller,
+            filter.role,
+            filter.state,
+            cursor.as_ref(),
+            limit,
+            Utc::now(),
+        )
+        .await
+        .map_err(store_error)
 }

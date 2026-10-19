@@ -1,6 +1,5 @@
-//! Artifact's MCP surface. Each tool checks its permission against the requirement
-//! table, builds the caller from the forwarded identity and calls the service; the store
-//! decides the caller's level on each artifact.
+//! Typed routes bind Artifact requests, outputs and current policies. Handlers build
+//! the caller from the admitted identity; SQL decides its level on each artifact.
 mod declarations;
 mod errors;
 pub mod identity;
@@ -13,17 +12,10 @@ mod subscriptions;
 use std::sync::Arc;
 
 use chrono::Utc;
-use rmcp::{
-    ErrorData as McpError, RoleServer,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{
-        CallToolResult, GetPromptRequestParams, GetPromptResult, Prompt, ReadResourceRequestParams,
-    },
-    service::RequestContext,
-    tool, tool_router,
-};
+use rmcp::{ErrorData as McpError, RoleServer, service::RequestContext};
 use veoveo_hub_sdk::{
-    hosting::{DomainAddress, DomainRead, DomainServer, structured_result, unknown_prompt},
+    definition::Product,
+    hosting::{DomainServer, hub_identity},
     server_contract::McpServerSetup,
 };
 use veoveo_types::Checked;
@@ -48,7 +40,6 @@ pub use setup::ArtifactContract;
 pub use subscriptions::{ArtifactSubscriptions, TenantHubs, watch_changes};
 
 use errors::tool_error;
-use requirements::{Target, require};
 use setup::SERVER_SETUP;
 
 /// Build and check the MCP setup, so a bad declaration stops startup.
@@ -65,35 +56,19 @@ pub struct ArtifactApp {
 #[derive(Clone)]
 pub struct ArtifactMcp {
     app: Arc<ArtifactApp>,
-    tool_router: ToolRouter<ArtifactMcp>,
 }
 
-#[tool_router]
 impl ArtifactMcp {
     pub fn new(app: Arc<ArtifactApp>) -> Self {
-        Self {
-            app,
-            tool_router: Self::tools(),
-        }
+        Self { app }
     }
 
-    /// Every tool Artifact serves.
-    pub(crate) fn tools() -> ToolRouter<Self> {
-        Self::tool_router()
-    }
-
-    #[tool(
-        title = "Create an upload",
-        description = "Reserve an artifact in your selected Work Context and receive where to send its bytes: one signed PUT, or a part size and signed part URLs. Give the size and SHA-256 when you know them; object storage then refuses different bytes. Send each signed request with exactly its method, URL and headers, then call `complete_upload`. A repeated `idempotencyKey` returns the same upload.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<CreateUploadResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
-    )]
     async fn create_upload(
         &self,
-        Parameters(request): Parameters<Checked<CreateUploadRequest>>,
+        request: Checked<CreateUploadRequest>,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("create_upload"))?;
+    ) -> Result<Product<CreateUploadResult>, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let result = self
             .app
@@ -101,27 +76,19 @@ impl ArtifactMcp {
             .create_upload(&caller, &request, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!(
-                "upload {} is {}",
-                result.upload.upload_id, result.upload.state
-            ),
-            &result,
+        Product::new(
+            &crate::contract::ArtifactResource::Upload(result.upload.upload_id),
+            result,
         )
+        .map_err(|_| McpError::internal_error("upload product construction failed", None))
     }
 
-    #[tool(
-        title = "Sign upload parts",
-        description = "Sign 1 to 100 parts of your open multipart upload, or sign expired parts again. Give each part's size and SHA-256 when you know them.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<SignUploadPartsResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
-    )]
     async fn sign_upload_parts(
         &self,
-        Parameters(request): Parameters<Checked<SignUploadPartsRequest>>,
+        request: Checked<SignUploadPartsRequest>,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("sign_upload_parts"))?;
+    ) -> Result<SignUploadPartsResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let result = self
             .app
@@ -129,21 +96,15 @@ impl ArtifactMcp {
             .sign_upload_parts(&caller, &request, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(format!("signed {} part(s)", result.parts.len()), &result)
+        Ok(result)
     }
 
-    #[tool(
-        title = "Complete an upload",
-        description = "Complete your upload after its bytes arrived. The artifact becomes available, or reads `verifying` while the server computes the SHA-256 of a large object. Completing it again returns the artifact.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<CompleteUploadResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
-    )]
     async fn complete_upload(
         &self,
-        Parameters(request): Parameters<CompleteUploadRequest>,
+        request: CompleteUploadRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("complete_upload"))?;
+    ) -> Result<Product<CompleteUploadResult>, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let owner = identity::task_owner(&identity)?;
         let artifact = self
@@ -152,24 +113,19 @@ impl ArtifactMcp {
             .complete_upload(&caller, &owner, request.upload_id, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!("artifact {} is {}", artifact.artifact_id, artifact.state),
-            &CompleteUploadResult { artifact },
+        Product::new(
+            &crate::contract::ArtifactResource::Artifact(artifact.artifact_id),
+            CompleteUploadResult { artifact },
         )
+        .map_err(|_| McpError::internal_error("artifact product construction failed", None))
     }
 
-    #[tool(
-        title = "Abort an upload",
-        description = "Abort your open upload and release its reserved bytes.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<AbortUploadResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
-    )]
     async fn abort_upload(
         &self,
-        Parameters(request): Parameters<AbortUploadRequest>,
+        request: AbortUploadRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("abort_upload"))?;
+    ) -> Result<AbortUploadResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let result = self
             .app
@@ -177,24 +133,15 @@ impl ArtifactMcp {
             .abort_upload(&caller, request.upload_id, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!("upload {} aborted", result.upload.upload_id),
-            &result,
-        )
+        Ok(result)
     }
 
-    #[tool(
-        title = "Create a download",
-        description = "Receive a signed GET URL in `get.url`, valid for 5 minutes, for an available artifact you may read. Fetch it with `get.method` and the unchanged `get.headers`. The HTTP download names the artifact as an attachment with its media type; ranges and resumed transfers use the same URL.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<CreateDownloadResult>(),
-        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
-    )]
     async fn create_download(
         &self,
-        Parameters(request): Parameters<CreateDownloadRequest>,
+        request: CreateDownloadRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("create_download"))?;
+    ) -> Result<CreateDownloadResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let result = self
             .app
@@ -202,24 +149,15 @@ impl ArtifactMcp {
             .create_download(&caller, request.artifact_id, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!("download URL valid until {}", result.get.expires_at),
-            &result,
-        )
+        Ok(result)
     }
 
-    #[tool(
-        title = "Grant access to an artifact",
-        description = "Give a principal or group read, write or admin access to an artifact you administer, until an optional expiry. A later grant to the same subject replaces it.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<GrantArtifactResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
-    )]
     async fn grant_artifact(
         &self,
-        Parameters(request): Parameters<GrantArtifactRequest>,
+        request: GrantArtifactRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("grant_artifact"))?;
+    ) -> Result<GrantArtifactResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let grant = self
             .app
@@ -227,21 +165,15 @@ impl ArtifactMcp {
             .grant_artifact(&caller, &request, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result("granted".to_owned(), &GrantArtifactResult { grant })
+        Ok(GrantArtifactResult { grant })
     }
 
-    #[tool(
-        title = "Revoke an artifact grant",
-        description = "Remove a principal's or group's grant on an artifact you administer.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<RevokeArtifactGrantResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
-    )]
     async fn revoke_artifact_grant(
         &self,
-        Parameters(request): Parameters<RevokeArtifactGrantRequest>,
+        request: RevokeArtifactGrantRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("revoke_artifact_grant"))?;
+    ) -> Result<RevokeArtifactGrantResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let revoked = self
             .app
@@ -249,29 +181,15 @@ impl ArtifactMcp {
             .revoke_artifact_grant(&caller, request.artifact_id, &request.subject, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            if revoked {
-                "revoked"
-            } else {
-                "no grant to revoke"
-            }
-            .to_owned(),
-            &RevokeArtifactGrantResult { revoked },
-        )
+        Ok(RevokeArtifactGrantResult { revoked })
     }
 
-    #[tool(
-        title = "Set an artifact's release state",
-        description = "Move an available artifact you administer between `private` and `released`. A released artifact may be shared through share links; returning it to private ends its live links at once.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<ArtifactResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
-    )]
     async fn set_release_state(
         &self,
-        Parameters(request): Parameters<SetReleaseStateRequest>,
+        request: SetReleaseStateRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("set_release_state"))?;
+    ) -> Result<Product<ArtifactResult>, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let artifact = self
             .app
@@ -284,27 +202,19 @@ impl ArtifactMcp {
             )
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!(
-                "artifact {} is {}",
-                artifact.artifact_id, artifact.release_state
-            ),
-            &ArtifactResult { artifact },
+        Product::new(
+            &crate::contract::ArtifactResource::Artifact(artifact.artifact_id),
+            ArtifactResult { artifact },
         )
+        .map_err(|_| McpError::internal_error("artifact product construction failed", None))
     }
 
-    #[tool(
-        title = "Create a share link",
-        description = "Issue an anonymous read link for a released, available artifact without data labels that you administer. The link lives 1 to 30 days and may carry a redemption limit. The URL holds the link's secret and is returned only now; anyone holding it receives a fresh download URL each time they open it.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<CreateShareLinkResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
-    )]
     async fn create_share_link(
         &self,
-        Parameters(request): Parameters<CreateShareLinkRequest>,
+        request: CreateShareLinkRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("create_share_link"))?;
+    ) -> Result<CreateShareLinkResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let result = self
             .app
@@ -312,27 +222,15 @@ impl ArtifactMcp {
             .create_share_link(&caller, &request, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!(
-                "share link {} valid until {}",
-                result.share_link.share_link_id, result.share_link.expires_at
-            ),
-            &result,
-        )
+        Ok(result)
     }
 
-    #[tool(
-        title = "Revoke a share link",
-        description = "Revoke one of the share links of an artifact you administer. It stops working at once; a download URL it already issued expires within 5 minutes.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<ShareLinkResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
-    )]
     async fn revoke_share_link(
         &self,
-        Parameters(request): Parameters<RevokeShareLinkRequest>,
+        request: RevokeShareLinkRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("revoke_share_link"))?;
+    ) -> Result<ShareLinkResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let share_link = self
             .app
@@ -345,24 +243,15 @@ impl ArtifactMcp {
             )
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!("share link {} revoked", share_link.share_link_id),
-            &ShareLinkResult { share_link },
-        )
+        Ok(ShareLinkResult { share_link })
     }
 
-    #[tool(
-        title = "Request access to an artifact",
-        description = "Ask the administrators of an artifact you can read for a higher level: write or admin, with a justification. You hold at most one pending request per artifact.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<AccessRequestResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
-    )]
     async fn request_artifact_access(
         &self,
-        Parameters(request): Parameters<RequestArtifactAccessRequest>,
+        request: RequestArtifactAccessRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("request_artifact_access"))?;
+    ) -> Result<AccessRequestResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let access_request = self
             .app
@@ -370,30 +259,18 @@ impl ArtifactMcp {
             .request_access(&caller, &request, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!(
-                "access request {} is pending",
-                access_request.access_request_id
-            ),
-            &AccessRequestResult {
-                access_request,
-                grant: None,
-            },
-        )
+        Ok(AccessRequestResult {
+            access_request,
+            grant: None,
+        })
     }
 
-    #[tool(
-        title = "Cancel an access request",
-        description = "Withdraw your own pending access request.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<AccessRequestResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
-    )]
     async fn cancel_access_request(
         &self,
-        Parameters(request): Parameters<CancelAccessRequestRequest>,
+        request: CancelAccessRequestRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("cancel_access_request"))?;
+    ) -> Result<AccessRequestResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let access_request = self
             .app
@@ -401,30 +278,18 @@ impl ArtifactMcp {
             .cancel_access_request(&caller, request.access_request_id, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!(
-                "access request {} cancelled",
-                access_request.access_request_id
-            ),
-            &AccessRequestResult {
-                access_request,
-                grant: None,
-            },
-        )
+        Ok(AccessRequestResult {
+            access_request,
+            grant: None,
+        })
     }
 
-    #[tool(
-        title = "Decide an access request",
-        description = "Approve or deny a pending request on an artifact you administer, with an optional note. Approval gives the requester the level it asked for.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<AccessRequestResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
-    )]
     async fn decide_access_request(
         &self,
-        Parameters(request): Parameters<DecideAccessRequestRequest>,
+        request: DecideAccessRequestRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("decide_access_request"))?;
+    ) -> Result<AccessRequestResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let result = self
             .app
@@ -432,27 +297,15 @@ impl ArtifactMcp {
             .decide_access_request(&caller, &request, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!(
-                "access request {} is {}",
-                result.access_request.access_request_id, result.access_request.state
-            ),
-            &result,
-        )
+        Ok(result)
     }
 
-    #[tool(
-        title = "Delete an artifact",
-        description = "Delete an artifact you administer, with its grants, share links and access requests. Its bytes are removed shortly after.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<DeleteArtifactResult>(),
-        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
-    )]
     async fn delete_artifact(
         &self,
-        Parameters(request): Parameters<DeleteArtifactRequest>,
+        request: DeleteArtifactRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("delete_artifact"))?;
+    ) -> Result<DeleteArtifactResult, McpError> {
+        let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
         let result = self
             .app
@@ -460,21 +313,15 @@ impl ArtifactMcp {
             .delete_artifact(&caller, request.artifact_id, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(format!("artifact {} deleted", result.artifact_id), &result)
+        Ok(result)
     }
 
-    #[tool(
-        title = "Set a tenant's upload limits",
-        description = "Set a tenant's quota, largest object, allowed media types and open-upload limit. For installation administrators.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<UploadLimitsResult>(),
-        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
-    )]
     async fn set_upload_limits(
         &self,
-        Parameters(request): Parameters<SetUploadLimitsRequest>,
+        request: SetUploadLimitsRequest,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let identity = require(&context, Target::Tool("set_upload_limits"))?;
+    ) -> Result<UploadLimitsResult, McpError> {
+        let identity = hub_identity(&context)?;
         let administrator = identity::caller(&identity)?;
         let limits = self
             .app
@@ -482,15 +329,202 @@ impl ArtifactMcp {
             .set_upload_limits(&administrator, &request.tenant, &request.limits, Utc::now())
             .await
             .map_err(tool_error)?;
-        structured_result(
-            format!("upload limits set for {}", request.tenant),
-            &UploadLimitsResult {
-                tenant: request.tenant,
-                limits,
-            },
-        )
+        Ok(UploadLimitsResult {
+            tenant: request.tenant,
+            limits,
+        })
     }
 }
+
+static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>> =
+    std::sync::LazyLock::new(|| {
+        use crate::contract::ArtifactPermission::*;
+        use veoveo_hub_sdk::hosting::{RoutePolicy, Routes};
+        let routes = Routes::<ArtifactMcp>::builder(
+            RoutePolicy::permission(ArtifactsRead).expect("Artifact permission"),
+        );
+        let routes = routes.tool::<Checked<CreateUploadRequest>, _, _>(
+            "Reserve an artifact in your selected Work Context and receive where to send its \
+             bytes: one signed PUT, or a part size and signed part URLs. Give the size and \
+             SHA-256 when you know them; object storage then refuses different bytes. Send \
+             each signed request with exactly its method, URL and headers, then call \
+             `complete_upload`. A repeated `idempotencyKey` returns the same upload.",
+            RoutePolicy::permission(ArtifactsWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .create_upload(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<Checked<SignUploadPartsRequest>, _, _>(
+            "Sign 1 to 100 parts of your open multipart upload, or sign expired parts again. \
+             Give each part's size and SHA-256 when you know them.",
+            RoutePolicy::permission(ArtifactsWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .sign_upload_parts(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<CompleteUploadRequest, _, _>(
+            "Complete your upload after its bytes arrived. The artifact becomes available, or \
+             reads `verifying` while the server computes the SHA-256 of a large object. \
+             Completing it again returns the artifact.",
+            RoutePolicy::permission(ArtifactsWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .complete_upload(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<AbortUploadRequest, _, _>(
+            "Abort your open upload and release its reserved bytes.",
+            RoutePolicy::permission(ArtifactsWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .abort_upload(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<CreateDownloadRequest, _, _>(
+            "Receive a signed GET URL in `get.url`, valid for 5 minutes, for an available \
+             artifact you may read. Fetch it with `get.method` and the unchanged \
+             `get.headers`. The HTTP download names the artifact as an attachment with its \
+             media type; ranges and resumed transfers use the same URL.",
+            RoutePolicy::permission(ArtifactsRead).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .create_download(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<GrantArtifactRequest, _, _>(
+            "Give a principal or group read, write or admin access to an artifact you \
+             administer, until an optional expiry. A later grant to the same subject replaces \
+             it.",
+            RoutePolicy::permission(GrantsWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .grant_artifact(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<RevokeArtifactGrantRequest, _, _>(
+            "Remove a principal's or group's grant on an artifact you administer.",
+            RoutePolicy::permission(GrantsWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .revoke_artifact_grant(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<SetReleaseStateRequest, _, _>(
+            "Move an available artifact you administer between `private` and `released`. A \
+             released artifact may be shared through share links; returning it to private \
+             ends its live links at once.",
+            RoutePolicy::permission(ReleasesWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .set_release_state(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<CreateShareLinkRequest, _, _>(
+            "Issue an anonymous read link for a released, available artifact without data \
+             labels that you administer. The link lives 1 to 30 days and may carry a \
+             redemption limit. The URL holds the link's secret and is returned only now; \
+             anyone holding it receives a fresh download URL each time they open it.",
+            RoutePolicy::permission(ShareLinksWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .create_share_link(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<RevokeShareLinkRequest, _, _>(
+            "Revoke one of the share links of an artifact you administer. It stops working at \
+             once; a download URL it already issued expires within 5 minutes.",
+            RoutePolicy::permission(ShareLinksWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .revoke_share_link(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<RequestArtifactAccessRequest, _, _>(
+            "Ask the administrators of an artifact you can read for a higher level: write or \
+             admin, with a justification. You hold at most one pending request per artifact.",
+            RoutePolicy::permission(AccessRequestsWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .request_artifact_access(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<CancelAccessRequestRequest, _, _>(
+            "Withdraw your own pending access request.",
+            RoutePolicy::permission(AccessRequestsWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .cancel_access_request(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<DecideAccessRequestRequest, _, _>(
+            "Approve or deny a pending request on an artifact you administer, with an \
+             optional note. Approval gives the requester the level it asked for.",
+            RoutePolicy::permission(GrantsWrite).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .decide_access_request(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<DeleteArtifactRequest, _, _>(
+            "Delete an artifact you administer, with its grants, share links and access \
+             requests. Its bytes are removed shortly after.",
+            RoutePolicy::permission(ArtifactsDelete).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .delete_artifact(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<SetUploadLimitsRequest, _, _>(
+            "Set a tenant's quota, largest object, allowed media types and open-upload limit. \
+             For installation administrators.",
+            RoutePolicy::permission(UploadLimitsAdminister).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain
+                    .set_upload_limits(request, context)
+                    .await
+                    .map_err(Into::into)
+            },
+        );
+        let mut routes = resources::register(routes);
+        for prompt in prompts::ArtifactPrompt::ALL {
+            routes = routes.prompt(
+                prompt.definition(),
+                RoutePolicy::permission(ArtifactsRead).expect("Artifact prompt permission"),
+                move |_, request, _| async move { prompt.render(request.arguments) },
+            );
+        }
+        routes.build()
+    });
 
 impl DomainServer for ArtifactMcp {
     type Contract = ArtifactContract;
@@ -499,35 +533,8 @@ impl DomainServer for ArtifactMcp {
         &SERVER_SETUP
     }
 
-    fn tool_router(&self) -> &ToolRouter<Self> {
-        &self.tool_router
-    }
-
-    async fn read(
-        &self,
-        address: DomainAddress<ArtifactContract>,
-        request: &ReadResourceRequestParams,
-        context: &RequestContext<RoleServer>,
-    ) -> Result<DomainRead, McpError> {
-        resources::read(&self.app, address, request, context).await
-    }
-
-    fn prompts(&self) -> Vec<Prompt> {
-        prompts::ArtifactPrompt::ALL
-            .into_iter()
-            .map(prompts::ArtifactPrompt::definition)
-            .collect()
-    }
-
-    async fn get_prompt(
-        &self,
-        request: GetPromptRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<GetPromptResult, McpError> {
-        require(&context, Target::Prompt(&request.name))?;
-        prompts::ArtifactPrompt::by_name(&request.name)
-            .ok_or_else(|| unknown_prompt(&request.name))?
-            .render(request.arguments)
+    fn routes() -> &'static veoveo_hub_sdk::hosting::Routes<Self> {
+        &ROUTES
     }
 }
 

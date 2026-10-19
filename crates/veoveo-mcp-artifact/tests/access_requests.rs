@@ -19,7 +19,7 @@ use veoveo_mcp_artifact::{
         RequestArtifactAccessRequest, audit_registry,
     },
     migrator, server,
-    store::{AccessRequestPageSize, ArtifactStore, ArtifactStoreError},
+    store::{ArtifactStore, ArtifactStoreError},
 };
 use veoveo_store::PlatformStore;
 use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, WorkContextMembershipLevel};
@@ -392,13 +392,14 @@ async fn listings_page_newest_first_by_role_and_state() {
             .unwrap()
             .access_request_id;
 
-        let size = AccessRequestPageSize::new(2).unwrap();
-        let ids = |page: &veoveo_mcp_artifact::store::AccessRequestPage| -> Vec<_> {
-            page.items
-                .iter()
-                .map(|request| request.access_request_id)
-                .collect()
-        };
+        let size = veoveo_types::PageSize::<100>::new(2).unwrap();
+        let ids =
+            |page: &veoveo_types::Page<veoveo_mcp_artifact::contract::AccessRequests>| -> Vec<_> {
+                page.items()
+                    .iter()
+                    .map(|request| request.access_request_id)
+                    .collect()
+            };
         let made = store
             .access_requests_page(
                 &vera().caller(),
@@ -416,14 +417,14 @@ async fn listings_page_newest_first_by_role_and_state() {
                 &vera().caller(),
                 Some(AccessRequestRole::Requester),
                 None,
-                made.next.as_ref(),
+                made.next_cursor(),
                 size,
                 now(),
             )
             .await
             .unwrap();
         assert_eq!(ids(&rest), [requests[0]]);
-        assert!(rest.next.is_none());
+        assert!(rest.next_cursor().is_none());
 
         let pending = store
             .access_requests_page(
@@ -431,7 +432,7 @@ async fn listings_page_newest_first_by_role_and_state() {
                 Some(AccessRequestRole::Decider),
                 Some(AccessRequestState::Pending),
                 None,
-                AccessRequestPageSize::new(10).unwrap(),
+                veoveo_types::PageSize::<100>::new(10).unwrap(),
                 now(),
             )
             .await
@@ -445,7 +446,7 @@ async fn listings_page_newest_first_by_role_and_state() {
                 None,
                 None,
                 None,
-                AccessRequestPageSize::new(10).unwrap(),
+                veoveo_types::PageSize::<100>::new(10).unwrap(),
                 now(),
             )
             .await
@@ -461,12 +462,14 @@ async fn listings_page_newest_first_by_role_and_state() {
                     &vera().caller(),
                     None,
                     None,
-                    made.next.as_ref(),
+                    made.next_cursor(),
                     size,
                     now()
                 )
                 .await,
-            Err(ArtifactStoreError::Cursor(_))
+            Err(ArtifactStoreError::Paging(
+                veoveo_types::PagingError::Cursor(_)
+            ))
         ));
     })
     .await;

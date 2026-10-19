@@ -19,10 +19,6 @@ pub enum ArtifactPrompt {
 impl ArtifactPrompt {
     pub const ALL: [Self; 2] = [Self::ReviewArtifactSharing, Self::ReviewAccessRequests];
 
-    pub fn by_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|prompt| prompt.name() == name)
-    }
-
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::ReviewArtifactSharing => "review-artifact-sharing",
@@ -71,10 +67,7 @@ impl ArtifactPrompt {
                     })?;
                 let artifact = ArtifactResource::Artifact(artifact_id);
                 let grants = ArtifactResource::Grants(artifact_id);
-                let links = ArtifactResource::ShareLinks {
-                    artifact_id,
-                    cursor: None,
-                };
+                let links = ArtifactResource::ShareLinks { artifact_id };
                 format!(
                     "Read {artifact} for the artifact's owner, Work Context, labels and release \
                      state, {grants} for its grants and {links} for its share links. Report who \
@@ -90,7 +83,6 @@ impl ArtifactPrompt {
                 let pending = ArtifactResource::AccessRequests {
                     role: Some(AccessRequestRole::Decider),
                     state: Some(AccessRequestState::Pending),
-                    cursor: None,
                 };
                 format!(
                     "Read {pending} for the pending requests you can decide, following \

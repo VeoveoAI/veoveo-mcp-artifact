@@ -301,7 +301,7 @@ async fn single(
             .map_err(|_| ArtifactClientError::Protocol("a single body exceeds an object"))?,
     );
     request.sha256 = Some(computed);
-    let created = client.calls.call(request).await?;
+    let created = client.calls.call(request).await?.metadata().clone();
     let upload_id = created.upload.upload_id;
     let Some(transfer) = created.transfer else {
         // A repeated idempotency key found the upload ended; the artifact holds its outcome.
@@ -319,7 +319,9 @@ async fn single(
             .calls
             .call(CompleteUploadRequest { upload_id })
             .await?
-            .artifact)
+            .metadata()
+            .artifact
+            .clone())
     }
     .await;
     if outcome.is_err() {
@@ -348,7 +350,7 @@ async fn multipart(
         }
         request.max_size = Some(size);
     }
-    let created = client.calls.call(request).await?;
+    let created = client.calls.call(request).await?.metadata().clone();
     let upload_id = created.upload.upload_id;
     let Some(transfer) = created.transfer else {
         return Ok(created.artifact);
@@ -389,7 +391,9 @@ async fn multipart(
             .calls
             .call(CompleteUploadRequest { upload_id })
             .await?
-            .artifact)
+            .metadata()
+            .artifact
+            .clone())
     }
     .await;
     if outcome.is_err() {

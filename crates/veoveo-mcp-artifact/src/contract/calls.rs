@@ -3,7 +3,10 @@
 //! content, so a server that declares uses of Artifact's permissions calls and reads
 //! Artifact through the Hub with the SDK's `HubClient`. The `client` feature's
 //! `ArtifactClient` builds uploads and downloads on these calls.
-use veoveo_hub_sdk::calls::{ProviderContract, ResourceRead, ToolCall};
+use veoveo_hub_sdk::{
+    calls::{ProviderContract, ResourceRead, ToolCall},
+    definition::{CollectionResource, Product, TemplateRead},
+};
 use veoveo_types::ServerSlug;
 
 use super::{
@@ -29,7 +32,7 @@ impl ProviderContract for ArtifactProvider {
 
 impl ToolCall for CreateUploadRequest {
     type Provider = ArtifactProvider;
-    type Output = CreateUploadResult;
+    type Output = Product<CreateUploadResult>;
     const TOOL: &'static str = "create_upload";
 }
 
@@ -41,7 +44,7 @@ impl ToolCall for SignUploadPartsRequest {
 
 impl ToolCall for CompleteUploadRequest {
     type Provider = ArtifactProvider;
-    type Output = CompleteUploadResult;
+    type Output = Product<CompleteUploadResult>;
     const TOOL: &'static str = "complete_upload";
 }
 
@@ -71,7 +74,7 @@ impl ToolCall for RevokeArtifactGrantRequest {
 
 impl ToolCall for SetReleaseStateRequest {
     type Provider = ArtifactProvider;
-    type Output = ArtifactResult;
+    type Output = Product<ArtifactResult>;
     const TOOL: &'static str = "set_release_state";
 }
 
@@ -135,40 +138,235 @@ impl ResourceRead for ReadArtifact {
     }
 }
 
-/// The tool of every request type above, in the order the server serves them. The
-/// server's tests hold this list to the tools it lists.
-pub fn served_tools() -> [&'static str; 15] {
-    [
-        CreateUploadRequest::TOOL,
-        SignUploadPartsRequest::TOOL,
-        CompleteUploadRequest::TOOL,
-        AbortUploadRequest::TOOL,
-        CreateDownloadRequest::TOOL,
-        GrantArtifactRequest::TOOL,
-        RevokeArtifactGrantRequest::TOOL,
-        SetReleaseStateRequest::TOOL,
-        CreateShareLinkRequest::TOOL,
-        RevokeShareLinkRequest::TOOL,
-        RequestArtifactAccessRequest::TOOL,
-        CancelAccessRequestRequest::TOOL,
-        DecideAccessRequestRequest::TOOL,
-        DeleteArtifactRequest::TOOL,
-        SetUploadLimitsRequest::TOOL,
-    ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn each_request_names_its_tool_through_the_hub() {
-        assert_eq!(
-            CreateUploadRequest::hub_tool_name().unwrap().to_string(),
-            "artifact__create_upload"
-        );
-        for tool in served_tools() {
-            veoveo_hub_sdk::LocalToolName::parse(tool).unwrap();
+impl TemplateRead for ReadArtifact {
+    const TEMPLATE: &'static str = "artifact://artifacts/{artifact_id}";
+    fn from_address(address: &ArtifactResource) -> Option<Self> {
+        if let ArtifactResource::Artifact(artifact) = address {
+            Some(Self {
+                artifact: *artifact,
+            })
+        } else {
+            None
         }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct ReadArtifacts {
+    pub filter: Option<super::ArtifactFilter>,
+}
+impl CollectionResource for ReadArtifacts {
+    type Provider = ArtifactProvider;
+    type Address = ArtifactResource;
+    type Collection = super::Artifacts;
+    const TEMPLATE: &'static str =
+        "artifact://artifacts{?work_context,owner,media_type,name,release_state}";
+    fn address(&self) -> ArtifactResource {
+        use super::ArtifactFilter;
+        let mut address = ArtifactResource::Artifacts {
+            work_context: None,
+            owner: None,
+            media_type: None,
+            name: None,
+            release_state: None,
+        };
+        if let ArtifactResource::Artifacts {
+            work_context,
+            owner,
+            media_type,
+            name,
+            release_state,
+        } = &mut address
+        {
+            match &self.filter {
+                None => {}
+                Some(ArtifactFilter::WorkContext(value)) => *work_context = Some(value.clone()),
+                Some(ArtifactFilter::Owner(value)) => *owner = Some(value.clone()),
+                Some(ArtifactFilter::MediaType(value)) => *media_type = Some(value.clone()),
+                Some(ArtifactFilter::NamePrefix(value)) => *name = Some(value.clone()),
+                Some(ArtifactFilter::ReleaseState(value)) => *release_state = Some(*value),
+            }
+        }
+        address
+    }
+    fn filters(&self) -> Option<super::ArtifactFilter> {
+        self.filter.clone()
+    }
+    fn from_address(address: &ArtifactResource) -> Option<Self> {
+        if let ArtifactResource::Artifacts {
+            work_context,
+            owner,
+            media_type,
+            name,
+            release_state,
+        } = address
+        {
+            Some(Self {
+                filter: super::ArtifactFilter::from_parts(
+                    work_context.clone(),
+                    owner.clone(),
+                    media_type.clone(),
+                    name.clone(),
+                    *release_state,
+                )
+                .ok()?,
+            })
+        } else {
+            None
+        }
+    }
+    fn default_limit() -> veoveo_types::PageSize<100> {
+        veoveo_types::PageSize::new(50).unwrap()
+    }
+}
+#[derive(Debug, Clone)]
+pub struct ReadUploads {
+    pub state: Option<super::UploadState>,
+}
+impl CollectionResource for ReadUploads {
+    type Provider = ArtifactProvider;
+    type Address = ArtifactResource;
+    type Collection = super::Uploads;
+    const TEMPLATE: &'static str = "artifact://uploads{?state}";
+    fn address(&self) -> ArtifactResource {
+        ArtifactResource::Uploads { state: self.state }
+    }
+    fn filters(&self) -> super::UploadFilters {
+        super::UploadFilters { state: self.state }
+    }
+    fn from_address(address: &ArtifactResource) -> Option<Self> {
+        if let ArtifactResource::Uploads { state } = address {
+            Some(Self { state: *state })
+        } else {
+            None
+        }
+    }
+    fn default_limit() -> veoveo_types::PageSize<100> {
+        veoveo_types::PageSize::new(50).unwrap()
+    }
+}
+#[derive(Debug, Clone)]
+pub struct ReadShareLinks {
+    pub artifact: ArtifactId,
+}
+impl CollectionResource for ReadShareLinks {
+    type Provider = ArtifactProvider;
+    type Address = ArtifactResource;
+    type Collection = super::ShareLinks;
+    const TEMPLATE: &'static str = "artifact://artifacts/{artifact_id}/share-links";
+    fn address(&self) -> ArtifactResource {
+        ArtifactResource::ShareLinks {
+            artifact_id: self.artifact,
+        }
+    }
+    fn filters(&self) -> ArtifactId {
+        self.artifact
+    }
+    fn from_address(address: &ArtifactResource) -> Option<Self> {
+        if let ArtifactResource::ShareLinks { artifact_id } = address {
+            Some(Self {
+                artifact: *artifact_id,
+            })
+        } else {
+            None
+        }
+    }
+    fn default_limit() -> veoveo_types::PageSize<100> {
+        veoveo_types::PageSize::new(50).unwrap()
+    }
+}
+#[derive(Debug, Clone)]
+pub struct ReadGrants {
+    pub artifact: ArtifactId,
+}
+impl CollectionResource for ReadGrants {
+    type Provider = ArtifactProvider;
+    type Address = ArtifactResource;
+    type Collection = super::Grants;
+    const TEMPLATE: &'static str = "artifact://artifacts/{artifact_id}/grants";
+    fn address(&self) -> ArtifactResource {
+        ArtifactResource::Grants(self.artifact)
+    }
+    fn filters(&self) -> ArtifactId {
+        self.artifact
+    }
+    fn from_address(address: &ArtifactResource) -> Option<Self> {
+        if let ArtifactResource::Grants(artifact) = address {
+            Some(Self {
+                artifact: *artifact,
+            })
+        } else {
+            None
+        }
+    }
+    fn default_limit() -> veoveo_types::PageSize<256> {
+        veoveo_types::PageSize::new(50).unwrap()
+    }
+}
+#[derive(Debug, Clone)]
+pub struct ReadAccessRequests {
+    pub role: Option<super::AccessRequestRole>,
+    pub state: Option<super::AccessRequestState>,
+}
+impl CollectionResource for ReadAccessRequests {
+    type Provider = ArtifactProvider;
+    type Address = ArtifactResource;
+    type Collection = super::AccessRequests;
+    const TEMPLATE: &'static str = "artifact://access-requests{?role,state}";
+    fn address(&self) -> ArtifactResource {
+        ArtifactResource::AccessRequests {
+            role: self.role,
+            state: self.state,
+        }
+    }
+    fn filters(&self) -> super::AccessRequestFilters {
+        super::AccessRequestFilters {
+            role: self.role,
+            state: self.state,
+        }
+    }
+    fn from_address(address: &ArtifactResource) -> Option<Self> {
+        if let ArtifactResource::AccessRequests { role, state } = address {
+            Some(Self {
+                role: *role,
+                state: *state,
+            })
+        } else {
+            None
+        }
+    }
+    fn default_limit() -> veoveo_types::PageSize<100> {
+        veoveo_types::PageSize::new(50).unwrap()
+    }
+}
+#[derive(Debug, Clone)]
+pub struct ReadUpload {
+    pub upload: super::UploadId,
+}
+impl ResourceRead for ReadUpload {
+    type Provider = ArtifactProvider;
+    type Address = ArtifactResource;
+    type Content = super::UploadRecord;
+    fn address(&self) -> ArtifactResource {
+        ArtifactResource::Upload(self.upload)
+    }
+}
+impl TemplateRead for ReadUpload {
+    const TEMPLATE: &'static str = "artifact://uploads/{upload_id}";
+    fn from_address(address: &ArtifactResource) -> Option<Self> {
+        if let ArtifactResource::Upload(upload) = address {
+            Some(Self { upload: *upload })
+        } else {
+            None
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct ReadStorageUsage;
+impl ResourceRead for ReadStorageUsage {
+    type Provider = ArtifactProvider;
+    type Address = ArtifactResource;
+    type Content = super::StorageUsage;
+    fn address(&self) -> ArtifactResource {
+        ArtifactResource::StorageUsage
     }
 }

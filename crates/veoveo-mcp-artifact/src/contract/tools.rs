@@ -340,6 +340,20 @@ pub struct UploadLimitsResult {
     pub limits: UploadLimits,
 }
 
+impl veoveo_hub_sdk::definition::SingleOutput for CreateUploadResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for SignUploadPartsResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for CompleteUploadResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for AbortUploadResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for CreateDownloadResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for DeleteArtifactResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for GrantArtifactResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for RevokeArtifactGrantResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for ArtifactResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for CreateShareLinkResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for ShareLinkResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for AccessRequestResult {}
+impl veoveo_hub_sdk::definition::SingleOutput for UploadLimitsResult {}
+
 #[cfg(test)]
 mod tests {
     use veoveo_types::Checked;

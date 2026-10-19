@@ -28,7 +28,7 @@ port         8801
 
 | Standard or protocol | Implemented profile |
 |---|---|
-| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-hub-sdk` 9bf0a3a implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
+| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, under the hosted MCP contract `https://veoveo.ai/contracts/hosted-mcp` that `veoveo-hub-sdk` typed route construction implements. The server exposes tools, resources and templates, completions of document IDs, `subscriptions/listen` and typed structured content. |
 | [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/) | Tool inputs and results, resource contents and the audit detail types Artifact declares. |
 | [Veoveo audit record](https://github.com/VeoveoAI/veoveo-core/blob/9a6b3ff95469ff19f9ccb513421a57ba6751aa9e/platform/audit/contract/DESIGN.md), after NIST SP 800-53 Rev. 5 AU-3 and mapped to [OCSF 1.9](https://schema.ocsf.io/1.9.0/) | Each record carries core's envelope: Artifact's class with its OCSF API Activity (6003) and activity, an outcome, Artifact's reason code when a decision fails, the caller, the acting server and Task as `via`, the Artifact resource the decision concerns as its target, and a closed detail. |
 | [URI Template RFC 6570](https://www.rfc-editor.org/rfc/rfc6570) | Discovery declares simple variables, and collection pages continue through a `cursor` query parameter. |
@@ -339,16 +339,45 @@ network, as Artifact does.
 
 ## Lists And Paging
 
-Every collection pages by keyset in a fixed order: artifacts by UUIDv7 ID, newest
-first, and the others by creation time and ID. An artifact listing applies at most one
-filter, and each filter has its own pair of statements. A name filter matches a prefix
-and orders the matches by name, then ID, so the prefix stays an index range. A page holds 1 to 100 entries, 50 by
-default, through core's `PageSize<100>`, and the query reads one row past the page to
-decide whether a next cursor exists. Cursors are core's `KeysetCursor`, bound to the
-tenant and the filter set, so a cursor from another listing, tenant or filter fails to
-parse. First and next pages are separate statements, and every filter has its own
-index. Visibility is part of each statement, so a page holds only artifacts the caller
-may read.
+Every collection uses Core's nominal `Collection` and immutable `Page<C>` through
+`Pager<C>`; SDK `ReadCollection` owns the resource URI's `limit` and `cursor` query
+parameters and derives their discovery template. Page bodies use `items`, `limit`
+and `nextCursor`. The default is 50 entries, maximum 100 for artifacts, uploads,
+share links and access requests. Grants permit 256, the existing per-artifact bound;
+the store reads that bounded sequence in subject-kind/subject order and Pager
+selects its page. Missing or null continuation means completion.
+
+Artifacts order by UUIDv7 ID descending except name-prefix selections, which order
+by name then ID ascending. The nominal artifact key carries both name and ID; its
+filter-aware comparator agrees with the existing indexed SQL. Other SQL collections
+order by their unique UUIDv7 ID descending. The separate first/next statements and
+lookahead queries are unchanged. Pager admits continuation and constructs bounded
+items and continuation together; owners cannot independently assemble a page DTO.
+
+Cursors are opaque bounded tokens, at most 4096 bytes. Scope includes collection,
+tenant, typed filters and limit. Artifact, upload and access-request policies also
+bind the current admitted principal; nested grants and share-link filters include
+the artifact parent. Changed limits, filters, principals or parents are refused;
+malformed/scoped cursors require restarting without a cursor. Serialization only
+admits the bounded wire token; contextual parsing happens in the owner pager.
+
+These are live keyset listings, not retained snapshots. Inserts before an issued
+position are not revisited; inserts after it may appear. Deletes disappear. Name
+changes across the position can cause repeated or missed identities, so a caller
+requiring a fresh view restarts. Every page evaluates current SQL visibility and
+parent administration. Cursors grant no authority and cannot restore revoked access.
+On unchanged data and authorization, total ordering and lookahead yield each matching
+identity once, including exact boundaries. No server-local retained cursor state is
+needed between replicas.
+
+Tools and resources register through one SDK routes table. Typed request/content
+associations, explicit policies and resource cache settings generate descriptors,
+schemas, discovery and registration authorization together. Upload creation and
+completion, and release-state changes return `Product<T>` with canonical upload or
+artifact `resultUri`, typed `metadata`, and the adapter-generated matching resource
+link. Batch signed parts remain a single action result. The native client unwraps
+that typed metadata; no old wire decoder or compatibility page DTO is retained.
+Per-rule compliance profiles and their generated manual section are removed.
 
 ## Persistence
 

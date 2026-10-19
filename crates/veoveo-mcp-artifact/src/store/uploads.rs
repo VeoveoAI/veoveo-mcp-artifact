@@ -1,16 +1,15 @@
 //! Uploads: reserving an artifact and its bytes, completing, aborting and listing.
 use chrono::{DateTime, Utc};
 use sqlx::types::Json;
-use veoveo_store::{
-    CursorScope, KeysetCursor, Page, PageSize, PrincipalId as StoredPrincipal,
-    TenantId as StoredTenant,
+use veoveo_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
+use veoveo_types::{
+    Checked, CursorToken, Page, PageSize, Pager, Sha256Digest, WorkContextMembershipLevel,
 };
-use veoveo_types::{Checked, Sha256Digest, WorkContextMembershipLevel};
 
 use crate::contract::{
     ArtifactId, ArtifactMetadataMap, ArtifactProvenance, ArtifactRecord, ArtifactState,
-    CreateUploadRequest, ListCursor, ObjectSize, ReleaseState, UploadForm, UploadId, UploadLimits,
-    UploadRecord, UploadState,
+    CreateUploadRequest, ObjectSize, PrincipalKeyset, ReleaseState, UploadFilters, UploadForm,
+    UploadId, UploadLimits, UploadRecord, UploadState, Uploads,
 };
 
 use crate::contract::{
@@ -23,13 +22,6 @@ use super::{
     limits::LimitsRow,
     rows::{ArtifactRow, UploadRow, size_column},
 };
-
-/// The most uploads one page holds.
-pub const MAX_UPLOADS_PER_PAGE: u32 = 100;
-/// A page size of the upload listing.
-pub type UploadPageSize = PageSize<MAX_UPLOADS_PER_PAGE>;
-/// One page of the caller's uploads and the cursor of the next.
-pub type UploadPage = Page<UploadRecord, KeysetCursor<UploadId>>;
 
 /// A reserved upload and its artifact. `repeated` is true when an earlier call with the
 /// same idempotency key created them.
@@ -468,19 +460,20 @@ impl ArtifactStore {
         &self,
         caller: &Caller,
         state: Option<UploadState>,
-        cursor: Option<&ListCursor>,
-        size: UploadPageSize,
-    ) -> Result<UploadPage, ArtifactStoreError> {
+        cursor: Option<&CursorToken<Uploads>>,
+        size: PageSize<100>,
+    ) -> Result<Page<Uploads>, ArtifactStoreError> {
         let tenant = caller.tenant();
         let creator = caller.principal();
-        let scope = CursorScope::new(
-            "artifact.uploads",
+        let pager = Pager::<Uploads>::new(
             tenant,
-            &(creator, state.map(|state| state.as_str())),
+            UploadFilters { state },
+            size,
+            PrincipalKeyset::new(caller.principal_key().clone()),
+            cursor,
         )?;
-        let after: Option<KeysetCursor<UploadId>> =
-            cursor.map(|wire| scope.parse(wire.as_str())).transpose()?;
-        let limit = size.fetch_limit();
+        let after = pager.after().copied();
+        let limit = pager.fetch_limit();
         let rows = match (state, after) {
             (None, None) => {
                 sqlx::query_file_as!(
@@ -499,7 +492,7 @@ impl ArtifactStore {
                     "src/store/uploads/uploads_page_next.sql",
                     tenant as StoredTenant,
                     creator as StoredPrincipal,
-                    *after.position() as UploadId,
+                    after as UploadId,
                     limit,
                 )
                 .fetch_all(self.pool())
@@ -524,26 +517,18 @@ impl ArtifactStore {
                     tenant as StoredTenant,
                     creator as StoredPrincipal,
                     state as UploadState,
-                    *after.position() as UploadId,
+                    after as UploadId,
                     limit,
                 )
                 .fetch_all(self.pool())
                 .await?
             }
         };
-        let page = size.page(rows, |last| last.upload_id);
-        let items = page
-            .items
+        let items = rows
             .iter()
             .map(UploadRow::record)
-            .collect::<Result<_, _>>()?;
-        Ok(Page {
-            items,
-            next: page
-                .next
-                .map(|position| scope.cursor(position))
-                .transpose()?,
-        })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(pager.finish(items)?)
     }
 
     async fn lock_open_upload(

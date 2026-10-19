@@ -18,7 +18,7 @@ use veoveo_mcp_artifact::{
         ShareLinkRedeemed, ShareLinkRevoked, audit_registry,
     },
     migrator, server,
-    store::{ArtifactStore, ArtifactStoreError, NewShareLink, ShareLinkPageSize},
+    store::{ArtifactStore, ArtifactStoreError, NewShareLink},
 };
 use veoveo_store::PlatformStore;
 use veoveo_types::{Sha256Digest, TenantId, WorkContextMembershipLevel};
@@ -139,12 +139,12 @@ async fn returning_to_private_ends_live_links_and_every_change_is_recorded() {
                 &caller,
                 artifact,
                 None,
-                ShareLinkPageSize::new(10).unwrap(),
+                veoveo_types::PageSize::<100>::new(10).unwrap(),
                 now(),
             )
             .await
             .unwrap();
-        assert!(page.items.iter().all(|link| link.revoked_at.is_some()));
+        assert!(page.items().iter().all(|link| link.revoked_at.is_some()));
         // Releasing again revives no link.
         store
             .set_release_state(&caller, artifact, ReleaseState::Released, now())
@@ -261,12 +261,12 @@ async fn the_redemption_limit_holds_under_concurrent_redemptions() {
                 &ada.caller(),
                 artifact,
                 None,
-                ShareLinkPageSize::new(10).unwrap(),
+                veoveo_types::PageSize::<100>::new(10).unwrap(),
                 now(),
             )
             .await
             .unwrap();
-        assert_eq!(page.items[0].redemptions, 3);
+        assert_eq!(page.items()[0].redemptions, 3);
 
         // The holder has no account, so the record names no actor and stays in the
         // installation's partition.
@@ -348,21 +348,25 @@ async fn share_links_page_newest_first_for_administrators() {
                     .share_link_id,
             );
         }
-        let size = ShareLinkPageSize::new(2).unwrap();
+        let size = veoveo_types::PageSize::<100>::new(2).unwrap();
         let first = store
             .share_links_page(&caller, artifact, None, size, now())
             .await
             .unwrap();
-        let ids: Vec<_> = first.items.iter().map(|link| link.share_link_id).collect();
+        let ids: Vec<_> = first
+            .items()
+            .iter()
+            .map(|link| link.share_link_id)
+            .collect();
         assert_eq!(ids, [created[2], created[1]]);
-        let cursor = first.next.expect("a second page");
+        let cursor = first.next_cursor().cloned().expect("a second page");
         let second = store
             .share_links_page(&caller, artifact, Some(&cursor), size, now())
             .await
             .unwrap();
-        assert_eq!(second.items.len(), 1);
-        assert_eq!(second.items[0].share_link_id, created[0]);
-        assert!(second.next.is_none());
+        assert_eq!(second.items().len(), 1);
+        assert_eq!(second.items()[0].share_link_id, created[0]);
+        assert!(second.next_cursor().is_none());
 
         // A cursor belongs to its artifact's listing.
         let other = released(&store, &ada, "other.txt").await;
@@ -370,7 +374,9 @@ async fn share_links_page_newest_first_for_administrators() {
             store
                 .share_links_page(&caller, other, Some(&cursor), size, now())
                 .await,
-            Err(ArtifactStoreError::Cursor(_))
+            Err(ArtifactStoreError::Paging(
+                veoveo_types::PagingError::Cursor(_)
+            ))
         ));
         // A reader who does not administer the artifact sees no links.
         let viewer = Who::new("vera").in_context("ops", WorkContextMembershipLevel::Viewer);

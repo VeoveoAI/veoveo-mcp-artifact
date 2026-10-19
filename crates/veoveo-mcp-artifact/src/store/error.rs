@@ -1,7 +1,7 @@
 //! Why a store operation refused or failed. Refusals name the rule; none repeats a
 //! caller's value or a stored secret.
-use veoveo_store::CursorError;
 use veoveo_types::AccessLevel;
+use veoveo_types::PagingError;
 
 use crate::contract::{AccessRequestState, ArtifactState, MediaType, UploadState};
 
@@ -63,10 +63,8 @@ pub enum ArtifactStoreError {
     AccessRequestSettled { state: AccessRequestState },
     #[error("invalid upload limits: {0}")]
     InvalidLimits(&'static str),
-    #[error("a listing applies at most one filter")]
-    MultipleFilters,
     #[error(transparent)]
-    Cursor(#[from] CursorError),
+    Paging(#[from] PagingError),
     #[error("a stored {0} failed admission")]
     Corrupt(&'static str),
     #[error("the audit record failed admission: {0}")]

@@ -1,8 +1,8 @@
 //! Artifact's resource addresses: round trips, reserved characters, filters, cursors,
 //! malformed identifiers, wrong parents and unsupported or duplicate query parameters.
 use veoveo_mcp_artifact::contract::{
-    AccessRequestRole, ArtifactId, ArtifactResource, ArtifactResourceError, ListCursor, MediaType,
-    NamePrefix, ReleaseState, UploadId, UploadState,
+    AccessRequestRole, ArtifactId, ArtifactResource, ArtifactResourceError, MediaType, NamePrefix,
+    ReleaseState, UploadId, UploadState,
 };
 use veoveo_types::{PrincipalId, WorkContextId};
 
@@ -35,16 +35,13 @@ fn records_and_collections_round_trip() {
     );
     round_trip(ArtifactResource::ShareLinks {
         artifact_id: artifact,
-        cursor: Some(ListCursor::parse("abc_DEF-123").unwrap()),
     });
     round_trip(ArtifactResource::Uploads {
         state: Some(UploadState::Open),
-        cursor: None,
     });
     round_trip(ArtifactResource::AccessRequests {
         role: Some(AccessRequestRole::Decider),
         state: None,
-        cursor: None,
     });
 }
 
@@ -56,7 +53,6 @@ fn listing_filters_encode_reserved_characters() {
         media_type: Some(MediaType::parse("application/vnd.api+json").unwrap()),
         name: Some(NamePrefix::parse("Q3 report & notes?#").unwrap()),
         release_state: Some(ReleaseState::Released),
-        cursor: None,
     };
     let wire = round_trip(resource);
     assert!(!wire.contains(" & "), "{wire}");
@@ -67,7 +63,6 @@ fn listing_filters_encode_reserved_characters() {
             media_type: None,
             name: None,
             release_state: None,
-            cursor: None,
         }),
         "artifact://artifacts"
     );
@@ -99,14 +94,45 @@ fn malformed_addresses_are_refused() {
 }
 
 #[test]
-fn only_roots_and_records_accept_subscriptions() {
+fn collection_selection_uses_shared_typed_cursor_and_limit_admission() {
+    use veoveo_hub_sdk::{
+        calls::ResourceRead,
+        definition::{CollectionRequest, ReadCollection},
+    };
+    use veoveo_mcp_artifact::contract::{ReadShareLinks, ShareLinks};
+    use veoveo_types::{CursorToken, PageSize, ResourceUri};
     let artifact = ArtifactId::new();
-    assert!(ArtifactResource::artifact(artifact).is_subscribable());
-    assert!(
-        !ArtifactResource::ShareLinks {
-            artifact_id: artifact,
-            cursor: Some(ListCursor::parse("next").unwrap()),
+    let cursor: CursorToken<ShareLinks> =
+        serde_json::from_value(serde_json::json!("opaque+query&value")).unwrap();
+    let read = ReadCollection::new(ReadShareLinks { artifact }, PageSize::new(1).unwrap())
+        .continuing(cursor);
+    let uri = read.uri().unwrap();
+    let (base, limit, cursor) =
+        CollectionRequest::<ShareLinks>::split_uri(&uri, PageSize::new(50).unwrap()).unwrap();
+    assert_eq!(limit.get(), 1);
+    assert_eq!(cursor.unwrap().as_str(), "opaque+query&value");
+    assert_eq!(
+        ArtifactResource::parse(base.as_str()).unwrap(),
+        ArtifactResource::ShareLinks {
+            artifact_id: artifact
         }
-        .is_subscribable()
     );
+    for query in [
+        "limit=0",
+        "limit=101",
+        "cursor=",
+        "cursor=a&cursor=b",
+        "%63ursor=a&cursor=b",
+    ] {
+        assert!(
+            ResourceUri::new(format!(
+                "artifact://artifacts/{artifact}/share-links?{query}"
+            ))
+            .map_or(true, |uri| CollectionRequest::<ShareLinks>::split_uri(
+                &uri,
+                PageSize::new(50).unwrap()
+            )
+            .is_err())
+        );
+    }
 }

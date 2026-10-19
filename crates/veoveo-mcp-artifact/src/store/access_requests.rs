@@ -1,16 +1,14 @@
 //! Access requests: a caller who reads an artifact asks its administrators for a higher
 //! level, withdraws the request, or has it approved, which writes the grant, or denied.
 use chrono::{DateTime, Utc};
-use veoveo_store::{
-    CursorScope, KeysetCursor, Page, PageSize, PrincipalId as StoredPrincipal,
-    TenantId as StoredTenant,
-};
-use veoveo_types::{AccessLevel, AccessSubject, PrincipalId};
+use veoveo_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
+use veoveo_types::{AccessLevel, AccessSubject, CursorToken, Page, PageSize, Pager, PrincipalId};
 
 use crate::contract::{
-    AccessRequestCancelled, AccessRequestDecided, AccessRequestDecision, AccessRequestId,
-    AccessRequestRecord, AccessRequestRole, AccessRequestState, AccessRequested, ArtifactGrant,
-    ArtifactId, GrantChanged, ListCursor, Note, RequestArtifactAccessRequest,
+    AccessRequestCancelled, AccessRequestDecided, AccessRequestDecision, AccessRequestFilters,
+    AccessRequestId, AccessRequestRecord, AccessRequestRole, AccessRequestState, AccessRequested,
+    AccessRequests, ArtifactGrant, ArtifactId, GrantChanged, Note, PrincipalKeyset,
+    RequestArtifactAccessRequest,
 };
 
 use super::{
@@ -19,13 +17,6 @@ use super::{
     caller::{level_from_text, level_text},
     grants::GrantRow,
 };
-
-/// The most access requests one page holds.
-pub const MAX_ACCESS_REQUESTS_PER_PAGE: u32 = 100;
-/// A page size of an access-request listing.
-pub type AccessRequestPageSize = PageSize<MAX_ACCESS_REQUESTS_PER_PAGE>;
-/// One page of access requests and the cursor of the next.
-pub type AccessRequestPage = Page<AccessRequestRecord, ListCursor>;
 
 /// A decided request and the grant an approval wrote or found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,25 +248,21 @@ impl ArtifactStore {
         caller: &Caller,
         role: Option<AccessRequestRole>,
         state: Option<AccessRequestState>,
-        cursor: Option<&ListCursor>,
-        size: AccessRequestPageSize,
+        cursor: Option<&CursorToken<AccessRequests>>,
+        size: PageSize<100>,
         now: DateTime<Utc>,
-    ) -> Result<AccessRequestPage, ArtifactStoreError> {
+    ) -> Result<Page<AccessRequests>, ArtifactStoreError> {
         let f = caller.facts();
-        let scope = CursorScope::new(
-            "artifact.access_requests",
+        let pager = Pager::<AccessRequests>::new(
             f.tenant,
-            &(
-                f.principal_key.as_str(),
-                role.map(|role| role.as_str()),
-                state.map(|state| state.as_str()),
-            ),
+            AccessRequestFilters { role, state },
+            size,
+            PrincipalKeyset::new(caller.principal_key().clone()),
+            cursor,
         )?;
-        let after: Option<KeysetCursor<AccessRequestId>> =
-            cursor.map(|wire| scope.parse(wire.as_str())).transpose()?;
-        let after = after.map(|cursor| *cursor.position());
+        let after = pager.after().copied();
         let state = state.map(|state| state.as_str());
-        let limit = size.fetch_limit();
+        let limit = pager.fetch_limit();
         let pool = self.pool();
         let rows = match (role, after) {
             (Some(AccessRequestRole::Requester), None) => {
@@ -382,20 +369,11 @@ impl ArtifactStore {
                 .await?
             }
         };
-        let page = size.page(rows, |last| last.access_request_id);
-        let items = page
-            .items
+        let items = rows
             .into_iter()
             .map(AccessRequestRow::record)
-            .collect::<Result<_, _>>()?;
-        let next = page
-            .next
-            .map(|position| scope.cursor(position))
-            .transpose()?
-            .map(|cursor| ListCursor::parse(cursor.as_str()))
-            .transpose()
-            .map_err(|_| ArtifactStoreError::Corrupt("issued cursor"))?;
-        Ok(Page { items, next })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(pager.finish(items)?)
     }
 
     async fn lock_request(
