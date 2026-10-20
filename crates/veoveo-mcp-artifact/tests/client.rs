@@ -34,8 +34,8 @@ use veoveo_hub_sdk_fixture::ledger::{self, LedgerDomain, LedgerTasks};
 use veoveo_mcp_artifact::{
     client::{ArtifactClient, ArtifactClientError, UploadBody},
     contract::{
-        ArtifactName, ArtifactPermission, ArtifactRecord, ArtifactState, MediaType, ObjectSize,
-        UploadCompleted, UploadCreated, UploadState, audit_registry,
+        ArtifactName, ArtifactPermission, ArtifactRecord, ArtifactState, IdempotencyKey, MediaType,
+        ObjectSize, UploadCompleted, UploadCreated, UploadState, audit_registry,
     },
     mcp::{
         AUTHORIZATION, ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs, identity,
@@ -470,6 +470,7 @@ async fn a_failed_upload_is_aborted_and_releases_its_bytes() {
         let short = artifacts
             .upload(name("short.bin"), octets(), streamed(20 * MIB + 1))
             .size(ObjectSize::new(40 * MIB).unwrap())
+            .idempotency_key(IdempotencyKey::parse("failed-upload-retry").unwrap())
             .await;
         assert!(
             matches!(
@@ -480,6 +481,17 @@ async fn a_failed_upload_is_aborted_and_releases_its_bytes() {
                 }) if declared == 40 * MIB && read == 20 * MIB + 1
             ),
             "{short:?}"
+        );
+        // The same durable attempt must not turn its aborted artifact into success.
+        let retry = artifacts
+            .upload(name("short.bin"), octets(), streamed(20 * MIB + 1))
+            .size(ObjectSize::new(40 * MIB).unwrap())
+            .idempotency_key(IdempotencyKey::parse("failed-upload-retry").unwrap())
+            .until_verified(Duration::from_secs(60))
+            .await;
+        assert!(
+            matches!(retry, Err(ArtifactClientError::VerificationFailed { .. })),
+            "an aborted idempotent upload must remain failed: {retry:?}"
         );
         // A body that fits one PUT but exceeds its declared size never reaches Artifact.
         let long = artifacts

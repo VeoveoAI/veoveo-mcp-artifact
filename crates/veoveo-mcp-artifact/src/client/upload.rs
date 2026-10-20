@@ -166,11 +166,17 @@ impl Upload {
         let verification = self.verification;
         let client = self.client.clone();
         let artifact = self.transfer().await?;
-        match verification {
-            Some(timeout) if artifact.state == ArtifactState::Verifying => {
-                verified(&client, artifact, timeout).await
+        match (artifact.state, verification) {
+            (ArtifactState::Verifying, Some(timeout)) => verified(&client, artifact, timeout).await,
+            (ArtifactState::Available | ArtifactState::Verifying, _) => Ok(artifact),
+            (ArtifactState::Failed | ArtifactState::Deleting, _) => {
+                Err(ArtifactClientError::VerificationFailed {
+                    artifact_id: artifact.artifact_id,
+                })
             }
-            _ => Ok(artifact),
+            (ArtifactState::Uploading, _) => Err(ArtifactClientError::Protocol(
+                "upload returned an unfinished artifact",
+            )),
         }
     }
 
