@@ -14,7 +14,6 @@ use futures::stream;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use support::service::{Harness, with_service};
-use tokio_util::sync::CancellationToken;
 use veoveo_audit::AuditStore;
 use veoveo_audit_contract::{
     AuditDetailType, AuditPartition, AuditQuery, AuditReadScope, AuditVia,
@@ -34,14 +33,13 @@ use veoveo_hub_sdk_fixture::ledger::{self, LedgerDomain, LedgerTasks};
 use veoveo_mcp_artifact::{
     client::{ArtifactClient, ArtifactClientError, UploadBody},
     contract::{
-        ArtifactName, ArtifactPermission, ArtifactRecord, ArtifactState, IdempotencyKey, MediaType,
-        ObjectSize, UploadCompleted, UploadCreated, UploadState, audit_registry,
+        ArtifactName, ArtifactPermission, ArtifactState, IdempotencyKey, MediaType, ObjectSize,
+        UploadCompleted, UploadCreated, UploadState, audit_registry,
     },
     mcp::{
         AUTHORIZATION, ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs, identity,
         watch_changes,
     },
-    service::run_verifications,
     store::Caller,
 };
 use veoveo_types::{InvocationMode, PermissionName, Sha256Digest, TaskId, TenantId};
@@ -237,26 +235,6 @@ fn user_caller() -> Caller {
     identity::caller(&forwarded(veoveo_mcp_artifact::server(), BTreeSet::new()).identity).unwrap()
 }
 
-/// The artifact once Artifact finished verifying it.
-async fn verified(harness: &Harness, artifact: &ArtifactRecord) -> ArtifactRecord {
-    let caller = user_caller();
-    tokio::time::timeout(Duration::from_secs(60), async {
-        loop {
-            let current = harness
-                .service
-                .artifact(&caller, artifact.artifact_id, Utc::now())
-                .await
-                .unwrap();
-            if current.state != ArtifactState::Verifying {
-                return current;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("the artifact verified within a minute")
-}
-
 fn name(name: &str) -> ArtifactName {
     ArtifactName::parse(name).unwrap()
 }
@@ -275,12 +253,10 @@ fn full_access() -> [ArtifactPermission; 2] {
 #[tokio::test]
 async fn a_request_binding_uploads_and_downloads_for_its_caller() {
     with_service(|harness| async move {
-        let stop = CancellationToken::new();
-        let worker = tokio::spawn(run_verifications(harness.service.clone(), stop.clone()));
         let mesh = Mesh::start(&harness, &full_access()).await;
         let artifacts = mesh.for_request();
 
-        // A small body of unknown size takes one PUT that declares its size and SHA-256.
+        // A small body of unknown size takes one PUT that declares its size.
         let small = generated(0..1000);
         let artifact = artifacts
             .upload(
@@ -292,7 +268,6 @@ async fn a_request_binding_uploads_and_downloads_for_its_caller() {
             .unwrap();
         assert_eq!(artifact.state, ArtifactState::Available);
         assert_eq!(artifact.size, Some(ObjectSize::new(1000).unwrap()));
-        assert_eq!(artifact.sha256, Some(sha256_of(1000)));
         assert_eq!(artifact.provenance.acting_server, Some(ledger_slug()));
         assert_eq!(artifact.provenance.task, None);
         assert_eq!(artifact.provenance.caller, testing::principal().id);
@@ -307,12 +282,22 @@ async fn a_request_binding_uploads_and_downloads_for_its_caller() {
             .max_size(ObjectSize::new(64 * MIB).unwrap())
             .await
             .unwrap();
-        // Without a wait, the upload resolves while Artifact still verifies the bytes.
-        assert_eq!(uploaded.state, ArtifactState::Verifying);
-        let large = verified(&harness, &uploaded).await;
+        // Completion settles directly; the caller computes any fingerprint it needs.
+        let large = uploaded;
         assert_eq!(large.state, ArtifactState::Available);
         assert_eq!(large.size, Some(ObjectSize::new(length).unwrap()));
-        assert_eq!(large.sha256, Some(sha256_of(length)));
+        let whole = artifacts
+            .download(large.artifact_id)
+            .await
+            .unwrap()
+            .body
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(
+            Sha256Digest::from_bytes(Sha256::digest(&whole).into()),
+            sha256_of(length)
+        );
         assert_eq!(large.provenance.acting_server, Some(ledger_slug()));
 
         // Ranges across a part boundary and to the end.
@@ -335,8 +320,6 @@ async fn a_request_binding_uploads_and_downloads_for_its_caller() {
             tail.body.collect().await.unwrap(),
             generated(length - 100..length)
         );
-        stop.cancel();
-        worker.await.unwrap().unwrap();
     })
     .await;
 }
@@ -344,25 +327,20 @@ async fn a_request_binding_uploads_and_downloads_for_its_caller() {
 #[tokio::test]
 async fn a_task_binding_uploads_after_its_request_returned() {
     with_service(|harness| async move {
-        let stop = CancellationToken::new();
-        let worker = tokio::spawn(run_verifications(harness.service.clone(), stop.clone()));
         let mesh = Mesh::start(&harness, &full_access()).await;
         let (artifacts, task) = mesh.for_task().await;
 
         // A known size beyond one PUT streams in parts, two at a time, each one signed
         // and sent again on its own.
-        // The upload waits for Artifact's verification Task through the artifact's
-        // resource updates, so it resolves available.
+        // Stored size validation makes completion immediately available.
         let length = 20 * MIB + 7;
         let artifact = artifacts
             .upload(name("render.bin"), octets(), streamed(length))
             .size(ObjectSize::new(length).unwrap())
             .parallelism(NonZeroUsize::new(2).unwrap())
-            .until_verified(Duration::from_secs(60))
             .await
             .unwrap();
         assert_eq!(artifact.state, ArtifactState::Available);
-        assert_eq!(artifact.sha256, Some(sha256_of(length)));
         assert_eq!(artifact.provenance.acting_server, Some(ledger_slug()));
         assert_eq!(artifact.provenance.task, Some(task));
         let head = artifacts
@@ -371,8 +349,6 @@ async fn a_task_binding_uploads_after_its_request_returned() {
             .await
             .unwrap();
         assert_eq!(head.body.collect().await.unwrap(), generated(0..100));
-        stop.cancel();
-        worker.await.unwrap().unwrap();
     })
     .await;
 }
@@ -491,10 +467,9 @@ async fn a_failed_upload_is_aborted_and_releases_its_bytes() {
             .upload(name("short.bin"), octets(), streamed(20 * MIB + 1))
             .size(ObjectSize::new(40 * MIB).unwrap())
             .idempotency_key(IdempotencyKey::parse("failed-upload-retry").unwrap())
-            .until_verified(Duration::from_secs(60))
             .await;
         assert!(
-            matches!(retry, Err(ArtifactClientError::VerificationFailed { .. })),
+            matches!(retry, Err(ArtifactClientError::UploadFailed { .. })),
             "an aborted idempotent upload must remain failed: {retry:?}"
         );
         // A body that fits one PUT but exceeds its declared size never reaches Artifact.

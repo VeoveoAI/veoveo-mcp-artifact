@@ -11,7 +11,7 @@ use aws_sdk_s3::{
 use super::{ABANDONED_UPLOAD_DAYS, ObjectStorage, StorageError};
 
 /// The headers a signed request binds, which a browser must be allowed to send.
-const SIGNED_HEADERS: &[&str] = &["content-type", "if-none-match", "x-amz-checksum-sha256"];
+const SIGNED_HEADERS: &[&str] = &["content-type", "if-none-match"];
 
 impl ObjectStorage {
     /// Create the bucket when it does not exist and set its CORS and lifecycle rules.

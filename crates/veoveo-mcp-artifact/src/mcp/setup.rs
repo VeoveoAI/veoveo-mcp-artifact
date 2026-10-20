@@ -49,7 +49,7 @@ fn server_config() -> ServerConfig {
     info.server_info = rmcp::model::Implementation::new("artifact", env!("CARGO_PKG_VERSION"));
     info.instructions = Some(
         "Files for your tenant. To store a file, call `create_upload` with its name and media \
-         type (and its size and SHA-256 when you know them), send the bytes to the signed URLs \
+         type (and its size when you know it), send the bytes to the signed URLs \
          it returns, then call `complete_upload`. To read a file, call `create_download` and \
          fetch the signed URL. Bytes never travel through MCP. To share a file with someone \
          without an account, release it with `set_release_state` and call \

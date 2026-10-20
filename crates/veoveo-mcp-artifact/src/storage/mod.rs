@@ -1,6 +1,6 @@
 //! Object storage: the server's one bucket on an S3-compatible store. The server signs
 //! the requests that move bytes and makes its own calls for multipart control, object
-//! metadata, deletion and checksum verification. Its credential never leaves it.
+//! metadata and deletion. Its credential never leaves it.
 //!
 //! SigV4 binds the Host header, so the server keeps two clients built from one
 //! configuration: one signs with the address clients use, and one calls the store on the
@@ -14,10 +14,8 @@ use std::{fmt, time::Duration};
 use aws_sdk_s3::config::{
     BehaviorVersion, Credentials, Region, RequestChecksumCalculation, ResponseChecksumValidation,
 };
-use base64::Engine as _;
 use url::Url;
 use veoveo_store::TenantId as StoredTenant;
-use veoveo_types::Sha256Digest;
 
 use crate::contract::ArtifactId;
 
@@ -187,40 +185,9 @@ impl ObjectStorage {
     }
 }
 
-/// The base64 of a digest's 32 bytes, as `x-amz-checksum-sha256` carries it.
-pub(crate) fn checksum_header(digest: &Sha256Digest) -> String {
-    let hex = digest
-        .as_str()
-        .strip_prefix("sha256:")
-        .expect("an admitted digest carries its algorithm");
-    let bytes = hex::decode(hex).expect("an admitted digest is hexadecimal");
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-/// The digest an `x-amz-checksum-sha256` value names, when it is one.
-pub(crate) fn digest_from_checksum(header: &str) -> Option<Sha256Digest> {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(header)
-        .ok()
-        .filter(|bytes| bytes.len() == 32)?;
-    Sha256Digest::parse(format!("sha256:{}", hex::encode(bytes))).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn checksum_headers_round_trip_digests() {
-        let digest = Sha256Digest::parse(
-            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        )
-        .unwrap();
-        let header = checksum_header(&digest);
-        assert_eq!(header, "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=");
-        assert_eq!(digest_from_checksum(&header), Some(digest));
-        assert_eq!(digest_from_checksum("not base64"), None);
-    }
 
     #[test]
     fn keys_name_the_tenant_and_artifact() {

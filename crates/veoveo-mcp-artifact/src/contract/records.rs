@@ -6,9 +6,7 @@ use chrono::{DateTime, Utc};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use veoveo_hub_sdk::OpaqueTaskId;
-use veoveo_types::{
-    AccessLevel, AccessSubject, PrincipalId, ServerSlug, Sha256Digest, WorkContextId,
-};
+use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, ServerSlug, WorkContextId};
 
 use super::{
     AccessRequestId, AccessRequestState, ArtifactId, ArtifactLabels, ArtifactMetadataMap,
@@ -83,9 +81,6 @@ pub struct ArtifactRecord {
     /// Known once the bytes arrived.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<ObjectSize>,
-    /// Known once the artifact is available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sha256: Option<Sha256Digest>,
     pub owner: PrincipalId,
     pub work_context: WorkContextId,
     pub labels: ArtifactLabels,
@@ -165,8 +160,6 @@ pub struct UploadRecord {
     pub state: UploadState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_size: Option<ObjectSize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub declared_sha256: Option<Sha256Digest>,
     /// The bytes the upload holds against the tenant's quota while it is open.
     pub reserved: ObjectSize,
     #[serde(default, skip_serializing_if = "Option::is_none")]

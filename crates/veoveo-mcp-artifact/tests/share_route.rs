@@ -14,7 +14,7 @@ use chrono::{TimeDelta, Utc};
 use support::{
     Who,
     seaweedfs::send,
-    service::{Harness, owner, sha256, with_service},
+    service::{Harness, with_service},
     upload_request,
 };
 use tower::ServiceExt as _;
@@ -68,7 +68,7 @@ async fn uploaded(harness: &Harness, name: &str, body: &[u8]) -> ArtifactId {
     let caller = ada.caller();
     let mut request = upload_request(name, None);
     request.size = Some(ObjectSize::new(body.len() as u64).unwrap());
-    request.sha256 = Some(sha256(body));
+
     let created = harness
         .service
         .create_upload(&caller, &Checked::new(request).unwrap(), Utc::now())
@@ -80,7 +80,7 @@ async fn uploaded(harness: &Harness, name: &str, body: &[u8]) -> ArtifactId {
     assert!(send(put, body.to_vec(), &[]).await.status().is_success());
     harness
         .service
-        .complete_upload(&caller, &owner(&ada), created.upload.upload_id, Utc::now())
+        .complete_upload(&caller, created.upload.upload_id, Utc::now())
         .await
         .unwrap()
         .artifact_id

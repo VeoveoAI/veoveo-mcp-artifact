@@ -106,11 +106,10 @@ impl ArtifactMcp {
     ) -> Result<Product<CompleteUploadResult>, McpError> {
         let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
-        let owner = identity::task_owner(&identity)?;
         let artifact = self
             .app
             .service
-            .complete_upload(&caller, &owner, request.upload_id, Utc::now())
+            .complete_upload(&caller, request.upload_id, Utc::now())
             .await
             .map_err(tool_error)?;
         Product::new(
@@ -345,8 +344,8 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
         );
         let routes = routes.tool::<Checked<CreateUploadRequest>, _, _>(
             "Reserve an artifact in your selected Work Context and receive where to send its \
-             bytes: one signed PUT, or a part size and signed part URLs. Give the size and \
-             SHA-256 when you know them; object storage then refuses different bytes. Send \
+             bytes: one signed PUT, or a part size and signed part URLs. Give the size when \
+             you know it. Send \
              each signed request with exactly its method, URL and headers, then call \
              `complete_upload`. A repeated `idempotencyKey` returns the same upload.",
             RoutePolicy::permission(ArtifactsWrite).expect("Artifact permission"),
@@ -359,7 +358,7 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
         );
         let routes = routes.tool::<Checked<SignUploadPartsRequest>, _, _>(
             "Sign 1 to 100 parts of your open multipart upload, or sign expired parts again. \
-             Give each part's size and SHA-256 when you know them.",
+             Give each part's size when you know it.",
             RoutePolicy::permission(ArtifactsWrite).expect("Artifact permission"),
             |domain, request, context| async move {
                 domain
@@ -369,9 +368,8 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
             },
         );
         let routes = routes.tool::<CompleteUploadRequest, _, _>(
-            "Complete your upload after its bytes arrived. The artifact becomes available, or \
-             reads `verifying` while the server computes the SHA-256 of a large object. \
-             Completing it again returns the artifact.",
+            "Complete your upload after its bytes arrived. Stored bytes that pass size validation \
+             become available. Completing it again returns the artifact.",
             RoutePolicy::permission(ArtifactsWrite).expect("Artifact permission"),
             |domain, request, context| async move {
                 domain

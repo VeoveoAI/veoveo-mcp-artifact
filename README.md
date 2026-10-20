@@ -12,7 +12,7 @@ design and operational contract.
 
 | Path | Purpose |
 |---|---|
-| `crates/veoveo-mcp-artifact` | The library and binary. The `contract` feature holds Artifact's public types and typed calls, the `client` feature adds `ArtifactClient` for consumers' uploads and downloads, and the default `server` feature adds the MCP server, persistence, object storage, the verification worker and the sweep |
+| `crates/veoveo-mcp-artifact` | The library and binary. The `contract` feature holds Artifact's public types and typed calls, the `client` feature adds `ArtifactClient` for consumers' uploads and downloads, and the default `server` feature adds the MCP server, persistence, object storage and the sweep |
 | `crates/veoveo-mcp-artifact/migrations/` | The `artifact` schema, applied in the server's own PostgreSQL schema at startup |
 | `.sqlx/` | sqlx's checked metadata for every query the workspace compiles |
 | `Dockerfile` | The `dev` environment, the `check` gate, the release `build` and the `runtime` image |
@@ -61,7 +61,6 @@ let artifact = artifacts
     .upload(name, media_type, UploadBody::stream(output.bytes_stream().map_err(std::io::Error::other)))
     .max_size(ObjectSize::new(512 * 1024 * 1024)?)
     .idempotency_key(key)
-    .until_verified(Duration::from_secs(300))
     .await?;
 let first_kib = artifacts
     .download(artifact.artifact_id)
@@ -72,13 +71,13 @@ let first_kib = artifacts
     .await?;
 ```
 
-A body of at most 16 MiB goes in one PUT with its size and SHA-256 declared. A larger
-one streams in parts, at most four 16 MiB parts in memory by default. Give a maximum
-size for a body of unknown size, because Artifact otherwise reserves the tenant's
-largest object and sizes parts to fit it. A large object resolves `verifying` while
-Artifact computes its SHA-256; `until_verified` waits for it through the artifact's
-resource updates and resolves available. Artifact records the calling server, and the
-Task when the call came from one, in the artifact's provenance and as the `via` of its
+A body of at most 16 MiB goes in one create-only PUT with its size declared. A
+larger one streams in parts, at most four 16 MiB parts in memory by default. Give a
+maximum size for a body of unknown size, because Artifact otherwise reserves the
+tenant's largest object and sizes parts to fit it. Completion validates the stored
+size and returns an available artifact. ArtifactID and create-only storage identify
+the object; consumers that need a content digest compute and store it themselves.
+Artifact records the calling server, and the Task when the call came from one, in the artifact's provenance and as the `via` of its
 audit records.
 The consumer reaches the Hub's `/oauth/token` and `/mcp/{profile}`, and object
 storage, on the installation's network.
@@ -89,6 +88,12 @@ The server owns the PostgreSQL schema `artifact`. Every statement is a `.sql` fi
 sqlx checks at compile time against the migrated schema, and the statements and tables
 follow the server schema rules of veoveo-core's
 [database design](https://github.com/VeoveoAI/veoveo-core/blob/9a6b3ff95469ff19f9ccb513421a57ba6751aa9e/docs/DATABASE.md).
+This development hard cut removes content-digest columns and the `verifying` state
+from the baseline migration. It requires fresh disposable Artifact application state
+and its migration ledger, coherent consumer contracts and newly admitted registration
+metadata. Obsolete content-verification Tasks are not resumed. Do not apply the edited
+baseline to an existing migration history or add a compatibility path.
+
 Tests need the PostgreSQL 18 server programs on `PATH`; each test clones its own
 database from a migrated template.
 
@@ -167,8 +172,8 @@ inputs select the installation's distinct member and admin credentials (locally
 Work Context inputs must match the reviewed installation, rather than values
 inferred from returned metadata. A declared upload also
 checks the exact admin principal retained as owner/provenance. The six private live
-cases cover role/tool refusals, SHA-256 upload and range download, a multipart
-upload over a gibibyte verified by Artifact's Task and released by the sweep,
+cases cover role/tool refusals, declared-size upload and range download, a multipart
+upload over a gibibyte checked byte-for-byte by the consumer and released by the sweep,
 grant listing/revocation, quota enforcement, and access-request approval. They share
 one tenant's usage and limits, so run serially. Both callers belong to the same
 Work Context: object-level isolation and cross-tenant refusal remain component-test
@@ -230,12 +235,11 @@ printed domain inputs in a fresh runner invocation, then run:
 ```
 
 Verification opens a fresh resource subscription, requires its opening update,
-checks the same available timestamp, size, digest, name, owner, provenance, Work
+checks the same available timestamp, size, name, owner, provenance, Work
 Context and access, downloads the exact retained bytes, then deletes the test
 artifact. Independently compare the public signing-key thumbprint before/after.
 These phases carry no management authority and never restart a workload. They
-qualify retained object/metadata state; in-flight verification-Task recovery is not
-claimed by this probe.
+qualify retained object/metadata state; completion creates no verification Task.
 
 ## License
 

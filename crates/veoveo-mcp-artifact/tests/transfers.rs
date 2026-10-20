@@ -1,26 +1,21 @@
 //! Uploads and downloads end to end: the service signs, a client sends the bytes to a
-//! private SeaweedFS, and the service completes, verifies, serves and sweeps them.
+//! private SeaweedFS, and the service completes, serves and sweeps them.
 mod support;
-
-use std::time::Duration;
 
 use chrono::Utc;
 use support::{
     Who,
     seaweedfs::send,
-    service::{owner, sha256, with_service},
+    service::{owner, with_service},
     upload_request, with_key,
 };
-use tokio_util::sync::CancellationToken;
 use veoveo_mcp_artifact::{
     contract::{ArtifactState, MediaType, ObjectSize, UploadTransfer},
-    server,
-    service::{ArtifactError, run_verifications},
+    service::ArtifactError,
     storage::{ObjectKey, StorageError},
     store::ArtifactStoreError,
     sweep::sweep,
 };
-use veoveo_store::PlatformStore;
 use veoveo_types::Checked;
 
 fn checked(
@@ -34,7 +29,7 @@ fn declared(
     bytes: &[u8],
 ) -> veoveo_mcp_artifact::contract::CreateUploadRequest {
     request.size = Some(ObjectSize::new(bytes.len() as u64).unwrap());
-    request.sha256 = Some(sha256(bytes));
+
     request
 }
 
@@ -66,11 +61,10 @@ async fn a_declared_single_upload_is_available_and_downloads() {
         assert!(send(put, body.clone(), &[]).await.status().is_success());
         let artifact = harness
             .service
-            .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
+            .complete_upload(&caller, created.upload.upload_id, Utc::now())
             .await
             .unwrap();
         assert_eq!(artifact.state, ArtifactState::Available);
-        assert_eq!(artifact.sha256, Some(sha256(&body)));
 
         let download = harness
             .service
@@ -92,16 +86,16 @@ async fn a_declared_single_upload_is_available_and_downloads() {
         // Completing again returns the artifact.
         let again = harness
             .service
-            .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
+            .complete_upload(&caller, created.upload.upload_id, Utc::now())
             .await
             .unwrap();
-        assert_eq!(again.state, ArtifactState::Available);
+        assert_eq!(again, artifact);
     })
     .await;
 }
 
 #[tokio::test]
-async fn an_undeclared_small_object_is_hashed_when_it_completes() {
+async fn a_small_object_is_available_when_it_completes() {
     with_service(|harness| async move {
         let who = Who::new("ada");
         let caller = who.caller();
@@ -120,11 +114,10 @@ async fn an_undeclared_small_object_is_hashed_when_it_completes() {
         assert!(send(put, body.clone(), &[]).await.status().is_success());
         let artifact = harness
             .service
-            .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
+            .complete_upload(&caller, created.upload.upload_id, Utc::now())
             .await
             .unwrap();
         assert_eq!(artifact.state, ArtifactState::Available);
-        assert_eq!(artifact.sha256, Some(sha256(&body)));
     })
     .await;
 }
@@ -147,12 +140,12 @@ async fn a_completion_without_bytes_is_refused_and_an_abort_releases_the_reserva
         let Some(UploadTransfer::Single { put }) = &created.transfer else {
             panic!("one PUT");
         };
-        let refused = send(put, b"tampered".to_vec(), &[]).await;
+        let refused = send(put, b"short".to_vec(), &[]).await;
         assert!(refused.status().is_client_error());
         assert!(matches!(
             harness
                 .service
-                .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
+                .complete_upload(&caller, created.upload.upload_id, Utc::now())
                 .await,
             Err(ArtifactError::NoBytes)
         ));
@@ -186,6 +179,65 @@ async fn a_completion_without_bytes_is_refused_and_an_abort_releases_the_reserva
 }
 
 #[tokio::test]
+async fn a_completed_object_above_its_reservation_fails_and_removes_its_bytes() {
+    with_service(|harness| async move {
+        let who = Who::new("ada");
+        let caller = who.caller();
+        let mut request = octets(upload_request("too-big.bin", None));
+        request.max_size = Some(ObjectSize::new(5).unwrap());
+        let request = checked(with_key(request, "too-big"));
+        let created = harness
+            .service
+            .create_upload(&caller, &request, Utc::now())
+            .await
+            .unwrap();
+        let Some(UploadTransfer::Multipart { parts, .. }) = &created.transfer else {
+            panic!("an unknown size takes multipart storage");
+        };
+        assert!(
+            send(&parts[0].transfer, vec![7; 6], &[])
+                .await
+                .status()
+                .is_success()
+        );
+        let result = harness
+            .service
+            .complete_upload(&caller, created.upload.upload_id, Utc::now())
+            .await;
+        assert!(matches!(
+            result,
+            Err(ArtifactError::Store(ArtifactStoreError::SizeMismatch {
+                received: 6
+            }))
+        ));
+        let key = ObjectKey::for_artifact(caller.tenant(), created.artifact.artifact_id);
+        assert!(harness.storage.head(&key).await.unwrap().is_none());
+        let usage = harness
+            .service
+            .store()
+            .storage_usage(&caller)
+            .await
+            .unwrap();
+        assert_eq!((usage.stored_bytes, usage.reserved_bytes), (0, 0));
+        let retained = harness
+            .service
+            .create_upload(&caller, &request, Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(retained.artifact.state, ArtifactState::Failed);
+        assert_eq!(
+            retained.upload.state,
+            veoveo_mcp_artifact::contract::UploadState::Completed
+        );
+        assert!(
+            retained.transfer.is_none(),
+            "an idempotent retry cannot reopen failed bytes"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn a_part_shorter_than_its_bound_length_is_refused() {
     with_service(|harness| async move {
         let who = Who::new("ada");
@@ -207,7 +259,7 @@ async fn a_part_shorter_than_its_bound_length_is_refused() {
         assert!(short.status().is_client_error(), "{}", short.status());
         let refused = harness
             .service
-            .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
+            .complete_upload(&caller, created.upload.upload_id, Utc::now())
             .await;
         assert!(
             matches!(refused, Err(ArtifactError::Storage(StorageError::NoParts))),
@@ -218,12 +270,10 @@ async fn a_part_shorter_than_its_bound_length_is_refused() {
 }
 
 #[tokio::test]
-async fn a_large_object_of_unknown_size_verifies_in_a_task() {
+async fn a_large_unknown_size_object_is_available_without_a_task() {
     with_service(|harness| async move {
         let who = Who::new("ada");
         let caller = who.caller();
-        let stop = CancellationToken::new();
-        let worker = tokio::spawn(run_verifications(harness.service.clone(), stop.clone()));
         let created = harness
             .service
             .create_upload(
@@ -252,177 +302,37 @@ async fn a_large_object_of_unknown_size_verifies_in_a_task() {
         );
         let artifact = harness
             .service
-            .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
+            .complete_upload(&caller, created.upload.upload_id, Utc::now())
             .await
             .unwrap();
-        assert_eq!(artifact.state, ArtifactState::Verifying);
-        let mut whole = first;
-        whole.extend_from_slice(&last);
-        let verified = loop {
-            let current = harness
-                .service
-                .artifact(&caller, artifact.artifact_id, Utc::now())
-                .await
-                .unwrap();
-            if current.state != ArtifactState::Verifying {
-                break current;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        };
-        assert_eq!(verified.state, ArtifactState::Available);
-        assert_eq!(verified.sha256, Some(sha256(&whole)));
+        assert_eq!(artifact.state, ArtifactState::Available);
         assert_eq!(
-            verified.size,
-            Some(ObjectSize::new(whole.len() as u64).unwrap())
+            artifact.size,
+            Some(ObjectSize::new((first.len() + last.len()) as u64).unwrap())
         );
-        stop.cancel();
-        worker.await.unwrap().unwrap();
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn a_verification_a_lost_connection_interrupts_runs_again_from_its_recovery() {
-    with_service(|harness| async move {
-        let who = Who::new("ada");
-        let caller = who.caller();
-        let created = harness
-            .service
-            .create_upload(
-                &caller,
-                &checked(octets(upload_request("video.bin", None))),
-                Utc::now(),
-            )
+        let tasks = harness
+            .tasks
+            .for_owner(&owner(&who))
+            .page(veoveo_task::TaskPageOrder::OldestFirst, None, 10)
             .await
             .unwrap();
-        let Some(UploadTransfer::Multipart { parts, .. }) = &created.transfer else {
-            panic!("an unknown size takes parts");
-        };
-        let first = vec![3_u8; 5 * 1024 * 1024];
-        let last = vec![4_u8; 4 * 1024 * 1024];
-        for (part, bytes) in [(&parts[0], &first), (&parts[1], &last)] {
-            assert!(
-                send(&part.transfer, bytes.clone(), &[])
-                    .await
-                    .status()
-                    .is_success()
-            );
-        }
-        let artifact = harness
-            .service
-            .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
-            .await
-            .unwrap();
-        assert_eq!(artifact.state, ArtifactState::Verifying);
-
-        // Another login of Artifact's group holds the artifact's row, so the verification
-        // waits on its digest write with the statement in flight.
-        let locker = harness.db.server_store(&server()).await;
-        let mut lock = locker.pool().begin().await.unwrap();
-        sqlx::query_file_scalar!(
-            "tests/transfers/lock_artifact.sql",
-            artifact.artifact_id.as_uuid()
-        )
-        .fetch_one(&mut *lock)
-        .await
-        .unwrap();
-        let stop = CancellationToken::new();
-        let worker = tokio::spawn(run_verifications(harness.service.clone(), stop.clone()));
-        let interrupted = lock_waiter(&locker, None).await;
-
-        // Every session of Artifact's login ends, the waiting one with them. The worker
-        // gives the verification to its recovery, which queues it again, and the worker
-        // claims it once more on a new connection.
-        assert!(harness.db.end_sessions(&harness.platform).await > 0);
-        lock_waiter(&locker, Some(interrupted)).await;
-        lock.rollback().await.unwrap();
-        let verified = tokio::time::timeout(Duration::from_secs(60), async {
-            loop {
-                let current = harness
-                    .service
-                    .artifact(&caller, artifact.artifact_id, Utc::now())
-                    .await
-                    .unwrap();
-                if current.state != ArtifactState::Verifying {
-                    break current;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .expect("the verification ran again within a minute");
-        let mut whole = first;
-        whole.extend_from_slice(&last);
-        assert_eq!(verified.state, ArtifactState::Available);
-        assert_eq!(verified.sha256, Some(sha256(&whole)));
-        assert!(!worker.is_finished(), "the worker kept running");
-        stop.cancel();
-        worker.await.unwrap().unwrap();
-        locker.close().await;
-    })
-    .await;
-}
-
-/// The process ID of a session waiting on a lock, other than `other_than`.
-async fn lock_waiter(store: &PlatformStore, other_than: Option<i32>) -> i32 {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let waiting = sqlx::query_file_scalar!("tests/transfers/lock_waiters.sql")
-            .fetch_all(store.pool())
-            .await
-            .unwrap();
-        if let Some(pid) = waiting.into_iter().find(|pid| Some(*pid) != other_than) {
-            return pid;
-        }
         assert!(
-            tokio::time::Instant::now() < deadline,
-            "no verification waited on the artifact's row within a minute"
+            tasks.items.is_empty(),
+            "completing bytes starts no background Task"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-#[tokio::test]
-async fn a_multipart_object_that_misses_its_declared_digest_fails_and_is_removed() {
-    with_service(|harness| async move {
-        let who = Who::new("ada");
-        let caller = who.caller();
-        let mut request = octets(upload_request("small.bin", None));
-        request.sha256 = Some(sha256(b"other bytes"));
-        request.max_size = Some(ObjectSize::new(6 * 1024 * 1024).unwrap());
-        let created = harness
+        let download = harness
             .service
-            .create_upload(&caller, &checked(request), Utc::now())
+            .create_download(&caller, artifact.artifact_id, Utc::now())
             .await
             .unwrap();
-        let Some(UploadTransfer::Multipart { parts, .. }) = &created.transfer else {
-            panic!("an unknown size takes parts");
-        };
-        assert!(
-            send(&parts[0].transfer, vec![5_u8; 1000], &[])
-                .await
-                .status()
-                .is_success()
-        );
-        assert!(matches!(
-            harness
-                .service
-                .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
-                .await,
-            Err(ArtifactError::DigestMismatch)
-        ));
-        let key = ObjectKey::for_artifact(caller.tenant(), created.artifact.artifact_id);
-        assert!(harness.storage.head(&key).await.unwrap().is_none());
-        assert_eq!(
-            harness
-                .service
-                .store()
-                .storage_usage(&caller)
-                .await
-                .unwrap()
-                .stored_bytes,
-            0
-        );
+        let fetched = send(&download.get, Vec::new(), &[])
+            .await
+            .bytes()
+            .await
+            .unwrap();
+        let mut expected = first;
+        expected.extend_from_slice(&last);
+        assert_eq!(fetched.as_ref(), expected.as_slice());
     })
     .await;
 }
@@ -448,7 +358,7 @@ async fn a_repeated_key_returns_an_ended_upload_without_a_transfer() {
         assert!(send(put, body, &[]).await.status().is_success());
         harness
             .service
-            .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
+            .complete_upload(&caller, created.upload.upload_id, Utc::now())
             .await
             .unwrap();
         let repeated = harness
@@ -535,7 +445,7 @@ async fn the_sweep_removes_objects_of_expired_deleted_and_stale_artifacts() {
         };
         assert!(send(put, kept, &[]).await.status().is_success());
         service
-            .complete_upload(&caller, &owner(&who), deleted.upload.upload_id, Utc::now())
+            .complete_upload(&caller, deleted.upload.upload_id, Utc::now())
             .await
             .unwrap();
         service
@@ -543,7 +453,7 @@ async fn the_sweep_removes_objects_of_expired_deleted_and_stale_artifacts() {
             .await
             .unwrap();
 
-        // A large object that verifies with no worker running: its Task stays queued.
+        // A large completed object with no background worker.
         let stale = service
             .create_upload(
                 &caller,
@@ -561,11 +471,11 @@ async fn the_sweep_removes_objects_of_expired_deleted_and_stale_artifacts() {
                 .status()
                 .is_success()
         );
-        let verifying = service
-            .complete_upload(&caller, &owner(&who), stale.upload.upload_id, Utc::now())
+        let completed = service
+            .complete_upload(&caller, stale.upload.upload_id, Utc::now())
             .await
             .unwrap();
-        assert_eq!(verifying.state, ArtifactState::Verifying);
+        assert_eq!(completed.state, ArtifactState::Available);
 
         let key = |artifact| ObjectKey::for_artifact(caller.tenant(), artifact);
         sweep(service, Utc::now() + chrono::Duration::hours(25))
@@ -587,7 +497,7 @@ async fn the_sweep_removes_objects_of_expired_deleted_and_stale_artifacts() {
                 .unwrap()
                 .is_none()
         );
-        // Its Task is queued, so the verification stands.
+        // Successful completed bytes remain available until explicitly deleted.
         assert!(
             harness
                 .storage
@@ -600,7 +510,7 @@ async fn the_sweep_removes_objects_of_expired_deleted_and_stale_artifacts() {
             .artifact(&caller, stale.artifact.artifact_id, Utc::now())
             .await
             .unwrap();
-        assert_eq!(current.state, ArtifactState::Verifying);
+        assert_eq!(current.state, ArtifactState::Available);
         assert_eq!(
             service
                 .store()
@@ -623,91 +533,4 @@ async fn the_sweep_removes_objects_of_expired_deleted_and_stale_artifacts() {
         ));
     })
     .await;
-}
-
-#[tokio::test]
-async fn the_sweep_fails_a_verification_whose_task_never_started() {
-    with_service(|harness| async move {
-        let who = Who::new("ada");
-        let caller = who.caller();
-        let service = &harness.service;
-        let created = service
-            .create_upload(
-                &caller,
-                &checked(octets(upload_request("orphan.bin", None))),
-                Utc::now(),
-            )
-            .await
-            .unwrap();
-        let Some(UploadTransfer::Multipart { parts, .. }) = &created.transfer else {
-            panic!("parts");
-        };
-        let bytes = vec![4_u8; 9 * 1024 * 1024];
-        assert!(
-            send(&parts[0].transfer, bytes.clone(), &[])
-                .await
-                .status()
-                .is_success()
-        );
-        let key = ObjectKey::for_artifact(caller.tenant(), created.artifact.artifact_id);
-        let object = object_upload(&harness, &caller, created.upload.upload_id).await;
-        harness
-            .storage
-            .complete_multipart(&key, &object)
-            .await
-            .unwrap();
-        // The process stops after the store records the bytes and before it queues the
-        // verification.
-        let completed = service
-            .store()
-            .complete_upload(
-                &caller,
-                created.upload.upload_id,
-                &veoveo_mcp_artifact::store::CompletedObject {
-                    size: ObjectSize::new(bytes.len() as u64).unwrap(),
-                    checked_sha256: None,
-                },
-                Utc::now(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(completed.state, ArtifactState::Verifying);
-
-        sweep(service, Utc::now() + chrono::Duration::minutes(5))
-            .await
-            .unwrap();
-        assert!(
-            harness.storage.head(&key).await.unwrap().is_some(),
-            "inside the deadline"
-        );
-        sweep(service, Utc::now() + chrono::Duration::minutes(20))
-            .await
-            .unwrap();
-        assert!(harness.storage.head(&key).await.unwrap().is_none());
-        assert_eq!(
-            service
-                .store()
-                .storage_usage(&caller)
-                .await
-                .unwrap()
-                .stored_bytes,
-            0
-        );
-    })
-    .await;
-}
-
-/// The object store's identifier of a multipart upload the service started.
-async fn object_upload(
-    harness: &support::service::Harness,
-    caller: &veoveo_mcp_artifact::store::Caller,
-    upload_id: veoveo_mcp_artifact::contract::UploadId,
-) -> String {
-    let (_, object) = harness
-        .service
-        .store()
-        .upload(caller, upload_id)
-        .await
-        .unwrap();
-    object.expect("a multipart upload records its object upload")
 }

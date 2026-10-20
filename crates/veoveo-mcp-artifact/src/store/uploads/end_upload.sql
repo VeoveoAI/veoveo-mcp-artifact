@@ -11,7 +11,6 @@ RETURNING
     form AS "form: UploadForm",
     state AS "state: UploadState",
     declared_size,
-    declared_sha256,
     max_size,
     reserved_bytes,
     object_upload,

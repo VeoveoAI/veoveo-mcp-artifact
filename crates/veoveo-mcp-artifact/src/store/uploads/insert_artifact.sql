@@ -11,7 +11,6 @@ RETURNING
     a.name,
     a.media_type,
     a.size_bytes,
-    a.sha256,
     a.labels,
     a.release_state AS "release_state: ReleaseState",
     a.state AS "state: ArtifactState",

@@ -73,7 +73,6 @@ mod tests {
             name: ArtifactName::parse("a.bin").unwrap(),
             media_type: MediaType::parse("application/octet-stream").unwrap(),
             size: size.map(|bytes| ObjectSize::new(bytes).unwrap()),
-            sha256: None,
             max_size: max_size.map(|bytes| ObjectSize::new(bytes).unwrap()),
             labels: Default::default(),
             retention_days: None,

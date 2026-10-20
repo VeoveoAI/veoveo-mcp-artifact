@@ -121,8 +121,7 @@ impl ToolCall for SetUploadLimitsRequest {
 }
 
 /// A read of one artifact as the caller sees it, `artifact://artifacts/{artifact_id}`:
-/// its record and the caller's level on it. A wait on its updates sees the artifact
-/// leave `verifying`.
+/// its record and the caller's level on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadArtifact {
     pub artifact: ArtifactId,

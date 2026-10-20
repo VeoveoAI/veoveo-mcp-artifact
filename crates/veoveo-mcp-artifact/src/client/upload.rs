@@ -1,20 +1,17 @@
 //! Uploads from a byte stream of known or unknown size. A body of at most one part is
-//! read into memory first, so its size and SHA-256 travel with `create_upload` and
-//! object storage checks them during one PUT. A larger body streams in parts of the
-//! upload's part size; memory holds at most `parallelism` parts at once.
-use std::{future::IntoFuture, io, num::NonZeroUsize, pin::Pin, sync::Arc, time::Duration};
+//! read into memory first, so its size travels with `create_upload`. A larger body
+//! streams in parts of the upload's part size; memory holds at most `parallelism`
+//! parts at once.
+use std::{future::IntoFuture, io, num::NonZeroUsize, pin::Pin, sync::Arc};
 
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, future::BoxFuture};
-use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt};
-use veoveo_types::Sha256Digest;
 
 use crate::contract::{
     AbortUploadRequest, ArtifactLabels, ArtifactMetadataMap, ArtifactName, ArtifactRecord,
     ArtifactState, CompleteUploadRequest, CreateUploadRequest, DerivedFrom, IdempotencyKey,
-    MediaType, ObjectSize, PartNumber, PartSize, ReadArtifact, RetentionDays, UploadId,
-    UploadTransfer,
+    MediaType, ObjectSize, PartNumber, PartSize, RetentionDays, UploadId, UploadTransfer,
 };
 
 use super::{
@@ -23,7 +20,7 @@ use super::{
 };
 
 /// The largest body sent in one PUT, which the client holds in memory to declare its
-/// size and SHA-256: one default part, 16 MiB.
+/// size: one default part, 16 MiB.
 pub const SINGLE_PUT_BYTES: u64 = PartSize::DEFAULT;
 /// The part bytes a multipart upload holds in memory unless its parallelism is set:
 /// four default parts, or one part when a part is larger.
@@ -59,10 +56,8 @@ impl std::fmt::Debug for UploadBody {
     }
 }
 
-/// An upload that runs when it is awaited and resolves with the artifact: available,
-/// or verifying while Artifact computes the SHA-256 of a large object, unless the upload
-/// waits for the verification with [`Upload::until_verified`]. A failure after the upload
-/// was created aborts it, which releases its reserved bytes.
+/// An upload that resolves with an available artifact after storage completion and size
+/// validation. A failure after creation aborts it, releasing its reserved bytes.
 #[must_use = "an upload runs when it is awaited"]
 #[derive(Debug)]
 pub struct Upload {
@@ -70,7 +65,6 @@ pub struct Upload {
     request: CreateUploadRequest,
     body: UploadBody,
     parallelism: Option<NonZeroUsize>,
-    verification: Option<Duration>,
 }
 
 impl Upload {
@@ -86,7 +80,6 @@ impl Upload {
                 name,
                 media_type,
                 size: None,
-                sha256: None,
                 max_size: None,
                 labels: ArtifactLabels::default(),
                 retention_days: None,
@@ -96,7 +89,6 @@ impl Upload {
             },
             body,
             parallelism: None,
-            verification: None,
         }
     }
 
@@ -111,12 +103,6 @@ impl Upload {
     /// reserves this bound; without it, the tenant's largest object is reserved.
     pub fn max_size(mut self, max_size: ObjectSize) -> Self {
         self.request.max_size = Some(max_size);
-        self
-    }
-
-    /// The body's SHA-256, when the caller knows it. Artifact computes it otherwise.
-    pub fn sha256(mut self, sha256: Sha256Digest) -> Self {
-        self.request.sha256 = Some(sha256);
         self
     }
 
@@ -152,29 +138,16 @@ impl Upload {
         self
     }
 
-    /// Waits up to `timeout` for Artifact to verify a large object, so the upload
-    /// resolves with an available artifact or [`ArtifactClientError::VerificationFailed`]
-    /// instead of a verifying one. The wait follows the artifact's resource updates
-    /// rather than polling, which needs the caller's `artifact.artifacts.read`; a wait
-    /// that ends first fails with a timeout, and the artifact keeps verifying.
-    pub fn until_verified(mut self, timeout: Duration) -> Self {
-        self.verification = Some(timeout);
-        self
-    }
-
     async fn run(self) -> Result<ArtifactRecord, ArtifactClientError> {
-        let verification = self.verification;
-        let client = self.client.clone();
         let artifact = self.transfer().await?;
-        match (artifact.state, verification) {
-            (ArtifactState::Verifying, Some(timeout)) => verified(&client, artifact, timeout).await,
-            (ArtifactState::Available | ArtifactState::Verifying, _) => Ok(artifact),
-            (ArtifactState::Failed | ArtifactState::Deleting, _) => {
-                Err(ArtifactClientError::VerificationFailed {
+        match artifact.state {
+            ArtifactState::Available => Ok(artifact),
+            ArtifactState::Failed | ArtifactState::Deleting => {
+                Err(ArtifactClientError::UploadFailed {
                     artifact_id: artifact.artifact_id,
                 })
             }
-            (ArtifactState::Uploading, _) => Err(ArtifactClientError::Protocol(
+            ArtifactState::Uploading => Err(ArtifactClientError::Protocol(
                 "upload returned an unfinished artifact",
             )),
         }
@@ -186,7 +159,6 @@ impl Upload {
             request,
             body,
             parallelism,
-            verification: _,
         } = self;
         let mut reader = body.reader;
         // One byte past the single-PUT bound tells whether the body fits one PUT.
@@ -218,29 +190,6 @@ impl IntoFuture for Upload {
     }
 }
 
-/// The artifact once Artifact has verified it: available, or a failure when the bytes
-/// did not verify.
-async fn verified(
-    client: &ArtifactClient,
-    artifact: ArtifactRecord,
-    timeout: Duration,
-) -> Result<ArtifactRecord, ArtifactClientError> {
-    let entry = client
-        .calls
-        .read(ReadArtifact {
-            artifact: artifact.artifact_id,
-        })
-        .until(|entry| entry.artifact.state != ArtifactState::Verifying)
-        .timeout(timeout)
-        .await?;
-    match entry.artifact.state {
-        ArtifactState::Available => Ok(entry.artifact),
-        _ => Err(ArtifactClientError::VerificationFailed {
-            artifact_id: entry.artifact.artifact_id,
-        }),
-    }
-}
-
 /// Read from `reader` into `buffer` until it holds `limit` bytes or the reader ends.
 /// True when the reader ended.
 async fn read_up_to(
@@ -266,12 +215,6 @@ async fn read_up_to(
     Ok(false)
 }
 
-fn sha256(bytes: &[u8]) -> Sha256Digest {
-    Sha256Digest::from_bytes(Sha256::digest(bytes).into())
-}
-
-/// A body that fits one PUT: its size and SHA-256 travel with `create_upload`, and
-/// object storage refuses other bytes.
 async fn single(
     client: &ArtifactClient,
     mut request: CreateUploadRequest,
@@ -293,20 +236,10 @@ async fn single(
             limit: max_size.bytes(),
         });
     }
-    let computed = sha256(&body);
-    if let Some(declared) = &request.sha256
-        && declared != &computed
-    {
-        return Err(ArtifactClientError::DigestMismatch {
-            declared: declared.clone(),
-            computed,
-        });
-    }
     request.size = Some(
         ObjectSize::new(read)
             .map_err(|_| ArtifactClientError::Protocol("a single body exceeds an object"))?,
     );
-    request.sha256 = Some(computed);
     let created = client.calls.call(request).await?.metadata().clone();
     let upload_id = created.upload.upload_id;
     let Some(transfer) = created.transfer else {

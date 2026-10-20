@@ -36,13 +36,6 @@ pub struct ClaimedDeletion {
     pub artifact_id: ArtifactId,
 }
 
-/// A verifying artifact the sweep checks for a live verification Task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StaleVerification {
-    pub tenant: StoredTenant,
-    pub artifact_id: ArtifactId,
-}
-
 /// Which artifacts a batch removes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Removal {
@@ -167,41 +160,6 @@ impl ArtifactStore {
             removal: Removal::Failed,
             claimed,
         })
-    }
-
-    /// Verifying artifacts whose upload completed by `cutoff`.
-    pub async fn stale_verifications(
-        &self,
-        cutoff: DateTime<Utc>,
-        limit: MaintenanceBatch,
-    ) -> Result<Vec<StaleVerification>, ArtifactStoreError> {
-        Ok(sqlx::query_file_as!(
-            StaleVerification,
-            "src/store/sweep/stale_verifications.sql",
-            cutoff,
-            limit.limit(),
-        )
-        .fetch_all(self.pool())
-        .await?)
-    }
-
-    /// Fail a verifying artifact whose verification can no longer finish. Returns false
-    /// when it is no longer verifying.
-    pub async fn fail_verification(
-        &self,
-        tenant: StoredTenant,
-        artifact_id: ArtifactId,
-        now: DateTime<Utc>,
-    ) -> Result<bool, ArtifactStoreError> {
-        Ok(sqlx::query_file_scalar!(
-            "src/store/uploads/fail_artifact.sql",
-            tenant as StoredTenant,
-            artifact_id as ArtifactId,
-            now,
-        )
-        .fetch_optional(self.pool())
-        .await?
-        .is_some())
     }
 
     /// Remove ended uploads, expired grants, ended share links and decided access

@@ -17,7 +17,6 @@ mod parts;
 mod upload;
 
 use veoveo_hub_sdk::client::{CallError, HubClient};
-use veoveo_types::Sha256Digest;
 
 use crate::contract::{ArtifactId, ArtifactName, MediaType};
 
@@ -45,7 +44,7 @@ impl ArtifactClient {
     }
 
     /// Upload `body` as a new artifact named `name` of `media_type`. The upload runs when
-    /// it is awaited and resolves with the artifact, available or verifying.
+    /// it is awaited and resolves with an available artifact.
     pub fn upload(&self, name: ArtifactName, media_type: MediaType, body: UploadBody) -> Upload {
         Upload::new(self.clone(), name, media_type, body)
     }
@@ -79,15 +78,9 @@ pub enum ArtifactClientError {
     /// The body holds more bytes than the upload may receive.
     #[error("the body exceeds the upload's bound of {limit} bytes")]
     TooLarge { limit: u64 },
-    /// The body's SHA-256 differs from the declared one.
-    #[error("the body's SHA-256 is {computed}, not the declared {declared}")]
-    DigestMismatch {
-        declared: Sha256Digest,
-        computed: Sha256Digest,
-    },
-    /// Artifact did not verify the uploaded bytes, and the artifact holds no object.
-    #[error("Artifact did not verify artifact {artifact_id}")]
-    VerificationFailed { artifact_id: ArtifactId },
+    /// A retained upload ended with an unavailable artifact.
+    #[error("upload did not produce an available artifact {artifact_id}")]
+    UploadFailed { artifact_id: ArtifactId },
     /// Artifact answered with something its contract does not describe for this request.
     #[error("Artifact answered unexpectedly: {0}")]
     Protocol(&'static str),

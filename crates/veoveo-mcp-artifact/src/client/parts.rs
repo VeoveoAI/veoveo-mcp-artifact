@@ -108,7 +108,7 @@ pub(super) async fn back_off(attempt: u32) {
 
 /// Send the one PUT of a single upload, retrying transient failures. The PUT is
 /// create-only, so a retry that finds the object already stored means an earlier
-/// attempt stored it; completing the upload then checks its size and SHA-256.
+/// attempt stored it; completing the upload then checks its size.
 pub(super) async fn put_single(
     http: &reqwest::Client,
     put: &SignedTransfer,
@@ -183,7 +183,6 @@ impl PartSigner {
                     .map(|part_number| PartRequest {
                         part_number,
                         size: None,
-                        sha256: None,
                     })
                     .map_err(|_| ArtifactClientError::Protocol("a part number beyond 10000"))
             })

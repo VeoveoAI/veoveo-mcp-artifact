@@ -1,8 +1,7 @@
 //! The sweep every replica runs. `FOR UPDATE SKIP LOCKED` hands each row to one replica,
 //! and each batch commits on its own, so replicas share the work without coordinating.
 //! A round ends expired uploads, deletes artifacts past their retention, removes the
-//! objects and rows of deleted and failed artifacts, fails verifications that can no
-//! longer finish and prunes ended records.
+//! objects and rows of deleted and failed artifacts, and prunes ended records.
 use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
@@ -10,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use veoveo_store::MaintenanceBatch;
 
 use crate::{
-    service::{ArtifactError, ArtifactService, VERIFICATION_DEADLINE},
+    service::{ArtifactError, ArtifactService},
     storage::ObjectKey,
     store::DeletionBatch,
 };
@@ -65,19 +64,6 @@ pub async fn sweep(service: &ArtifactService, now: DateTime<Utc>) -> Result<(), 
         let removed = remove_objects(service, store.claim_failed(now, batch).await?).await?;
         if removed < BATCH as usize {
             break;
-        }
-    }
-    let deadline = chrono::Duration::from_std(VERIFICATION_DEADLINE)
-        .expect("the verification deadline fits a duration");
-    for stale in store.stale_verifications(now - deadline, batch).await? {
-        if !service.verification_live(stale.artifact_id).await?
-            && store
-                .fail_verification(stale.tenant, stale.artifact_id, now)
-                .await?
-        {
-            storage
-                .delete(&ObjectKey::for_artifact(stale.tenant, stale.artifact_id))
-                .await?;
         }
     }
     store.prune(now, batch).await?;

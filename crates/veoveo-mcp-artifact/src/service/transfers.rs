@@ -1,12 +1,11 @@
 //! Uploads: reserving an artifact, signing where its bytes go, completing it from what
 //! object storage holds, and aborting it.
 use chrono::{DateTime, Utc};
-use veoveo_task::TaskOwner;
 use veoveo_types::Checked;
 
 use crate::{
     contract::{
-        AbortUploadResult, ArtifactRecord, ArtifactState, CreateUploadRequest, CreateUploadResult,
+        AbortUploadResult, ArtifactRecord, CreateUploadRequest, CreateUploadResult,
         MAX_PARTS_PER_SIGNING, ObjectSize, PartNumber, PartRequest, PartSize,
         SignUploadPartsRequest, SignUploadPartsResult, SignedPart, UploadForm, UploadId,
         UploadRecord, UploadState, UploadTransfer,
@@ -15,7 +14,7 @@ use crate::{
     store::{ArtifactStoreError, Caller, CompletedObject},
 };
 
-use super::{ArtifactError, ArtifactService, INLINE_DIGEST_BYTES};
+use super::{ArtifactError, ArtifactService};
 
 impl ArtifactService {
     /// Reserve an artifact and sign where its bytes go. A repeated idempotency key signs
@@ -43,13 +42,7 @@ impl ArtifactService {
                     .ok_or(ArtifactStoreError::Corrupt("single upload without a size"))?;
                 let put = self
                     .storage
-                    .sign_put(
-                        &key,
-                        size,
-                        &created.artifact.media_type,
-                        created.upload.declared_sha256.as_ref(),
-                        now,
-                    )
+                    .sign_put(&key, size, &created.artifact.media_type, now)
                     .await?;
                 UploadTransfer::Single { put }
             }
@@ -69,7 +62,7 @@ impl ArtifactService {
                 for (number, size) in parts {
                     let transfer = self
                         .storage
-                        .sign_part(&key, &object_upload, number, size, None, now)
+                        .sign_part(&key, &object_upload, number, size, now)
                         .await?;
                     signed.push(SignedPart {
                         part_number: number,
@@ -136,12 +129,7 @@ impl ArtifactService {
         };
         let key = ObjectKey::for_artifact(caller.tenant(), upload.artifact_id);
         let mut parts = Vec::with_capacity(request.parts.len());
-        for PartRequest {
-            part_number,
-            size,
-            sha256,
-        } in &request.parts
-        {
+        for PartRequest { part_number, size } in &request.parts {
             if let Some(size) = size
                 && size.bytes() > part_size.bytes()
             {
@@ -152,14 +140,7 @@ impl ArtifactService {
             }
             let transfer = self
                 .storage
-                .sign_part(
-                    &key,
-                    &object_upload,
-                    *part_number,
-                    *size,
-                    sha256.as_ref(),
-                    now,
-                )
+                .sign_part(&key, &object_upload, *part_number, *size, now)
                 .await?;
             parts.push(SignedPart {
                 part_number: *part_number,
@@ -169,14 +150,11 @@ impl ArtifactService {
         Ok(SignUploadPartsResult { parts })
     }
 
-    /// Complete the caller's upload from what object storage holds. A small object whose
-    /// SHA-256 the store did not check is hashed here; a larger one verifies in a Task
-    /// that `owner` owns. Completing an upload that already completed returns its
-    /// artifact and makes sure its verification runs.
+    /// Complete create-only storage, validate actual size and make the artifact available.
+    /// Repeating a completed upload returns its retained outcome.
     pub async fn complete_upload(
         &self,
         caller: &Caller,
-        owner: &TaskOwner,
         upload_id: UploadId,
         now: DateTime<Utc>,
     ) -> Result<ArtifactRecord, ArtifactError> {
@@ -193,16 +171,7 @@ impl ArtifactService {
                     .head(&key)
                     .await?
                     .ok_or(ArtifactError::NoBytes)?;
-                let checked_sha256 = match (upload.form, &upload.declared_sha256, &stored.sha256) {
-                    (UploadForm::Single, Some(declared), Some(checked)) if declared == checked => {
-                        Some(declared.clone())
-                    }
-                    _ => None,
-                };
-                let object = CompletedObject {
-                    size: stored.size,
-                    checked_sha256,
-                };
+                let object = CompletedObject { size: stored.size };
                 match self
                     .store
                     .complete_upload(caller, upload_id, &object, now)
@@ -221,30 +190,6 @@ impl ArtifactService {
                 return Err(ArtifactStoreError::UploadNotOpen { state }.into());
             }
         };
-        if artifact.state != ArtifactState::Verifying {
-            return Ok(artifact);
-        }
-        let size = artifact.size.map_or(0, ObjectSize::bytes);
-        if size <= INLINE_DIGEST_BYTES {
-            let (computed, _) = self.storage.sha256(&key).await?;
-            let state = self
-                .store
-                .record_digest(
-                    caller,
-                    artifact_id,
-                    upload.declared_sha256.as_ref(),
-                    &computed,
-                    now,
-                )
-                .await?;
-            if state == ArtifactState::Failed {
-                self.discard_object(caller, artifact_id).await;
-                return Err(ArtifactError::DigestMismatch);
-            }
-            return self.artifact(caller, artifact_id, now).await;
-        }
-        self.start_verification(owner, artifact_id, upload.declared_sha256)
-            .await?;
         Ok(artifact)
     }
 
@@ -308,7 +253,6 @@ mod tests {
                 form: UploadForm::Multipart,
                 state: UploadState::Open,
                 declared_size: declared.map(|bytes| ObjectSize::new(bytes).unwrap()),
-                declared_sha256: None,
                 reserved: ObjectSize::new(reserved).unwrap(),
                 part_size: Some(part_size),
                 created_at: Utc::now(),

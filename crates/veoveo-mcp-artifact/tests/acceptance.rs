@@ -44,8 +44,8 @@ use veoveo_mcp_artifact::contract::{
     ArtifactId, ArtifactName, ArtifactProvider, ArtifactResource, ArtifactResult, ArtifactState,
     CompleteUploadResult, CreateDownloadResult, CreateShareLinkResult, CreateUploadResult,
     DeleteArtifactResult, GrantArtifactResult, Grants, MediaType, ObjectSize, PartSize,
-    ReadArtifact, ReleaseState, RevokeArtifactGrantResult, ShareLinks, SignedTransfer,
-    StorageUsage, UploadLimits, UploadLimitsResult, UploadTransfer,
+    ReleaseState, RevokeArtifactGrantResult, ShareLinks, SignedTransfer, StorageUsage,
+    UploadLimits, UploadLimitsResult, UploadTransfer,
 };
 use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, WorkContextId};
 
@@ -343,11 +343,7 @@ fn part_bytes(part: u64, length: u64) -> Vec<u8> {
     bytes
 }
 
-fn digest(bytes: &[u8]) -> String {
-    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
-}
-
-/// Upload a small object with a declared SHA-256 through one signed PUT and complete it.
+/// Upload a small object with a declared size through one signed PUT and complete it.
 async fn upload_declared(client: &Client, name: &str, body: &[u8]) -> Result<ArtifactId> {
     let created: veoveo_hub_sdk::definition::Product<CreateUploadResult> = call(
         client,
@@ -356,7 +352,6 @@ async fn upload_declared(client: &Client, name: &str, body: &[u8]) -> Result<Art
             "name": name,
             "mediaType": "application/octet-stream",
             "size": body.len(),
-            "sha256": digest(body),
         }),
     )
     .await?;
@@ -379,7 +374,7 @@ async fn upload_declared(client: &Client, name: &str, body: &[u8]) -> Result<Art
     let completed = completed.metadata().clone();
     ensure!(
         completed.artifact.state == ArtifactState::Available,
-        "a PUT whose SHA-256 object storage checked is {:?}",
+        "a size-valid create-only PUT is {:?}",
         completed.artifact.state
     );
     Ok(completed.artifact.artifact_id)
@@ -494,8 +489,7 @@ async fn a_declared_upload_is_available_and_serves_a_range_to_the_work_context()
         ensure!(
             artifact.name.as_str() == "report.bin"
                 && artifact.media_type.as_str() == "application/octet-stream"
-                && artifact.size.map(|size| size.bytes()) == Some(body.len() as u64)
-                && artifact.sha256.as_ref().map(ToString::to_string) == Some(digest(&body)),
+                && artifact.size.map(|size| size.bytes()) == Some(body.len() as u64),
             "the artifact's metadata is {artifact:?}"
         );
         ensure!(
@@ -551,7 +545,8 @@ async fn a_declared_upload_is_available_and_serves_a_range_to_the_work_context()
 
 #[tokio::test]
 #[ignore = "requires a running local installation"]
-async fn a_gibibyte_of_unknown_size_verifies_serves_a_range_and_releases_its_bytes() -> Result<()> {
+async fn a_gibibyte_of_unknown_size_is_available_serves_a_range_and_releases_its_bytes()
+-> Result<()> {
     bounded(900, async {
         let installation = Installation::from_env()?;
         let calls = HubClient::new(
@@ -592,45 +587,17 @@ async fn a_gibibyte_of_unknown_size_verifies_serves_a_range_and_releases_its_byt
             .context("the public client's multipart upload failed")?;
         let artifact_id = completed.artifact_id;
         ensure!(
-            completed.state == ArtifactState::Verifying,
-            "a gibibyte of unknown size completed {:?}",
-            completed.state
+            completed.state == ArtifactState::Available
+                && completed.size.map(|size| size.bytes()) == Some(total)
+                && completed.available_at.is_some(),
+            "the completed artifact is not available with its exact size"
         );
-        // Reconcile resource state through the SDK's bounded subscription reopenings.
-        // An initial or reopened snapshot may observe completion; this does not claim
-        // an uninterrupted pushed update across credential-generation fencing.
         let observer = HubClient::new(
             installation.mcp()?,
             installation.http.clone(),
             installation.bearers.source(ADMIN)?.clone(),
         );
-        let verified = observer
-            .read(ReadArtifact {
-                artifact: artifact_id,
-            })
-            .until(|entry| entry.artifact.state != ArtifactState::Verifying)
-            .timeout(Duration::from_secs(600))
-            .await
-            .context("following artifact verification within 600 seconds")?
-            .artifact;
-        ensure!(
-            verified.state == ArtifactState::Available,
-            "the verified artifact is {:?}",
-            verified.state
-        );
-        ensure!(
-            verified.size.map(|size| size.bytes()) == Some(total),
-            "the artifact holds {:?} bytes of {total}",
-            verified.size
-        );
-        ensure!(
-            verified.sha256.as_ref().map(ToString::to_string) == Some(expected.clone()),
-            "the server computed {:?}, the client {expected}",
-            verified.sha256
-        );
-
-        // Open the checker after verification rather than retain an idle connection
-        // through credential renewal while the server hashes the object.
+        // A new checker performs independent byte, range and deletion assertions.
         let admin = installation
             .connect(ADMIN)
             .await
@@ -643,6 +610,28 @@ async fn a_gibibyte_of_unknown_size_verifies_serves_a_range_and_releases_its_byt
             json!({"artifactId": artifact_id}),
         )
         .await?;
+        // Fingerprinting is this consumer test's assertion, not Artifact metadata.
+        let fetched = send(&download.get, Vec::new(), None).await?;
+        ensure!(
+            fetched.status() == reqwest::StatusCode::OK,
+            "whole GET failed"
+        );
+        let mut chunks = fetched.bytes_stream();
+        let mut received = 0_u64;
+        let mut fingerprint = Sha256::new();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.map_err(reqwest::Error::without_url)?;
+            received += chunk.len() as u64;
+            fingerprint.update(&chunk);
+        }
+        ensure!(
+            received == total,
+            "whole GET returned {received} bytes of {total}"
+        );
+        ensure!(
+            format!("sha256:{}", hex::encode(fingerprint.finalize())) == expected,
+            "whole GET returned different content"
+        );
         let start = part - 100;
         let fetched = send(
             &download.get,
@@ -677,7 +666,7 @@ async fn a_gibibyte_of_unknown_size_verifies_serves_a_range_and_releases_its_byt
             .context("reading the subscribed storage usage before deletion")?;
         delete(&admin, artifact_id)
             .await
-            .context("deleting the verified artifact")?;
+            .context("deleting the completed artifact")?;
         ensure!(
             read::<ArtifactEntry>(&admin, &uri).await.is_err(),
             "a deleted artifact is still readable"
@@ -985,7 +974,6 @@ fn check_retained(
             && artifact.state == ArtifactState::Available
             && artifact.release_state == ReleaseState::Private
             && artifact.size.map(|size| size.bytes()) == Some(body.len() as u64)
-            && artifact.sha256.as_ref().map(ToString::to_string) == Some(digest(body))
             && artifact.owner == *owner
             && artifact.provenance.caller == *owner
             && artifact.work_context == coordinates.work_context

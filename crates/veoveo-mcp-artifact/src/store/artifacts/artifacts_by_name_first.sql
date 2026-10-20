@@ -10,7 +10,6 @@ SELECT
     a.name,
     a.media_type,
     a.size_bytes,
-    a.sha256,
     a.labels,
     a.release_state AS "release_state: ReleaseState",
     a.state AS "state: ArtifactState",
@@ -24,7 +23,7 @@ FROM artifact.artifact AS a
 WHERE a.tenant = $1
     AND a.name >= $10
     AND a.name < $11
-    AND a.state IN ('verifying', 'available')
+    AND a.state = 'available'
     AND artifact.effective_level(a, $1, $2, $3, $4, $5, $6, $7, $8, $9) >= 1
 ORDER BY a.name, a.artifact_id
 LIMIT $12

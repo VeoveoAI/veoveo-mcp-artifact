@@ -24,7 +24,7 @@ pub use rows::VisibleArtifact;
 pub use sharing::{MAX_LIVE_SHARE_LINKS, NewShareLink, Redemption};
 pub use sweep::{
     ACCESS_REQUEST_RETENTION, ClaimedDeletion, DeletionBatch, ExpiredUpload, FAILED_RETENTION,
-    SHARE_LINK_RETENTION, StaleVerification, UPLOAD_RETENTION,
+    SHARE_LINK_RETENTION, UPLOAD_RETENTION,
 };
 pub use uploads::{CompletedObject, CreatedUpload};
 

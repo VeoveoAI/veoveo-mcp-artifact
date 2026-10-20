@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::types::Json;
 use veoveo_store::PrincipalId as StoredPrincipal;
-use veoveo_types::{AccessLevel, DataLabelId, PrincipalId, Sha256Digest, WorkContextId};
+use veoveo_types::{AccessLevel, DataLabelId, PrincipalId, WorkContextId};
 
 use crate::contract::{
     ArtifactId, ArtifactLabels, ArtifactMetadataMap, ArtifactName, ArtifactProvenance,
@@ -21,7 +21,6 @@ pub(crate) struct ArtifactRow {
     pub name: String,
     pub media_type: String,
     pub size_bytes: Option<i64>,
-    pub sha256: Option<String>,
     pub labels: Vec<String>,
     pub release_state: ReleaseState,
     pub state: ArtifactState,
@@ -67,7 +66,6 @@ impl ArtifactRow {
             media_type: MediaType::parse(self.media_type)
                 .map_err(|_| ArtifactStoreError::Corrupt("artifact media type"))?,
             size: self.size_bytes.map(object_size).transpose()?,
-            sha256: self.sha256.map(digest).transpose()?,
             owner: PrincipalId::parse(self.owner_key)
                 .map_err(|_| ArtifactStoreError::Corrupt("artifact owner"))?,
             work_context: WorkContextId::parse(self.work_context)
@@ -93,7 +91,6 @@ pub(crate) struct UploadRow {
     pub form: UploadForm,
     pub state: UploadState,
     pub declared_size: Option<i64>,
-    pub declared_sha256: Option<String>,
     pub max_size: Option<i64>,
     pub reserved_bytes: i64,
     pub object_upload: Option<String>,
@@ -111,7 +108,6 @@ impl UploadRow {
             form: self.form,
             state: self.state,
             declared_size: self.declared_size.map(object_size).transpose()?,
-            declared_sha256: self.declared_sha256.clone().map(digest).transpose()?,
             reserved: object_size(self.reserved_bytes)?,
             part_size: self
                 .part_size
@@ -132,10 +128,6 @@ impl UploadRow {
         self.declared_size.map(object_size).transpose()
     }
 
-    pub(crate) fn declared_sha256(&self) -> Result<Option<Sha256Digest>, ArtifactStoreError> {
-        self.declared_sha256.clone().map(digest).transpose()
-    }
-
     pub(crate) fn max_size(&self) -> Result<Option<ObjectSize>, ArtifactStoreError> {
         self.max_size.map(object_size).transpose()
     }
@@ -146,10 +138,6 @@ pub(crate) fn object_size(bytes: i64) -> Result<ObjectSize, ArtifactStoreError> 
         .ok()
         .and_then(|bytes| ObjectSize::new(bytes).ok())
         .ok_or(ArtifactStoreError::Corrupt("object size"))
-}
-
-pub(crate) fn digest(text: String) -> Result<Sha256Digest, ArtifactStoreError> {
-    Sha256Digest::parse(text).map_err(|_| ArtifactStoreError::Corrupt("SHA-256"))
 }
 
 /// A size for a `bigint` column; every admitted size fits.

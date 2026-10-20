@@ -2,9 +2,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::types::Json;
 use veoveo_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
-use veoveo_types::{
-    Checked, CursorToken, Page, PageSize, Pager, Sha256Digest, WorkContextMembershipLevel,
-};
+use veoveo_types::{Checked, CursorToken, Page, PageSize, Pager, WorkContextMembershipLevel};
 
 use crate::contract::{
     ArtifactId, ArtifactMetadataMap, ArtifactProvenance, ArtifactRecord, ArtifactState,
@@ -12,13 +10,11 @@ use crate::contract::{
     UploadId, UploadLimits, UploadRecord, UploadState, Uploads,
 };
 
-use crate::contract::{
-    ArtifactAuditReason, ArtifactVerified, UploadAborted, UploadCompleted, UploadCreated,
-};
+use crate::contract::{ArtifactAuditReason, UploadAborted, UploadCompleted, UploadCreated};
 
 use super::{
     ArtifactStore, ArtifactStoreError, Caller, UPLOAD_LIFETIME, UploadPlan,
-    audit::{Decided, artifact_target, upload_target},
+    audit::{Decided, upload_target},
     limits::LimitsRow,
     rows::{ArtifactRow, UploadRow, size_column},
 };
@@ -38,9 +34,6 @@ pub struct CreatedUpload {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletedObject {
     pub size: ObjectSize,
-    /// The SHA-256 object storage checked while it wrote, when the upload declared one
-    /// and took a single PutObject.
-    pub checked_sha256: Option<Sha256Digest>,
 }
 
 impl ArtifactStore {
@@ -191,7 +184,6 @@ impl ArtifactStore {
             request.idempotency_key.as_ref().map(|key| key.as_str()),
             plan.form as UploadForm,
             request.size.map(size_column),
-            request.sha256.as_ref().map(|digest| digest.as_str()),
             request.max_size.map(size_column),
             size_column(plan.reserved),
             plan.part_size
@@ -264,8 +256,7 @@ impl ArtifactStore {
 
     /// Complete the caller's open upload with what object storage reports. Bytes whose
     /// size differs from the declared size, or exceeds the declared maximum, fail the
-    /// artifact. An object whose SHA-256 object storage checked becomes available;
-    /// otherwise the artifact verifies until [`Self::record_digest`].
+    /// artifact. A valid object becomes available in the same transaction.
     pub async fn complete_upload(
         &self,
         caller: &Caller,
@@ -281,15 +272,6 @@ impl ArtifactStore {
             .is_none_or(|declared| declared == object.size)
             && upload.max_size()?.is_none_or(|max| object.size <= max)
             && object.size.bytes() <= u64::try_from(upload.reserved_bytes).unwrap_or(0);
-        let checked = match (&object.checked_sha256, upload.declared_sha256()?) {
-            (Some(checked), Some(declared)) if *checked == declared => Some(checked.clone()),
-            (Some(_), _) => {
-                return Err(ArtifactStoreError::Corrupt(
-                    "checked SHA-256 without a matching declaration",
-                ));
-            }
-            (None, _) => None,
-        };
         sqlx::query_file_as!(
             UploadRow,
             "src/store/uploads/end_upload.sql",
@@ -333,7 +315,6 @@ impl ArtifactStore {
             tenant as StoredTenant,
             upload.artifact_id as ArtifactId,
             size_column(object.size),
-            checked.as_ref().map(|digest| digest.as_str()),
             now,
         )
         .fetch_one(&mut *tx)
@@ -354,61 +335,6 @@ impl ArtifactStore {
         .await?;
         tx.commit().await?;
         Ok(artifact)
-    }
-
-    /// Record the SHA-256 the server computed for a verifying artifact. A digest that
-    /// differs from the one the upload declared fails the artifact instead.
-    pub async fn record_digest(
-        &self,
-        caller: &Caller,
-        artifact_id: ArtifactId,
-        declared: Option<&Sha256Digest>,
-        computed: &Sha256Digest,
-        now: DateTime<Utc>,
-    ) -> Result<ArtifactState, ArtifactStoreError> {
-        let tenant = caller.tenant();
-        let mut tx = self.pool().begin().await?;
-        let (state, decided) = if declared.is_some_and(|declared| declared != computed) {
-            sqlx::query_file_scalar!(
-                "src/store/uploads/fail_artifact.sql",
-                tenant as StoredTenant,
-                artifact_id as ArtifactId,
-                now,
-            )
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(ArtifactStoreError::ArtifactNotFound)?;
-            (
-                ArtifactState::Failed,
-                Decided::Failed(ArtifactAuditReason::DigestMismatch),
-            )
-        } else {
-            sqlx::query_file_scalar!(
-                "src/store/uploads/record_digest.sql",
-                tenant as StoredTenant,
-                artifact_id as ArtifactId,
-                computed.as_str(),
-                now,
-            )
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(ArtifactStoreError::ArtifactNotFound)?;
-            (ArtifactState::Available, Decided::Succeeded)
-        };
-        self.record(
-            &mut tx,
-            caller,
-            artifact_target(artifact_id),
-            &ArtifactVerified {
-                artifact_id,
-                sha256: computed.clone(),
-                state,
-            },
-            decided,
-        )
-        .await?;
-        tx.commit().await?;
-        Ok(state)
     }
 
     /// Abort the caller's open upload and fail its artifact. Triggers release the

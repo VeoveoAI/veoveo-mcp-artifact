@@ -39,11 +39,10 @@ CREATE TABLE artifact.artifact (
         media_type ~ '^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$'
     ),
     size_bytes bigint CHECK (size_bytes BETWEEN 0 AND 5497558138880),
-    sha256 text CHECK (sha256 ~ '^sha256:[0-9a-f]{64}$'),
     labels text[] NOT NULL CHECK (cardinality(labels) <= 64 AND array_position(labels, NULL) IS NULL),
     release_state text NOT NULL CHECK (release_state IN ('private', 'released')),
     state text NOT NULL CHECK (
-        state IN ('uploading', 'verifying', 'available', 'failed', 'deleting')
+        state IN ('uploading', 'available', 'failed', 'deleting')
     ),
     provenance jsonb NOT NULL CHECK (jsonb_typeof(provenance) = 'object'),
     metadata jsonb NOT NULL CHECK (jsonb_typeof(metadata) = 'object'),
@@ -56,17 +55,12 @@ CREATE TABLE artifact.artifact (
     PRIMARY KEY (tenant, artifact_id),
     -- Bytes exist from completion until the row goes, so only those states hold a size.
     CHECK ((size_bytes IS NULL) = (state IN ('uploading', 'failed'))),
-    CHECK (state <> 'available' OR (sha256 IS NOT NULL AND available_at IS NOT NULL)),
+    CHECK (state <> 'available' OR available_at IS NOT NULL),
     CHECK ((state = 'failed') = (failed_at IS NOT NULL)),
     CHECK ((state = 'deleting') = (deleting_at IS NOT NULL)),
     CHECK (retain_until IS NULL OR retention_days IS NOT NULL)
 );
 
-
--- The sweep finds verifying artifacts whose verification Task is gone, so it can fail
--- them. Few artifacts verify at once, and a partial index holds only those.
-CREATE INDEX artifact_verifying ON artifact.artifact (tenant, artifact_id)
-    WHERE state = 'verifying';
 
 -- One index per listing filter, each ending in the artifact ID so a page continues from
 -- its last key. Names compare bytewise, so a prefix is an index range.
@@ -77,7 +71,7 @@ CREATE INDEX artifact_release_page ON artifact.artifact (tenant, release_state, 
 CREATE INDEX artifact_name_page ON artifact.artifact (tenant, name, artifact_id);
 -- The sweep's queues across tenants.
 CREATE INDEX artifact_retention_due ON artifact.artifact (retain_until)
-    WHERE retain_until IS NOT NULL AND state IN ('verifying', 'available');
+    WHERE retain_until IS NOT NULL AND state = 'available';
 CREATE INDEX artifact_failed_since ON artifact.artifact (failed_at) WHERE state = 'failed';
 CREATE INDEX artifact_deleting_since ON artifact.artifact (deleting_at) WHERE state = 'deleting';
 
@@ -117,7 +111,6 @@ CREATE TABLE artifact.upload (
     form text NOT NULL CHECK (form IN ('single', 'multipart')),
     state text NOT NULL CHECK (state IN ('open', 'completed', 'aborted', 'expired')),
     declared_size bigint CHECK (declared_size BETWEEN 0 AND 5497558138880),
-    declared_sha256 text CHECK (declared_sha256 ~ '^sha256:[0-9a-f]{64}$'),
     max_size bigint CHECK (max_size BETWEEN 0 AND 5497558138880),
     reserved_bytes bigint NOT NULL CHECK (reserved_bytes BETWEEN 0 AND 5497558138880),
     object_upload text CHECK (artifact.is_text(object_upload, 1024)),

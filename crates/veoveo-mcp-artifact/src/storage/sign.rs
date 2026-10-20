@@ -4,23 +4,20 @@ use std::{collections::BTreeMap, time::Duration};
 
 use aws_sdk_s3::presigning::{PresignedRequest, PresigningConfig};
 use chrono::{DateTime, Utc};
-use veoveo_types::Sha256Digest;
 
 use crate::contract::{
     ArtifactName, MediaType, ObjectSize, PartNumber, SignedTransfer, SignedUrl, TransferMethod,
 };
 
-use super::{ObjectKey, ObjectStorage, StorageError, checksum_header};
+use super::{ObjectKey, ObjectStorage, StorageError};
 
 impl ObjectStorage {
-    /// A create-only PutObject that binds the object's size, media type and, when the
-    /// caller declared one, its SHA-256.
+    /// A create-only PutObject that binds the object's size and media type.
     pub async fn sign_put(
         &self,
         key: &ObjectKey,
         size: ObjectSize,
         media_type: &MediaType,
-        sha256: Option<&Sha256Digest>,
         now: DateTime<Utc>,
     ) -> Result<SignedTransfer, StorageError> {
         let size = signed_length(size)?;
@@ -32,7 +29,6 @@ impl ObjectStorage {
             .content_length(size)
             .content_type(media_type.as_str())
             .if_none_match("*")
-            .set_checksum_sha256(sha256.map(checksum_header))
             .presigned(presigning(super::UPLOAD_URL_LIFETIME)?)
             .await
             .map_err(|error| StorageError::call("presign PutObject", error))?;
@@ -44,15 +40,13 @@ impl ObjectStorage {
         )
     }
 
-    /// One part of a multipart upload, binding its length and SHA-256 when the client
-    /// declares them.
+    /// One part of a multipart upload, binding its declared length.
     pub async fn sign_part(
         &self,
         key: &ObjectKey,
         object_upload: &str,
         part: PartNumber,
         size: Option<ObjectSize>,
-        sha256: Option<&Sha256Digest>,
         now: DateTime<Utc>,
     ) -> Result<SignedTransfer, StorageError> {
         let request = self
@@ -63,7 +57,6 @@ impl ObjectStorage {
             .upload_id(object_upload)
             .part_number(i32::from(part.get()))
             .set_content_length(size.map(signed_length).transpose()?)
-            .set_checksum_sha256(sha256.map(checksum_header))
             .presigned(presigning(super::UPLOAD_URL_LIFETIME)?)
             .await
             .map_err(|error| StorageError::call("presign UploadPart", error))?;

@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 use veoveo_audit_contract::{
     AuditDetailError, AuditDetailType, AuditOcsfClass, AuditReason, AuditRegistryBuilder,
 };
-use veoveo_types::{
-    AccessLevel, AccessSubject, PrincipalId, Sha256Digest, TenantId, Vocabulary as _,
-};
+use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, Vocabulary as _};
 
 use super::{
     AccessRequestDecision, AccessRequestId, ArtifactId, ArtifactState, ObjectSize, ReleaseState,
@@ -28,9 +26,6 @@ pub enum ArtifactAuditReason {
     /// The bytes that arrived differ in size from the size the upload declared or
     /// exceed the bytes it reserved, so the artifact failed.
     SizeMismatch,
-    /// The SHA-256 the server computed differs from the one the upload declared, so the
-    /// artifact failed.
-    DigestMismatch,
 }
 
 impl ArtifactAuditReason {
@@ -109,21 +104,6 @@ pub struct GrantChanged {
 }
 impl AuditDetailType for GrantChanged {
     const CLASS: &'static str = "artifact.grant_changed";
-    /// OCSF API Activity, Update.
-    const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(3);
-}
-
-/// The server computed an artifact's SHA-256: class `artifact.verified`. The artifact is
-/// available, or failed when the digest differs from the one its upload declared.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ArtifactVerified {
-    pub artifact_id: ArtifactId,
-    pub sha256: Sha256Digest,
-    pub state: ArtifactState,
-}
-impl AuditDetailType for ArtifactVerified {
-    const CLASS: &'static str = "artifact.verified";
     /// OCSF API Activity, Update.
     const OCSF: AuditOcsfClass = AuditOcsfClass::api_activity(3);
 }
@@ -276,7 +256,6 @@ pub fn declare_audit_details(builder: &mut AuditRegistryBuilder) -> Result<(), A
     builder.declare::<UploadCompleted>()?;
     builder.declare::<UploadAborted>()?;
     builder.declare::<DownloadIssued>()?;
-    builder.declare::<ArtifactVerified>()?;
     builder.declare::<GrantChanged>()?;
     builder.declare::<ArtifactDeleted>()?;
     builder.declare::<UploadLimitsSet>()?;
@@ -306,7 +285,7 @@ mod tests {
             .map(|declaration| declaration.class().to_string())
             .filter(|class| class.starts_with("artifact."))
             .collect();
-        assert_eq!(classes.len(), 15, "{classes:?}");
+        assert_eq!(classes.len(), 14, "{classes:?}");
         for declaration in registry
             .declarations()
             .filter(|declaration| declaration.class().to_string().starts_with("artifact."))
@@ -336,6 +315,6 @@ mod tests {
             .iter()
             .map(|reason| reason.code().to_string())
             .collect();
-        assert_eq!(codes, ["size_mismatch", "digest_mismatch"]);
+        assert_eq!(codes, ["size_mismatch"]);
     }
 }

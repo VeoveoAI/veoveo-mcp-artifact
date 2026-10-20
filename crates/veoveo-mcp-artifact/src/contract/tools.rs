@@ -5,7 +5,7 @@ use std::{borrow::Cow, num::NonZeroU32};
 use chrono::{DateTime, Utc};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use veoveo_types::{AccessLevel, AccessSubject, Check, Sha256Digest, TenantId};
+use veoveo_types::{AccessLevel, AccessSubject, Check, TenantId};
 
 use super::{
     AccessRequestDecision, AccessRequestId, AccessRequestRecord, ArtifactGrant, ArtifactId,
@@ -29,9 +29,6 @@ pub struct CreateUploadRequest {
     /// The exact size, when the caller knows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<ObjectSize>,
-    /// The SHA-256 of the whole object, when the caller knows it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sha256: Option<Sha256Digest>,
     /// The most bytes the caller will send when it does not know the size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_size: Option<ObjectSize>,
@@ -72,16 +69,13 @@ pub struct CreateUploadResult {
     pub transfer: Option<UploadTransfer>,
 }
 
-/// One part a client asks to have signed, with its length and SHA-256 when it knows
-/// them. A signed length and checksum make object storage refuse different bytes.
+/// One part a client asks to have signed, with its length when it knows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PartRequest {
     pub part_number: PartNumber,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<ObjectSize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sha256: Option<Sha256Digest>,
 }
 
 /// `sign_upload_parts`: sign 1 to 100 parts of an open multipart upload.
@@ -132,8 +126,7 @@ pub struct AbortUploadRequest {
     pub upload_id: UploadId,
 }
 
-/// The artifact after `complete_upload`: available, or verifying while the server
-/// computes the SHA-256 of a large object.
+/// The artifact after completion, or its retained outcome on a completed-upload retry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CompleteUploadResult {
@@ -374,6 +367,37 @@ mod tests {
             r#"{"name":"a.bin","mediaType":"application/octet-stream","owner":"mallory"}"#,
         );
         assert!(owner.is_err(), "the owner never comes from arguments");
+    }
+
+    #[test]
+    fn content_checksums_are_not_part_of_the_artifact_contract() {
+        let checksum = format!("sha256:{}", "0".repeat(64));
+        let mut upload =
+            serde_json::json!({"name": "a.bin", "mediaType": "application/octet-stream"});
+        assert!(serde_json::from_value::<Checked<CreateUploadRequest>>(upload.clone()).is_ok());
+        upload["sha256"] = serde_json::json!(checksum);
+        assert!(serde_json::from_value::<Checked<CreateUploadRequest>>(upload).is_err());
+        let mut part = serde_json::json!({"partNumber": 1, "size": 7});
+        assert!(serde_json::from_value::<PartRequest>(part.clone()).is_ok());
+        part["sha256"] = serde_json::json!(checksum);
+        assert!(serde_json::from_value::<PartRequest>(part).is_err());
+
+        for schema in [
+            schemars::schema_for!(CreateUploadRequest),
+            schemars::schema_for!(PartRequest),
+            schemars::schema_for!(ArtifactRecord),
+            schemars::schema_for!(UploadRecord),
+        ] {
+            let schema = serde_json::to_value(schema).unwrap();
+            let properties = schema["properties"].as_object().unwrap();
+            assert!(!properties.contains_key("sha256"));
+            assert!(!properties.contains_key("declaredSha256"));
+        }
+        assert!(serde_json::from_str::<ArtifactState>(r#""verifying""#).is_err());
+        assert_eq!(
+            serde_json::to_value(ArtifactState::Available).unwrap(),
+            "available"
+        );
     }
 
     #[test]

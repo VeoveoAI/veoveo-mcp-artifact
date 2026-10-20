@@ -21,8 +21,8 @@ use veoveo_mcp_artifact::{
     store::{ArtifactStore, Caller, CallerContext, CompletedObject, CreatedUpload},
 };
 use veoveo_types::{
-    AccessLevel, Checked, DataLabelId, GroupId, PrincipalId, ServerSlug, Sha256Digest, TenantId,
-    WorkContextId, WorkContextMembershipLevel,
+    AccessLevel, Checked, DataLabelId, GroupId, PrincipalId, ServerSlug, TenantId, WorkContextId,
+    WorkContextMembershipLevel,
 };
 
 pub use veoveo_mcp_artifact::store::GroupAccess;
@@ -179,7 +179,6 @@ pub fn upload_request(name: &str, size: Option<u64>) -> CreateUploadRequest {
         name: ArtifactName::parse(name).unwrap(),
         media_type: MediaType::parse("text/plain").unwrap(),
         size: size.map(|bytes| ObjectSize::new(bytes).unwrap()),
-        sha256: None,
         max_size: None,
         labels: ArtifactLabels::default(),
         retention_days: None,
@@ -210,11 +209,6 @@ pub fn with_key(mut request: CreateUploadRequest, key: &str) -> CreateUploadRequ
     request
 }
 
-/// A digest that stands for an object's bytes; the store never reads bytes.
-pub fn digest(byte: u8) -> Sha256Digest {
-    Sha256Digest::from_bytes([byte; 32])
-}
-
 pub async fn create(
     store: &ArtifactStore,
     who: &Who,
@@ -226,8 +220,7 @@ pub async fn create(
         .unwrap()
 }
 
-/// An available artifact: a single upload with a declared size and SHA-256 that object
-/// storage checked.
+/// An available artifact after validating the stored size.
 pub async fn available(
     store: &ArtifactStore,
     who: &Who,
@@ -236,17 +229,12 @@ pub async fn available(
     let size = request
         .size
         .expect("an available fixture declares its size");
-    let mut request = request;
-    request.sha256 = Some(digest(7));
     let created = create(store, who, request).await;
     store
         .complete_upload(
             &who.caller(),
             created.upload.upload_id,
-            &CompletedObject {
-                size,
-                checked_sha256: Some(digest(7)),
-            },
+            &CompletedObject { size },
             now(),
         )
         .await

@@ -3,7 +3,7 @@
 WITH due AS (
     SELECT tenant, artifact_id
     FROM artifact.artifact
-    WHERE retain_until <= $1 AND retain_until IS NOT NULL AND state IN ('verifying', 'available')
+    WHERE retain_until <= $1 AND retain_until IS NOT NULL AND state = 'available'
     ORDER BY retain_until
     LIMIT $2
     FOR UPDATE SKIP LOCKED

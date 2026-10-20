@@ -1,6 +1,6 @@
 //! The hosted process: prepare the bucket, register with the Hub, connect with the
 //! registration's database login, migrate, then serve MCP and the share route while the
-//! sweep, the verification worker and the change watcher run. Stopping deletes the
+//! sweep and the change watcher run. Stopping deletes the
 //! registration.
 mod config;
 mod registration;
@@ -23,7 +23,7 @@ use veoveo_audit::AuditStore;
 use crate::{
     contract::audit_registry,
     mcp::{self, ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs, watch_changes},
-    service::{ArtifactService, run_verifications},
+    service::ArtifactService,
     share,
     storage::ObjectStorage,
     store::ArtifactStore,
@@ -113,7 +113,6 @@ async fn serve(
     let service = Arc::new(ArtifactService::new(
         ArtifactStore::new(store.clone(), registry),
         storage.clone(),
-        tasks,
         share_base.clone(),
     ));
     let hubs = Arc::new(TenantHubs::default());
@@ -125,7 +124,6 @@ async fn serve(
     let stop = CancellationToken::new();
     let watching = tokio::spawn(watch_changes(store.clone(), hubs));
     let sweeping = tokio::spawn(run_sweep(service.clone(), stop.clone()));
-    let mut verifying = tokio::spawn(run_verifications(service.clone(), stop.clone()));
 
     let ready = storage.clone();
     let hosted = HostedServer::for_domain::<ArtifactMcp>()
@@ -147,22 +145,14 @@ async fn serve(
             async move { storage.ready().await }
         })
         .build();
-    // Serving ends on SIGTERM or Ctrl-C, or when Artifact can no longer claim its
-    // verification Tasks, which includes the loss of its instance lock.
+    // Keep the existing Core instance-liveness boundary without hash-only Task work.
     let served = tokio::select! {
         served = hosted.serve(SocketAddr::from(([0, 0, 0, 0], args.port))) => served,
-        worked = &mut verifying => match worked {
-            Ok(Ok(())) => Err(anyhow::anyhow!("Artifact's verification worker stopped")),
-            Ok(Err(error)) => Err(error.context("Artifact stopped claiming verifications")),
-            Err(error) => Err(anyhow::Error::from(error).context("Artifact's verification worker failed")),
-        },
+        () = instance.lost() => Err(anyhow::anyhow!("Artifact's process instance was lost")),
     };
     stop.cancel();
     watching.abort();
     let _ = sweeping.await;
-    if !verifying.is_finished() {
-        let _ = verifying.await;
-    }
     drop(service);
     // Deleting the instance's row releases the Tasks it still owns at once.
     if let Err(error) = instance.shutdown().await {

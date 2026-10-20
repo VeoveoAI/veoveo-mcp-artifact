@@ -5,13 +5,11 @@ mod support;
 use std::{future::Future, time::Duration};
 
 use chrono::Utc;
-use sha2::{Digest as _, Sha256};
 use support::seaweedfs::{TestSeaweedFs, send};
 use veoveo_mcp_artifact::{
     contract::{ArtifactId, ArtifactName, MediaType, ObjectSize, PartNumber},
     storage::{ObjectKey, ObjectStorage},
 };
-use veoveo_types::Sha256Digest;
 
 async fn with_storage<F, Fut>(test: F)
 where
@@ -33,10 +31,6 @@ fn key() -> ObjectKey {
     ObjectKey::for_artifact(tenant, ArtifactId::new())
 }
 
-fn digest(bytes: &[u8]) -> Sha256Digest {
-    Sha256Digest::parse(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))).unwrap()
-}
-
 fn media() -> MediaType {
     MediaType::parse("application/octet-stream").unwrap()
 }
@@ -46,21 +40,15 @@ fn size(bytes: usize) -> ObjectSize {
 }
 
 #[tokio::test]
-async fn a_single_put_binds_its_size_type_and_declared_sha256() {
+async fn a_single_put_binds_its_size_type_and_create_only_condition() {
     with_storage(|storage| async move {
         let body = b"hello artifact".to_vec();
         let key = key();
         let put = storage
-            .sign_put(
-                &key,
-                size(body.len()),
-                &media(),
-                Some(&digest(&body)),
-                Utc::now(),
-            )
+            .sign_put(&key, size(body.len()), &media(), Utc::now())
             .await
             .unwrap();
-        for header in ["content-type", "if-none-match", "x-amz-checksum-sha256"] {
+        for header in ["content-type", "if-none-match"] {
             assert!(put.headers.contains_key(header), "{header} is signed");
         }
         let signed = put.url.as_str();
@@ -70,10 +58,9 @@ async fn a_single_put_binds_its_size_type_and_declared_sha256() {
         assert!(response.status().is_success(), "{}", response.status());
         let stored = storage.head(&key).await.unwrap().unwrap();
         assert_eq!(stored.size, size(body.len()));
-        assert_eq!(stored.sha256, Some(digest(&body)));
 
         let again = storage
-            .sign_put(&key, size(body.len()), &media(), None, Utc::now())
+            .sign_put(&key, size(body.len()), &media(), Utc::now())
             .await
             .unwrap();
         let replaced = send(&again, body, &[]).await;
@@ -83,43 +70,70 @@ async fn a_single_put_binds_its_size_type_and_declared_sha256() {
 }
 
 #[tokio::test]
-async fn a_single_put_without_a_declared_sha256_stores_the_bytes() {
+async fn a_single_put_stores_exact_bytes_without_a_content_checksum() {
     with_storage(|storage| async move {
         let body = vec![7_u8; 4096];
         let key = key();
         let put = storage
-            .sign_put(&key, size(body.len()), &media(), None, Utc::now())
+            .sign_put(&key, size(body.len()), &media(), Utc::now())
             .await
             .unwrap();
         assert!(!put.headers.contains_key("x-amz-checksum-sha256"));
         assert!(send(&put, body.clone(), &[]).await.status().is_success());
-        let (computed, length) = storage.sha256(&key).await.unwrap();
-        assert_eq!(computed, digest(&body));
-        assert_eq!(length, body.len() as u64);
+        let get = storage
+            .sign_get(
+                &key,
+                &ArtifactName::parse("bytes.bin").unwrap(),
+                &media(),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            send(&get, Vec::new(), &[])
+                .await
+                .bytes()
+                .await
+                .unwrap()
+                .as_ref(),
+            body.as_slice()
+        );
     })
     .await;
 }
 
 #[tokio::test]
-async fn object_storage_refuses_a_wrong_size_or_checksum() {
+async fn object_storage_refuses_a_wrong_size_without_prescribing_content() {
     with_storage(|storage| async move {
         let body = b"expected bytes".to_vec();
         let key = key();
         let put = storage
-            .sign_put(
-                &key,
-                size(body.len()),
-                &media(),
-                Some(&digest(&body)),
-                Utc::now(),
-            )
+            .sign_put(&key, size(body.len()), &media(), Utc::now())
             .await
             .unwrap();
         let shorter = send(&put, b"short".to_vec(), &[]).await;
         assert!(shorter.status().is_client_error(), "{}", shorter.status());
-        let tampered = send(&put, b"tampered bytes".to_vec(), &[]).await;
-        assert!(tampered.status().is_client_error(), "{}", tampered.status());
         assert!(storage.head(&key).await.unwrap().is_none());
+        let other = vec![3; body.len()];
+        assert!(send(&put, other.clone(), &[]).await.status().is_success());
+        let get = storage
+            .sign_get(
+                &key,
+                &ArtifactName::parse("bytes.bin").unwrap(),
+                &media(),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            send(&get, Vec::new(), &[])
+                .await
+                .bytes()
+                .await
+                .unwrap()
+                .as_ref(),
+            other.as_slice()
+        );
     })
     .await;
 }
@@ -134,20 +148,13 @@ async fn a_multipart_upload_of_unknown_size_completes_create_only() {
         let one = PartNumber::new(1).unwrap();
         let two = PartNumber::new(2).unwrap();
         let first_part = storage
-            .sign_part(
-                &key,
-                &upload,
-                one,
-                Some(size(first.len())),
-                Some(&digest(&first)),
-                Utc::now(),
-            )
+            .sign_part(&key, &upload, one, Some(size(first.len())), Utc::now())
             .await
             .unwrap();
         let response = send(&first_part, first.clone(), &[]).await;
         assert!(response.status().is_success(), "{}", response.status());
         let last_part = storage
-            .sign_part(&key, &upload, two, None, None, Utc::now())
+            .sign_part(&key, &upload, two, None, Utc::now())
             .await
             .unwrap();
         let response = send(&last_part, last.clone(), &[]).await;
@@ -156,15 +163,49 @@ async fn a_multipart_upload_of_unknown_size_completes_create_only() {
         storage.complete_multipart(&key, &upload).await.unwrap();
         let stored = storage.head(&key).await.unwrap().unwrap();
         assert_eq!(stored.size, size(first.len() + last.len()));
+        // A distinct multipart upload cannot replace the completed object's key.
+        let collision = storage.start_multipart(&key, &media()).await.unwrap();
+        let replacement = storage
+            .sign_part(&key, &collision, one, Some(size(3)), Utc::now())
+            .await
+            .unwrap();
+        assert!(
+            send(&replacement, vec![9; 3], &[])
+                .await
+                .status()
+                .is_success()
+        );
+        assert!(matches!(
+            storage.complete_multipart(&key, &collision).await,
+            Err(veoveo_mcp_artifact::storage::StorageError::ObjectExists)
+        ));
+        storage.abort_multipart(&key, &collision).await.unwrap();
         let mut whole = first;
         whole.extend_from_slice(&last);
-        assert_eq!(storage.sha256(&key).await.unwrap().0, digest(&whole));
+        let get = storage
+            .sign_get(
+                &key,
+                &ArtifactName::parse("parts.bin").unwrap(),
+                &media(),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            send(&get, Vec::new(), &[])
+                .await
+                .bytes()
+                .await
+                .unwrap()
+                .as_ref(),
+            whole.as_slice()
+        );
     })
     .await;
 }
 
 #[tokio::test]
-async fn a_part_with_a_wrong_declared_checksum_is_refused() {
+async fn a_part_with_a_wrong_declared_size_is_refused() {
     with_storage(|storage| async move {
         let key = key();
         let upload = storage.start_multipart(&key, &media()).await.unwrap();
@@ -174,8 +215,7 @@ async fn a_part_with_a_wrong_declared_checksum_is_refused() {
                 &key,
                 &upload,
                 PartNumber::new(1).unwrap(),
-                Some(size(bytes.len())),
-                Some(&digest(b"other bytes")),
+                Some(size(bytes.len() + 1)),
                 Utc::now(),
             )
             .await
@@ -194,7 +234,7 @@ async fn downloads_serve_ranges_with_an_attachment_disposition() {
         let body: Vec<u8> = (0..=255).collect();
         let key = key();
         let put = storage
-            .sign_put(&key, size(body.len()), &media(), None, Utc::now())
+            .sign_put(&key, size(body.len()), &media(), Utc::now())
             .await
             .unwrap();
         assert!(send(&put, body.clone(), &[]).await.status().is_success());

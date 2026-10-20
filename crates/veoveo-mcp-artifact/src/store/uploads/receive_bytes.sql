@@ -1,14 +1,11 @@
--- The artifact's bytes arrived. With a SHA-256 that object storage checked, the artifact
--- is available and its retention starts; otherwise it is verifying until the server
--- records the digest. Triggers add the size to the tenant's stored bytes.
+-- Stored bytes passed size validation. Triggers settle reservation/stored usage.
 UPDATE artifact.artifact AS a
 SET size_bytes = $3,
-    sha256 = $4,
-    state = CASE WHEN $4::text IS NULL THEN 'verifying' ELSE 'available' END,
-    available_at = CASE WHEN $4::text IS NULL THEN NULL ELSE $5::timestamptz END,
+    state = 'available',
+    available_at = $4,
     retain_until = CASE
-        WHEN $4::text IS NOT NULL AND a.retention_days IS NOT NULL
-            THEN $5::timestamptz + make_interval(days => a.retention_days)
+        WHEN a.retention_days IS NOT NULL
+            THEN $4::timestamptz + make_interval(days => a.retention_days)
     END
 WHERE a.tenant = $1 AND a.artifact_id = $2 AND a.state = 'uploading'
 RETURNING
@@ -18,7 +15,6 @@ RETURNING
     a.name,
     a.media_type,
     a.size_bytes,
-    a.sha256,
     a.labels,
     a.release_state AS "release_state: ReleaseState",
     a.state AS "state: ArtifactState",

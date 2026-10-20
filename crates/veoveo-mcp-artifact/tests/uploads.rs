@@ -1,6 +1,6 @@
 //! Uploads against the database: quota reservations under concurrent callers, the
 //! open-upload limit, idempotent creates, completion with known and unknown sizes,
-//! digest verification, aborts, and the sweep that ends and removes what is left.
+//! size validation, aborts, and the sweep that ends and removes what is left.
 mod support;
 
 use std::sync::Arc;
@@ -183,7 +183,7 @@ async fn an_idempotency_key_returns_the_first_upload_for_its_acting_identity() {
 }
 
 #[tokio::test]
-async fn completion_checks_sizes_and_verifies_digests() {
+async fn completion_checks_sizes_and_makes_unknown_size_available() {
     with_store(|store| async move {
         let who = Who::new("owen");
         let caller = who.caller();
@@ -196,7 +196,6 @@ async fn completion_checks_sizes_and_verifies_digests() {
                 wrong.upload.upload_id,
                 &CompletedObject {
                     size: ObjectSize::new(11).unwrap(),
-                    checked_sha256: None,
                 },
                 now(),
             )
@@ -208,7 +207,7 @@ async fn completion_checks_sizes_and_verifies_digests() {
         let (upload, _) = store.upload(&caller, wrong.upload.upload_id).await.unwrap();
         assert_eq!(upload.state, UploadState::Completed);
 
-        // An unknown size verifies until the server records the digest.
+        // An unknown size becomes available when its actual size fits the reservation.
         let mut stream = upload_request("stream.bin", None);
         stream.max_size = Some(ObjectSize::new(500).unwrap());
         let streamed = create(&store, &who, stream).await;
@@ -218,59 +217,16 @@ async fn completion_checks_sizes_and_verifies_digests() {
                 streamed.upload.upload_id,
                 &CompletedObject {
                     size: ObjectSize::new(321).unwrap(),
-                    checked_sha256: None,
                 },
                 now(),
             )
             .await
             .unwrap();
-        assert_eq!(received.state, ArtifactState::Verifying);
+        assert_eq!(received.state, ArtifactState::Available);
         assert_eq!(received.size.map(ObjectSize::bytes), Some(321));
-        assert!(received.sha256.is_none());
         let usage = store.storage_usage(&caller).await.unwrap();
         assert_eq!((usage.stored_bytes, usage.reserved_bytes), (321, 0));
-        let state = store
-            .record_digest(&caller, received.artifact_id, None, &digest(9), now())
-            .await
-            .unwrap();
-        assert_eq!(state, ArtifactState::Available);
-        let read = store
-            .artifact(&caller, received.artifact_id, now())
-            .await
-            .unwrap();
-        assert_eq!(read.record.sha256, Some(digest(9)));
-        assert!(read.record.available_at.is_some());
-
-        // A computed digest that differs from the declared one fails the artifact and
-        // releases its stored bytes.
-        let mut declared = upload_request("declared.bin", None);
-        declared.sha256 = Some(digest(1));
-        let declared = create(&store, &who, declared).await;
-        store
-            .complete_upload(
-                &caller,
-                declared.upload.upload_id,
-                &CompletedObject {
-                    size: ObjectSize::new(50).unwrap(),
-                    checked_sha256: None,
-                },
-                now(),
-            )
-            .await
-            .unwrap();
-        let state = store
-            .record_digest(
-                &caller,
-                declared.artifact.artifact_id,
-                Some(&digest(1)),
-                &digest(2),
-                now(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(state, ArtifactState::Failed);
-        let usage = store.storage_usage(&caller).await.unwrap();
-        assert_eq!(usage.stored_bytes, 321);
+        assert!(received.available_at.is_some());
 
         // A completed upload cannot complete again, and another caller cannot see it.
         let again = store
@@ -279,7 +235,6 @@ async fn completion_checks_sizes_and_verifies_digests() {
                 streamed.upload.upload_id,
                 &CompletedObject {
                     size: ObjectSize::new(1).unwrap(),
-                    checked_sha256: None,
                 },
                 now(),
             )

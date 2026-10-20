@@ -7,10 +7,7 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use chrono::Utc;
 use support::{
-    Who, create, declared_store, now,
-    seaweedfs::send,
-    service::{owner, sha256, with_service},
-    upload_request,
+    Who, create, declared_store, now, seaweedfs::send, service::with_service, upload_request,
 };
 use veoveo_audit::AuditStore;
 use veoveo_audit_contract::{
@@ -21,11 +18,11 @@ use veoveo_fixtures::store::TestDb;
 use veoveo_mcp_artifact::{
     contract::{
         AccessRequestCancelled, AccessRequestDecided, AccessRequestDecision, AccessRequested,
-        ArtifactDeleted, ArtifactId, ArtifactVerified, CreateShareLinkRequest,
-        DecideAccessRequestRequest, DownloadIssued, GrantArtifactRequest, GrantChanged, Note,
-        ReleaseChanged, ReleaseState, RequestArtifactAccessRequest, ShareLinkCreated,
-        ShareLinkDays, ShareLinkRedeemed, ShareLinkRevoked, UploadAborted, UploadCompleted,
-        UploadCreated, UploadId, UploadLimits, UploadLimitsSet, UploadTransfer, audit_registry,
+        ArtifactDeleted, ArtifactId, CreateShareLinkRequest, DecideAccessRequestRequest,
+        DownloadIssued, GrantArtifactRequest, GrantChanged, Note, ReleaseChanged, ReleaseState,
+        RequestArtifactAccessRequest, ShareLinkCreated, ShareLinkDays, ShareLinkRedeemed,
+        ShareLinkRevoked, UploadAborted, UploadCompleted, UploadCreated, UploadId, UploadLimits,
+        UploadLimitsSet, UploadTransfer, audit_registry,
     },
     migrator, server,
     store::{ArtifactStore, ArtifactStoreError, CompletedObject},
@@ -193,7 +190,7 @@ async fn every_decision_records_its_declared_class() {
         let caller = who.caller();
         let service = &harness.service;
 
-        // A small upload without a declared digest: created, completed and verified.
+        // A small upload: created and completed directly to available.
         let body = b"report".to_vec();
         let created = service
             .create_upload(
@@ -208,10 +205,9 @@ async fn every_decision_records_its_declared_class() {
         };
         assert!(send(put, body.clone(), &[]).await.status().is_success());
         let artifact = service
-            .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
+            .complete_upload(&caller, created.upload.upload_id, Utc::now())
             .await
             .unwrap();
-        assert_eq!(artifact.sha256, Some(sha256(&body)));
         let artifact_id = artifact.artifact_id;
 
         service
@@ -341,7 +337,6 @@ async fn every_decision_records_its_declared_class() {
             [
                 UploadCreated::CLASS,
                 UploadCompleted::CLASS,
-                ArtifactVerified::CLASS,
                 DownloadIssued::CLASS,
                 GrantChanged::CLASS,
                 GrantChanged::CLASS,
@@ -365,7 +360,7 @@ async fn every_decision_records_its_declared_class() {
             .filter(|class| class.starts_with("artifact."))
             .collect();
         assert!(classes.iter().all(|class| declared.contains(class)));
-        assert_eq!(declared.len(), 15);
+        assert_eq!(declared.len(), 14);
 
         // Every detail reads back as its type, and names the artifact it is about.
         let of = |class: &str| -> Vec<&AuditRecord> {
@@ -376,9 +371,6 @@ async fn every_decision_records_its_declared_class() {
         };
         let read =
             |record: &AuditRecord| (record.draft.class().clone(), record.draft.detail().clone());
-        let (class, detail) = read(of(ArtifactVerified::CLASS)[0]);
-        let verified: ArtifactVerified = registry.read(&class, &detail).unwrap();
-        assert_eq!(verified.sha256, sha256(&body));
         let (class, detail) = read(of(DownloadIssued::CLASS)[0]);
         let download: DownloadIssued = registry.read(&class, &detail).unwrap();
         assert_eq!(download.artifact_id, artifact_id);
@@ -404,7 +396,6 @@ async fn every_decision_records_its_declared_class() {
         let expected = [
             upload_target(upload),
             upload_target(upload),
-            artifact.clone(),
             artifact.clone(),
             grants_of.clone(),
             grants_of.clone(),
@@ -461,56 +452,6 @@ async fn every_decision_records_its_declared_class() {
 }
 
 #[tokio::test]
-async fn a_digest_mismatch_records_a_failed_verification() {
-    with_service(|harness| async move {
-        let who = Who::new("ada");
-        let caller = who.caller();
-        let mut request = upload_request("wrong.bin", None);
-        request.sha256 = Some(sha256(b"other bytes"));
-        request.max_size =
-            Some(veoveo_mcp_artifact::contract::ObjectSize::new(6 * 1024 * 1024).unwrap());
-        let created = harness
-            .service
-            .create_upload(&caller, &Checked::new(request).unwrap(), Utc::now())
-            .await
-            .unwrap();
-        let Some(UploadTransfer::Multipart { parts, .. }) = &created.transfer else {
-            panic!("parts");
-        };
-        assert!(
-            send(&parts[0].transfer, vec![1_u8; 100], &[])
-                .await
-                .status()
-                .is_success()
-        );
-        assert!(
-            harness
-                .service
-                .complete_upload(&caller, &owner(&who), created.upload.upload_id, Utc::now())
-                .await
-                .is_err()
-        );
-        let records = records(harness.db.connect().await, "acme").await;
-        let last = &records.last().expect("records").draft;
-        assert_eq!(last.class().to_string(), ArtifactVerified::CLASS);
-        assert_eq!(last.outcome(), AuditOutcome::Failure);
-        assert_eq!(
-            last.reason(),
-            Some(&AuditReason::parse("digest_mismatch").unwrap())
-        );
-        let detail: ArtifactVerified = audit_registry()
-            .unwrap()
-            .read(last.class(), last.detail())
-            .unwrap();
-        assert_eq!(
-            detail.state,
-            veoveo_mcp_artifact::contract::ArtifactState::Failed
-        );
-    })
-    .await;
-}
-
-#[tokio::test]
 async fn a_size_that_differs_records_a_failed_completion() {
     with_database(|db| async move {
         let store = declared_store(db.server_store(&server()).await).await;
@@ -522,7 +463,6 @@ async fn a_size_that_differs_records_a_failed_completion() {
                 created.upload.upload_id,
                 &CompletedObject {
                     size: veoveo_mcp_artifact::contract::ObjectSize::new(11).unwrap(),
-                    checked_sha256: None,
                 },
                 now(),
             )

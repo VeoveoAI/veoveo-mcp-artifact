@@ -1,22 +1,17 @@
-//! The server's own calls: multipart control, object metadata, deletion and the
-//! SHA-256 of a stored object.
+//! The server's own calls: multipart control, object metadata and deletion.
 use aws_sdk_s3::{
     error::ProvideErrorMetadata,
-    types::{ChecksumMode, CompletedMultipartUpload, CompletedPart},
+    types::{CompletedMultipartUpload, CompletedPart},
 };
-use sha2::{Digest as _, Sha256};
-use veoveo_types::Sha256Digest;
 
 use crate::contract::{MediaType, ObjectSize};
 
-use super::{ObjectKey, ObjectStorage, StorageError, digest_from_checksum};
+use super::{ObjectKey, ObjectStorage, StorageError};
 
 /// What object storage holds at a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredObject {
     pub size: ObjectSize,
-    /// The SHA-256 the store checked when a single PutObject declared one.
-    pub sha256: Option<Sha256Digest>,
 }
 
 /// The store's codes for an upload or object that does not exist.
@@ -78,7 +73,6 @@ impl ObjectStorage {
                     CompletedPart::builder()
                         .set_part_number(part.part_number())
                         .set_e_tag(part.e_tag().map(ToOwned::to_owned))
-                        .set_checksum_sha256(part.checksum_sha256().map(ToOwned::to_owned))
                         .build(),
                 );
             }
@@ -145,7 +139,6 @@ impl ObjectStorage {
             .head_object()
             .bucket(&self.bucket)
             .key(key.as_str())
-            .checksum_mode(ChecksumMode::Enabled)
             .send()
             .await
         {
@@ -162,7 +155,6 @@ impl ObjectStorage {
             })?;
         Ok(Some(StoredObject {
             size: ObjectSize::new(size).map_err(|_| StorageError::Size)?,
-            sha256: head.checksum_sha256().and_then(digest_from_checksum),
         }))
     }
 
@@ -176,31 +168,6 @@ impl ObjectStorage {
             .await
             .map_err(|error| StorageError::call("DeleteObject", error))?;
         Ok(())
-    }
-
-    /// Stream the object at `key` once and return its SHA-256 and size.
-    pub async fn sha256(&self, key: &ObjectKey) -> Result<(Sha256Digest, u64), StorageError> {
-        let object = self
-            .internal
-            .get_object()
-            .bucket(&self.bucket)
-            .key(key.as_str())
-            .send()
-            .await
-            .map_err(|error| StorageError::call("GetObject", error))?;
-        let mut body = object.body;
-        let mut hasher = Sha256::new();
-        let mut size = 0_u64;
-        while let Some(chunk) = body.try_next().await.map_err(|_| StorageError::Call {
-            operation: "GetObject",
-            code: "interrupted body".to_owned(),
-        })? {
-            size += chunk.len() as u64;
-            hasher.update(&chunk);
-        }
-        let digest = Sha256Digest::parse(format!("sha256:{}", hex::encode(hasher.finalize())))
-            .expect("a SHA-256 has the digest spelling");
-        Ok((digest, size))
     }
 }
 

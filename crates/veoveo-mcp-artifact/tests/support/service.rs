@@ -4,7 +4,6 @@
 
 use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
 
-use sha2::{Digest as _, Sha256};
 use veoveo_fixtures::store::TestDb;
 use veoveo_mcp_artifact::{
     migrator, server, service::ArtifactService, share::ShareBase, storage::ObjectStorage,
@@ -13,8 +12,7 @@ use veoveo_store::{Instance, PlatformStore};
 use veoveo_task::{PrincipalKind, TaskOwner, TaskRuntime, TaskSurface};
 use veoveo_types::{
     AccessSubject, DataLabelId, InvocationAuthority, InvocationProvenance, PolicyVersion,
-    PrincipalId, Sha256Digest, TenantId, TokenIssuer, TokenSubject, WorkContextId,
-    WorkContextOutputPolicy,
+    PrincipalId, TenantId, TokenIssuer, TokenSubject, WorkContextId, WorkContextOutputPolicy,
 };
 
 use super::{Who, seaweedfs::TestSeaweedFs};
@@ -26,6 +24,7 @@ pub const SHARE_ORIGIN: &str = "http://artifact.test:8801";
 pub struct Harness {
     pub service: Arc<ArtifactService>,
     pub storage: ObjectStorage,
+    pub tasks: TaskRuntime,
     _seaweedfs: TestSeaweedFs,
     /// The server's own store, which a test listens on for Artifact's changes.
     pub platform: PlatformStore,
@@ -56,11 +55,11 @@ where
         let service = Arc::new(ArtifactService::new(
             store,
             storage.clone(),
-            tasks,
             ShareBase::parse(SHARE_ORIGIN).unwrap(),
         ));
         let harness = Arc::new(Harness {
             service,
+            tasks,
             storage,
             _seaweedfs: seaweedfs,
             platform,
@@ -104,9 +103,4 @@ pub fn owner(who: &Who) -> TaskOwner {
             },
         },
     }
-}
-
-/// The SHA-256 of `bytes` in the digest spelling.
-pub fn sha256(bytes: &[u8]) -> Sha256Digest {
-    Sha256Digest::parse(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))).unwrap()
 }

@@ -18,9 +18,7 @@ pub enum ReleaseState {
 pub enum ArtifactState {
     /// Its upload is open and its bytes have not all arrived.
     Uploading,
-    /// Its bytes arrived and the server is computing their SHA-256.
-    Verifying,
-    /// It can be read.
+    /// Its bytes arrived, passed size validation and can be read.
     Available,
     /// Its bytes did not match what the upload declared.
     Failed,
@@ -146,7 +144,6 @@ mod tests {
 
     #[test]
     fn states_use_snake_case_spellings() {
-        assert_eq!(ArtifactState::Verifying.as_str(), "verifying");
         assert_eq!(UploadForm::Multipart.as_str(), "multipart");
         assert_eq!(ReleaseState::Released.as_str(), "released");
     }

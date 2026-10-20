@@ -8,7 +8,6 @@ pub(crate) fn tool_error(error: ArtifactError) -> McpError {
     match error {
         ArtifactError::Store(error) => store_error(error),
         refusal @ (ArtifactError::NoBytes
-        | ArtifactError::DigestMismatch
         | ArtifactError::PartTooLarge { .. }
         | ArtifactError::NotMultipart) => McpError::invalid_params(refusal.to_string(), None),
         ArtifactError::Storage(crate::storage::StorageError::ObjectExists) => {
@@ -17,9 +16,7 @@ pub(crate) fn tool_error(error: ArtifactError) -> McpError {
         ArtifactError::Storage(crate::storage::StorageError::NoParts) => {
             McpError::invalid_params("the multipart upload holds no parts yet", None)
         }
-        failure @ (ArtifactError::Storage(_)
-        | ArtifactError::Tasks(_)
-        | ArtifactError::Random(_)) => internal(&failure),
+        failure @ (ArtifactError::Storage(_) | ArtifactError::Random(_)) => internal(&failure),
     }
 }
 

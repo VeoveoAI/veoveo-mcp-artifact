@@ -40,7 +40,8 @@ decisions; bytes move between clients and object storage through URLs the server
 - An object's key is `tenants/{tenant}/artifacts/{artifact}`. A failed, aborted or
   expired upload's object is removed when it fails, and the sweep removes it again
   before the row goes.
-- A verification Task carries its artifact's identifier. Do not queue a second one.
+- Completion makes size-valid bytes available without a content digest or verification
+  Task. ArtifactID and create-only storage are identity; consumers own content hashing.
 - The storage secret lives in the server's environment, because SigV4 signs with it.
 - A share link's secret appears only in the URL `create_share_link` returns. The store
   keeps its SHA-256, records and errors never name it, and the hosted server's request

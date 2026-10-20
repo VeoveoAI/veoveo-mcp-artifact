@@ -36,7 +36,6 @@ client = [
     "dep:futures",
     "dep:reqwest",
     "reqwest/stream",
-    "dep:sha2",
     "dep:tokio",
     "tokio/io-util",
     "tokio/rt",
@@ -44,7 +43,7 @@ client = [
     "tokio-util/io",
 ]
 # The hosted server: MCP through the SDK, persistence in the `artifact` schema, object
-# storage, the verification Tasks, the sweep and the binary.
+# storage, the sweep and the binary.
 server = [
     "contract",
     "chrono/clock",
@@ -59,7 +58,6 @@ server = [
     "dep:dotenvy",
     "dep:futures",
     "dep:getrandom",
-    "dep:hex",
     "dep:reqwest",
     "dep:rmcp",
     "dep:rustls",
@@ -100,7 +98,6 @@ clap = { workspace = true, optional = true }
 dotenvy = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true }
-hex = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["rustls-no-provider"], optional = true }
 rmcp = { workspace = true, features = ["server", "macros", "schemars", "transport-streamable-http-server"], optional = true }
 rustls = { workspace = true, optional = true }
@@ -116,6 +113,8 @@ veoveo-store = { workspace = true, optional = true }
 veoveo-task = { workspace = true, optional = true }
 
 [dev-dependencies]
+hex.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
 veoveo-audit.workspace = true
 veoveo-audit-contract.workspace = true

@@ -37,7 +37,7 @@ port         8801
 | [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) `If-None-Match: *` | Create-only writes on PutObject and CompleteMultipartUpload. |
 | [RFC 6266](https://www.rfc-editor.org/rfc/rfc6266) | Download responses carry an attachment disposition with the artifact's name as `filename*`. |
 | [RFC 6838](https://www.rfc-editor.org/rfc/rfc6838) media types | An artifact's media type is a bare `type/subtype` without parameters. |
-| SHA-256 | Every available artifact records its SHA-256 in the foundational `Sha256Digest` spelling, `sha256:` followed by 64 lowercase hexadecimal digits. |
+| Object identity | ArtifactID and create-only storage identify an object. Artifact checks its size; consumers own any content digest policy. Share-link secrets still use SHA-256 protection. |
 | [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Hub forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, and the server's Task when the call came from one, which Artifact records in each artifact's provenance and as the `via` of its audit records. `ArtifactClient` calls through a Hub profile with a token the SDK obtains by exchange. |
 | [HTTP range requests, RFC 9110 §14](https://www.rfc-editor.org/rfc/rfc9110#name-range-requests) | `ArtifactClient` sends one `bytes=first-last` or `bytes=first-` range with a signed GET and expects `206 Partial Content`. |
 | [HTTP semantics, RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) `303 See Other` and `Cache-Control: no-store` ([RFC 9111](https://www.rfc-editor.org/rfc/rfc9111)) | The share route answers a live link with `303` to a signed GET, and every answer carries `no-store`. |
@@ -52,7 +52,7 @@ port         8801
 Artifact answers these questions for a tenant:
 
 - Which files may this caller see, and what does each one hold: name, media type,
-  size, SHA-256, labels, owner, Work Context, release state and provenance?
+  size, labels, owner, Work Context, release state and provenance?
 - Where does a caller send the bytes of a new file, and where do they fetch an
   existing one?
 - Who else may read, change or administer a file, and until when?
@@ -81,9 +81,8 @@ boundaries with `cargo tree`.
 
 The binary parses configuration, prepares its bucket, registers with the Hub,
 connects to PostgreSQL with the login its registration returned, applies its
-migrations and serves MCP. Three loops run on every replica beside it: the sweep, which
-claims rows with `FOR UPDATE SKIP LOCKED`; the verification worker, which claims
-verification Tasks from core's Task runtime; and the change watcher, which hands each
+migrations and serves MCP. Two loops run on every replica beside it: the sweep, which
+claims rows with `FOR UPDATE SKIP LOCKED`; and the change watcher, which hands each
 change on the `artifact` channel to its tenant's subscribers.
 
 ## MCP Surface
@@ -94,7 +93,7 @@ change on the `artifact` channel to its tenant's subscribers.
 |---|---|---|---|
 | `create_upload` | Reserves quota and an artifact ID and returns the URLs that receive the bytes | `artifact.artifacts.write` | contributor or above in the caller's selected Work Context |
 | `sign_upload_parts` | Signs the next part URLs of a multipart upload, or signs expired ones again | `artifact.artifacts.write` | the upload's creator |
-| `complete_upload` | Completes the upload and makes the artifact available, or starts its checksum Task | `artifact.artifacts.write` | the upload's creator |
+| `complete_upload` | Completes native create-only storage, validates size and makes the artifact available | `artifact.artifacts.write` | the upload's creator |
 | `abort_upload` | Aborts the upload and releases its reservation | `artifact.artifacts.write` | the upload's creator |
 | `create_download` | Returns a signed GET URL valid for 5 minutes | `artifact.artifacts.read` | read |
 | `grant_artifact`, `revoke_artifact_grant` | Gives or removes read, write or admin for a principal or group, with an optional expiry | `artifact.grants.write` (sensitive) | admin |
@@ -105,7 +104,7 @@ change on the `artifact` channel to its tenant's subscribers.
 | `delete_artifact` | Deletes the artifact, its grants and share links, and its object | `artifact.artifacts.delete` (destructive) | admin |
 | `set_upload_limits` | Sets a tenant's quota, largest object, allowed media types and active-upload limit | `artifact.upload-limits.administer` (administer) | installation administrator |
 
-`create_upload` takes the name and media type, and optionally the size, the SHA-256,
+`create_upload` takes the name and media type, and optionally the size,
 a maximum size, data labels, a retention period, metadata, the artifacts it derives
 from and an idempotency key. The owner, tenant, Work Context and provenance come from
 the forwarded identity, never from arguments: the artifact belongs to the caller's
@@ -177,30 +176,21 @@ limited to that bucket and never leaves the server.
 
 | The caller declares | Form | The server checks |
 |---|---|---|
-| a size up to 100 MiB, with or without a SHA-256 | one signed PutObject | SeaweedFS refuses a different size, or a different SHA-256 when one was declared, while it writes |
-| a larger size, or no size | multipart, with a part size the server chooses | each part's size, and each part's SHA-256 when the client sends one |
+| a size up to 100 MiB | one signed PutObject | object storage refuses a different size while it writes |
+| a larger size, or no size | multipart, with a part size the server chooses | each declared part size, and the completed object's actual size |
 
-Every signed PutObject binds `Content-Length`, `Content-Type` and `If-None-Match: *`,
-plus `x-amz-checksum-sha256` when the caller declared a SHA-256. Every signed
-UploadPart binds the part's length and, when the client supplies one, its SHA-256. The
-part size is 16 MiB, or larger when the maximum size needs more than 10,000 parts.
-Parts upload in parallel, and a failed part is sent again on a URL from
-`sign_upload_parts`.
+Every signed PutObject binds `Content-Length`, `Content-Type` and `If-None-Match: *`.
+Every signed UploadPart binds its length when supplied. The part size is 16 MiB, or
+larger when the maximum size needs more than 10,000 parts. Parts upload in parallel,
+and the public client retries a failed part within its existing bounded policy.
 
-`complete_upload` completes the multipart upload create-only with the part list from
-ListParts, then reads the object's size with HeadObject. When SeaweedFS checked a
-declared SHA-256 during a single PUT, the artifact becomes available at once. In every
-other case the server computes the SHA-256 itself. Objects up to 8 MiB are hashed
-during `complete_upload`. A larger object reads `verifying` while a verification Task
-streams it once and records the digest. The Task carries the artifact's identifier, so
-completing the upload again finds the same Task, and a replica resumes the Task when the
-instance that claimed it dies. The SDK's `TaskWorker` runs verifications with the
-`PreserveOutcome` cancellation policy, so a recorded digest stands over a cancellation
-requested later, and a lost database connection hands a running verification to its
-recovery, which queues it again. A declared SHA-256 that does not match fails the
-artifact, removes its object and refuses the completion. When a verifying artifact
-still has no live Task 15 minutes after its upload completed, the sweep fails it and
-removes its object.
+`complete_upload` completes the multipart upload create-only using the part numbers
+and native ETags from ListParts, then reads the actual size with HeadObject. A size
+that differs from the declaration or exceeds the maximum/reservation fails the
+artifact and removes its object. Otherwise one database transaction ends the upload,
+settles its reservation, records availability and retention, and appends the completion
+audit record. Completion reads no object body, records no content checksum and creates
+no verification Task. Repeating an ended upload returns its retained outcome.
 
 An upload expires 24 hours after creation. The sweep then aborts its multipart upload,
 removes any object that arrived and releases its reservation, and a bucket lifecycle
@@ -218,7 +208,7 @@ SeaweedFS on the same URL.
 
 At startup the server creates the bucket when it does not exist, sets CORS to the
 installation's application origins for PUT and GET with the headers the signed URLs
-bind (`content-type`, `if-none-match` and `x-amz-checksum-sha256`), and sets a
+bind (`content-type` and `if-none-match`), and sets a
 lifecycle rule that aborts incomplete multipart uploads after one day. The server uses aws-sdk-s3 1.152.0 without default features, with rustls on ring
 and without aws-config. It builds two clients from one configuration: one signs URLs
 with the address clients use, because SigV4 binds the Host header, and one makes its
@@ -306,7 +296,7 @@ An upload reads the body from an `AsyncRead`, a stream of chunks or bytes in mem
 
 | Body | Upload |
 |---|---|
-| at most 16 MiB, size known or not | The client reads it into memory, then declares its size and SHA-256 with `create_upload`. One create-only PUT sends it, and SeaweedFS refuses other bytes. The artifact is available at completion. |
+| at most 16 MiB, size known or not | The client reads it into memory, then declares its size with `create_upload`. One create-only PUT sends it, and object storage enforces the signed length. The artifact is available at completion. |
 | larger than 16 MiB | The client declares a known size as the upload's maximum size, so the upload is multipart and every part can be signed and sent again on its own. It reads parts of the upload's part size and sends them while it reads the next. |
 
 A part takes a permit before the client reads it, so at most `parallelism` parts are in
@@ -320,14 +310,10 @@ number of bytes than its declared size, or more than its bound, fails the upload
 every failure after `create_upload` aborts the upload, which releases its reserved bytes.
 An upload whose future is dropped stays open until it expires.
 
-A multipart upload resolves while Artifact still verifies a large object, so its artifact
-is `verifying`. `until_verified(timeout)` makes the upload wait for the verification: it
-reads `artifact://artifacts/{artifact_id}` through `ReadArtifact`, the contract's typed
-read of that resource, and follows the resource's updates on `subscriptions/listen` until
-the artifact leaves `verifying`. It resolves with the available artifact, fails with
-`VerificationFailed` when the bytes did not verify, and fails with a timeout when the
-verification takes longer, while the artifact keeps verifying. The wait reads the
-resource, so the caller needs `artifact.artifacts.read`.
+An upload resolves with the available artifact after native storage completion and
+size validation. A failed retained outcome returns `UploadFailed`. There is no
+content-hash worker or verification wait; a consumer that requires a content digest
+computes and stores it separately.
 
 A download calls `create_download` and streams the signed GET, whole or as one range.
 A failure names object storage's status and S3 error code, never the signed URL.
@@ -383,9 +369,9 @@ Per-rule compliance profiles and their generated manual section are removed.
 
 | Table in `artifact` | Holds | Retention |
 |---|---|---|
-| `artifact` | ID, tenant, Work Context, owner, name, media type, size, SHA-256, labels, release state, provenance, metadata, retention and state (`uploading`, `verifying`, `available`, `failed`, `deleting`) | Until deleted or its retention passes; a failed artifact, which holds no object, 7 days after it failed |
+| `artifact` | ID, tenant, Work Context, owner, name, media type, size, labels, release state, provenance, metadata, retention and state (`uploading`, `available`, `failed`, `deleting`) | Until deleted or its retention passes; a failed artifact, which holds no object, 7 days after it failed |
 | `grant` | Artifact, subject kind and ID, level, expiry and grantor | With the artifact, or at expiry |
-| `upload` | Artifact, creator, acting identity, idempotency key, form, declared size and SHA-256, maximum size, S3 upload ID, part size, state and expiry | 7 days after it ends |
+| `upload` | Artifact, creator, acting identity, idempotency key, form, declared size, maximum size, S3 upload ID, part size, state and expiry | 7 days after it ends |
 | `share_link` | Artifact, secret digest, expiry, redemption limit and count, and revocation | 30 days after expiry or revocation |
 | `access_request` | Artifact, requester, level, justification, state, decider and note | 90 days after a decision |
 | `storage_usage` | Per tenant: stored and reserved bytes | With the tenant |
@@ -398,7 +384,7 @@ reserves its maximum size, or the tenant's largest object when it gives none, an
 completion settles the reservation to the real size.
 
 An artifact counts toward stored bytes from completion until its row goes, so a size
-exists only in the `verifying`, `available` and `deleting` states. Deleting an artifact
+exists only in the `available` and `deleting` states. Deleting an artifact
 marks it `deleting`, and `artifact.effective_level` hides it from every caller at once.
 The sweep then claims a batch of deleted artifacts, deletes each object and then each
 row, and commits. The row's grants, uploads, share links and access requests go with it
@@ -409,7 +395,7 @@ retention, each in short batches that `FOR UPDATE SKIP LOCKED` divides between
 replicas. The server removes a failed artifact's object when it fails, and the sweep
 removes it again in case the process stopped first.
 
-Listings hold `verifying` and `available` artifacts. An upload's progress is read
+Listings hold `available` artifacts. An upload's progress is read
 through the uploads resource. An artifact holds at most 256 grants, and its name holds
 no Unicode noncharacters, so a prefix followed by U+10FFFF bounds every name that starts
 with it.
@@ -425,7 +411,6 @@ for each class with the OCSF API Activity (6003) activity the export maps it to:
 |---|---|---|---|---|
 | `artifact.upload_created` | `create_upload` reserves an artifact | the upload | Create | success |
 | `artifact.upload_completed` | `complete_upload` records the bytes that arrived | the upload | Update | success, or failure with reason `size_mismatch` when the size differs from the declared one or exceeds the reservation |
-| `artifact.verified` | the server records a computed SHA-256, during `complete_upload` or in the verification Task | the artifact | Update | success, or failure with reason `digest_mismatch` when it differs from the declared digest |
 | `artifact.upload_aborted` | `abort_upload` | the upload | Delete | success |
 | `artifact.download_issued` | `create_download` signs a URL, before the URL is returned | the artifact | Read | success |
 | `artifact.grant_changed` | `grant_artifact`, `revoke_artifact_grant` with no level, or an approved access request | the artifact's grants | Update | success |
@@ -443,11 +428,9 @@ A target is the Artifact resource address the decision concerns, such as
 `artifact://artifacts/{artifact_id}`, `artifact://uploads/{upload_id}` or
 `artifact://artifacts/{artifact_id}/grants`. Artifact records the decisions it makes;
 a refused request changes nothing and records nothing, so its reason codes are
-`size_mismatch` and `digest_mismatch`. A record's actor and request come from the
+`size_mismatch`. A record's actor and request come from the
 Hub's signed request context, and its `via` names the server that made the call for
-the caller and that server's Task, so details carry Artifact's facts only. A
-verification Task's records carry its owner and a background request that names the
-Task. Startup declares the classes through the server's own login with core's
+the caller and that server's Task, so details carry Artifact's facts only. Startup declares the classes through the server's own login with core's
 `AuditStore::declare_as_server`, and each record goes through
 `AuditTransactionWrite::append_as_server`, which the database confines to classes under
 the `artifact.` prefix. A record states the authorization, such as a principal allowed
@@ -521,13 +504,13 @@ signed header would void the signature.
 
 | Layer | Checks |
 |---|---|
-| Unit | Checksum headers, object keys, attachment dispositions, part plans, permission risks, audit schemas, the requirement table and tool annotations, the MCP setup, subscription matching and configuration |
+| Unit | The checksum-free content contract, object keys, attachment dispositions, part plans, permission risks, audit schemas, the requirement table and tool annotations, the MCP setup, subscription matching and configuration |
 | Database | Core's database checks over every statement and table; `tests/sql_confinement.rs` holds every query, migration and test query to the `artifact` schema with the SDK's `assert_sql_confined`; `effective_level` against a matrix of owners, grants, groups, Work Context roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
-| Object storage | A private SeaweedFS per test process, from the binary in the pinned image: signed single and multipart uploads, a wrong size, checksum or part checksum refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
-| Service | The store and SeaweedFS together: declared and undeclared uploads, refused bytes, aborts, a large object verified in a Task, a verification whose database sessions end while its digest write waits, which runs again from its recovery, a digest mismatch, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
+| Object storage | A private SeaweedFS per test process, from the binary in the pinned image: signed single and multipart uploads, wrong object sizes and part lengths refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
+| Service | The store and SeaweedFS together: declared and undeclared uploads, refused bytes, aborts, a large unknown-size object made available without a background Task, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
 | MCP | The SDK's in-process Hub with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
 | Sharing | Database tests: returning to private ends only live links and releasing again revives none; links need an administrator and a released, available artifact without labels; twelve concurrent redemptions of a link limited to three count exactly three; expired, revoked, deleted and unknown links redeem nothing, and a dropped redemption counts nothing; share-link pages and their cursors. Access requests: an approval writes the requested grant and records each step, visibility and the held level bound a request, only the requester withdraws and only an administrator decides, an approval keeps a stronger grant, and listings page by role and state |
 | Share route | `tests/share_route.rs` through the hosted router and a private SeaweedFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
-| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private SeaweedFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves verifying, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and waits for its verification through the artifact's resource updates, which resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
-| Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size or digest mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |
-| Acceptance | `tests/acceptance.rs` through a running installation's Hub and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, verified, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |
+| Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private SeaweedFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves available, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
+| Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |
+| Acceptance | `tests/acceptance.rs` through a running installation's Hub and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, independently fingerprinted by the consumer, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |

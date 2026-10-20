@@ -3,10 +3,8 @@
 //! drive them directly.
 mod sharing;
 mod transfers;
-mod verification;
 
 use chrono::{DateTime, Utc};
-use veoveo_task::TaskRuntime;
 use veoveo_types::{AccessLevel, AccessSubject, TenantId};
 
 use crate::{
@@ -19,11 +17,6 @@ use crate::{
     store::{ArtifactStore, ArtifactStoreError, Caller},
 };
 
-pub use verification::{
-    INLINE_DIGEST_BYTES, VERIFICATION_DEADLINE, VERIFY_TASK, VerificationRequest,
-    run_verifications, verification_task_id,
-};
-
 /// Why an operation failed: the store refused or failed, or object storage failed.
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
@@ -33,73 +26,28 @@ pub enum ArtifactError {
     Storage(#[from] StorageError),
     #[error("no bytes arrived for the upload")]
     NoBytes,
-    #[error("the received bytes do not match the SHA-256 the upload declared")]
-    DigestMismatch,
     #[error("a part declares {declared} bytes, more than the upload's part size of {part_size}")]
     PartTooLarge { declared: u64, part_size: u64 },
     #[error("the upload takes one signed PutObject, not parts")]
     NotMultipart,
-    #[error("the verification Task failed: {0}")]
-    Tasks(#[from] veoveo_task::TaskError),
     #[error("the operating system's random source failed: {0}")]
     Random(getrandom::Error),
 }
 
-impl ArtifactError {
-    /// The error reports a database connection that ended or could not be had, so the
-    /// same work may succeed on a new connection.
-    pub fn is_connection(&self) -> bool {
-        match self {
-            Self::Store(ArtifactStoreError::Database(error))
-            | Self::Store(ArtifactStoreError::AuditAppend(
-                veoveo_audit_contract::AuditAppendError::Database(error),
-            )) => veoveo_store::is_connection_error(error),
-            Self::Tasks(error) => error.is_connection(),
-            _ => false,
-        }
-    }
-}
-
-/// How the SDK's Task worker reads a verification's error: a lost database connection
-/// interrupted the work, and a Task error carries its own parked and lost states.
-impl veoveo_hub_sdk::durable_tasks::TaskWorkError for ArtifactError {
-    fn is_parked(&self) -> bool {
-        matches!(self, Self::Tasks(error) if error.is_parked())
-    }
-
-    fn is_lost(&self) -> bool {
-        matches!(
-            self,
-            Self::Tasks(veoveo_task::TaskError::NotOwner(_) | veoveo_task::TaskError::Conflict(_))
-        )
-    }
-
-    fn is_interrupted(&self) -> bool {
-        self.is_connection()
-    }
-}
-
-/// The server's state: its store, its bucket, its Task runtime and the origin its share
+/// The server's state: its store, its bucket and the origin its share
 /// links name.
 #[derive(Clone)]
 pub struct ArtifactService {
     store: ArtifactStore,
     storage: ObjectStorage,
-    tasks: TaskRuntime,
     share_base: ShareBase,
 }
 
 impl ArtifactService {
-    pub fn new(
-        store: ArtifactStore,
-        storage: ObjectStorage,
-        tasks: TaskRuntime,
-        share_base: ShareBase,
-    ) -> Self {
+    pub fn new(store: ArtifactStore, storage: ObjectStorage, share_base: ShareBase) -> Self {
         Self {
             store,
             storage,
-            tasks,
             share_base,
         }
     }
@@ -110,10 +58,6 @@ impl ArtifactService {
 
     pub fn storage(&self) -> &ObjectStorage {
         &self.storage
-    }
-
-    pub fn tasks(&self) -> &TaskRuntime {
-        &self.tasks
     }
 
     /// A signed GET for an available artifact the caller may read.
