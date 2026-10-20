@@ -90,6 +90,7 @@ fn forwarded(server: ServerSlug, permissions: BTreeSet<PermissionName>) -> Issue
     let authority = testing::authority();
     let now = Utc::now();
     let context = HubRequestContext {
+        execution: testing::execution_context(),
         audit: veoveo_audit_contract::AuditRequest::background(),
         access_token: AccessTokenSubject {
             issuer: principal.issuer.clone(),
@@ -115,6 +116,7 @@ fn forwarded(server: ServerSlug, permissions: BTreeSet<PermissionName>) -> Issue
     )
     .unwrap()
     .issue(ForwardedRequest {
+        deployment: testing::deployment_id(),
         profile: HubProfileId::parse(MESH_PROFILE).unwrap(),
         server,
         audience: ResourceIndicator::parse(testing::TEST_RESOURCE).unwrap(),
@@ -204,7 +206,8 @@ impl Mesh {
         );
         let calls: HubClient = self
             .ledger
-            .for_request(&issued.identity, &ForwardedBearer::new(issued.bearer_token));
+            .for_request(&issued.identity, &ForwardedBearer::new(issued.bearer_token))
+            .expect("the fixture request matches the Ledger deployment");
         ArtifactClient::new(calls, self.http.clone())
     }
 

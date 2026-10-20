@@ -240,3 +240,24 @@ claimed by this probe.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Deployment Admission And Offline Description
+
+Required `VEOVEO_DEPLOYMENT_ID` (`--deployment-id`) is one trusted-allocated UUIDv7,
+shared by the deployment's registration, verifier and Task runtime. Keep it and the
+private key directory on ordinary restart. A new build/contract/endpoint is a new
+admitted deployment rather than a mutation of old identity.
+
+```sh
+veoveo-mcp-artifact --describe-registration \
+  --deployment-id <allocated-uuidv7> \
+  --public-base-url https://candidate.example \
+  --key-directory /sandbox/builds/<build-id>/keys
+```
+
+This prints native public metadata and creates/reuses the worker key only. It needs
+no Hub/admission/storage credentials and makes no network or DB calls. Serving uses
+the same typed metadata and `resume_or_register`, persisting standard private
+ClientInformation beside the key. Process stop is separate from explicit retirement;
+the Hub can still prune an orphaned registration. Missing/expired resume requires
+fresh trusted admission, never namespace/global credential fallback.

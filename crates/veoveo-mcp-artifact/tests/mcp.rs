@@ -52,6 +52,7 @@ fn token(granted: &[ArtifactPermission]) -> String {
     let authority = testing::authority();
     let now = Utc::now();
     let context = HubRequestContext {
+        execution: testing::execution_context(),
         audit: AuditRequest::background(),
         access_token: AccessTokenSubject {
             issuer: principal.issuer.clone(),
@@ -77,6 +78,7 @@ fn token(granted: &[ArtifactPermission]) -> String {
     )
     .unwrap()
     .issue(ForwardedRequest {
+        deployment: testing::deployment_id(),
         profile: HubProfileId::parse("operations").unwrap(),
         server: veoveo_mcp_artifact::server(),
         audience: ResourceIndicator::parse(testing::TEST_RESOURCE).unwrap(),

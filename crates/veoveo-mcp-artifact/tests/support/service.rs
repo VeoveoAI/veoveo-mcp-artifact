@@ -44,7 +44,12 @@ where
         db.migrate_server(&server(), migrator()).await;
         let platform = db.server_store(&server()).await;
         let instance = Arc::new(Instance::start(&platform, &server()).await.unwrap());
-        let tasks = TaskRuntime::new(platform.clone(), server(), instance);
+        let tasks = TaskRuntime::new(
+            platform.clone(),
+            server(),
+            veoveo_hub_sdk::hosting::testing::deployment_id(),
+            instance,
+        );
         let seaweedfs = TestSeaweedFs::start().await;
         let storage = seaweedfs.storage().await;
         let store = super::declared_store(platform.clone()).await;

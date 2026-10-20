@@ -3,6 +3,7 @@
 //! registers, so neither is configured here.
 use std::path::PathBuf;
 
+use anyhow::Context;
 use clap::Parser;
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
@@ -13,6 +14,11 @@ use crate::{share::ShareBase, storage::StorageConfig};
 #[derive(Parser)]
 #[command(name = "veoveo-mcp-artifact", about = "Artifact MCP server")]
 pub(super) struct Args {
+    /// Print public registration metadata without network, storage or DB access.
+    #[arg(long)]
+    pub describe_registration: bool,
+    #[arg(long, env = "VEOVEO_DEPLOYMENT_ID")]
+    pub deployment_id: veoveo_hub_sdk::DeploymentId,
     #[arg(long, env = "VEOVEO_PORT", default_value_t = 8801)]
     pub port: u16,
     /// The origin where the Hub reaches Artifact; Artifact serves MCP at
@@ -26,17 +32,22 @@ pub(super) struct Args {
     #[arg(long, env = "VEOVEO_PUBLIC_ORIGIN")]
     pub public_origin: Option<PublicOrigin>,
     /// The Hub's RFC 8414 issuer; registration discovers its endpoint from there.
-    #[arg(long, env = "VEOVEO_HUB_ISSUER")]
-    pub hub_issuer: Url,
-    /// The installation's registration secret, or the placeholder the installation's edge replaces.
+    #[arg(
+        long,
+        env = "VEOVEO_HUB_ISSUER",
+        required_unless_present = "describe_registration"
+    )]
+    pub hub_issuer: Option<Url>,
+    /// Namespace or scoped initial access; saved native credentials handle resume.
     #[arg(
         long,
         env = "VEOVEO_REGISTRATION_SECRET",
+        required_unless_present = "describe_registration",
         hide_env_values = true,
         value_parser = parse_secret
     )]
-    pub registration_secret: SecretString,
-    /// Holds Artifact's registration key, which keeps its namespace across restarts.
+    pub registration_secret: Option<SecretString>,
+    /// Private deployment key and saved native registration, retained across process restarts.
     #[arg(
         long,
         env = "VEOVEO_KEY_DIRECTORY",
@@ -44,8 +55,12 @@ pub(super) struct Args {
     )]
     pub key_directory: PathBuf,
     /// Where Artifact calls object storage on the installation network.
-    #[arg(long, env = "VEOVEO_STORAGE_ENDPOINT")]
-    pub storage_endpoint: Url,
+    #[arg(
+        long,
+        env = "VEOVEO_STORAGE_ENDPOINT",
+        required_unless_present = "describe_registration"
+    )]
+    pub storage_endpoint: Option<Url>,
     /// Where clients send signed requests. SigV4 binds this host, so every client must
     /// reach object storage by this name. Defaults to the storage endpoint.
     #[arg(long, env = "VEOVEO_STORAGE_SIGNING_ENDPOINT")]
@@ -55,17 +70,23 @@ pub(super) struct Args {
     #[arg(long, env = "VEOVEO_STORAGE_BUCKET", default_value = "artifacts")]
     pub storage_bucket: String,
     /// The access key of Artifact's storage credential.
-    #[arg(long, env = "VEOVEO_STORAGE_ACCESS_KEY", hide_env_values = true)]
-    pub storage_access_key: String,
+    #[arg(
+        long,
+        env = "VEOVEO_STORAGE_ACCESS_KEY",
+        hide_env_values = true,
+        required_unless_present = "describe_registration"
+    )]
+    pub storage_access_key: Option<String>,
     /// The secret key of Artifact's storage credential. SigV4 signs with it inside the
     /// server, so the server holds the secret itself.
     #[arg(
         long,
         env = "VEOVEO_STORAGE_SECRET_KEY",
+        required_unless_present = "describe_registration",
         hide_env_values = true,
         value_parser = parse_secret
     )]
-    pub storage_secret_key: SecretString,
+    pub storage_secret_key: Option<SecretString>,
     /// Browser origins allowed to send signed requests to object storage.
     #[arg(
         long = "storage-cors-origin",
@@ -100,19 +121,31 @@ impl Args {
         ShareBase::parse(&origin).map_err(anyhow::Error::msg)
     }
 
-    pub fn storage(&self) -> StorageConfig {
-        StorageConfig {
-            internal_endpoint: self.storage_endpoint.clone(),
+    pub fn storage(&self) -> anyhow::Result<StorageConfig> {
+        let endpoint = self
+            .storage_endpoint
+            .as_ref()
+            .context("serving requires a storage endpoint")?;
+        Ok(StorageConfig {
+            internal_endpoint: endpoint.clone(),
             signing_endpoint: self
                 .storage_signing_endpoint
                 .clone()
-                .unwrap_or_else(|| self.storage_endpoint.clone()),
+                .unwrap_or_else(|| endpoint.clone()),
             region: self.storage_region.clone(),
             bucket: self.storage_bucket.clone(),
-            access_key: self.storage_access_key.clone(),
-            secret_key: self.storage_secret_key.expose_secret().to_owned(),
+            access_key: self
+                .storage_access_key
+                .clone()
+                .context("serving requires a storage access key")?,
+            secret_key: self
+                .storage_secret_key
+                .as_ref()
+                .context("serving requires a storage secret key")?
+                .expose_secret()
+                .to_owned(),
             cors_origins: self.storage_cors_origins.clone(),
-        }
+        })
     }
 }
 
@@ -137,6 +170,8 @@ mod tests {
     fn the_signing_endpoint_defaults_to_the_storage_endpoint() {
         let args = Args::try_parse_from([
             "veoveo-mcp-artifact",
+            "--deployment-id",
+            "019a5b30-0000-7000-8000-000000000001",
             "--public-base-url",
             "http://vv-mcp-artifact.internal:8801",
             "--hub-issuer",
@@ -151,7 +186,7 @@ mod tests {
             "not-printed",
         ])
         .unwrap();
-        let storage = args.storage();
+        let storage = args.storage().unwrap();
         assert_eq!(storage.signing_endpoint, storage.internal_endpoint);
         assert_eq!(
             args.share_base().unwrap().authority(),
@@ -166,6 +201,8 @@ mod tests {
     fn share_links_and_hosts_follow_the_installation_origin() {
         let args = Args::try_parse_from([
             "veoveo-mcp-artifact",
+            "--deployment-id",
+            "019a5b30-0000-7000-8000-000000000001",
             "--public-base-url",
             "http://vv-mcp-artifact.internal:8801",
             "--public-origin",
@@ -191,6 +228,8 @@ mod tests {
         assert!(
             Args::try_parse_from([
                 "veoveo-mcp-artifact",
+                "--deployment-id",
+                "019a5b30-0000-7000-8000-000000000001",
                 "--public-base-url",
                 "http://vv-mcp-artifact.internal:8801",
                 "--public-origin",
@@ -209,5 +248,24 @@ mod tests {
             .is_err(),
             "the public origin is an https origin"
         );
+    }
+    #[test]
+    fn offline_description_needs_no_storage_or_registration_credentials() {
+        let args = Args::try_parse_from([
+            "veoveo-mcp-artifact",
+            "--describe-registration",
+            "--deployment-id",
+            "019a5b30-0000-7000-8000-000000000001",
+            "--public-base-url",
+            "https://artifact.example",
+        ])
+        .unwrap();
+        assert!(args.describe_registration);
+        assert!(args.hub_issuer.is_none());
+        assert!(args.registration_secret.is_none());
+        assert!(args.storage_endpoint.is_none());
+        assert!(args.storage_access_key.is_none());
+        assert!(args.storage_secret_key.is_none());
+        assert!(args.storage().is_err());
     }
 }

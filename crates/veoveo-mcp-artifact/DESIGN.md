@@ -466,11 +466,25 @@ forwarded token. A target the declaration omits is denied.
 
 ## Registration
 
-Artifact prepares its bucket, then registers with the Hub at startup like any
-server: it loads its key, discovers the registration endpoint, registers its slug,
+Artifact requires a trusted-provisioned immutable `VEOVEO_DEPLOYMENT_ID`
+(`--deployment-id`), shared by registration, forwarded-token trust and Task execution.
+`--describe-registration` needs only that ID, `--public-base-url` and
+`--key-directory`: it prints native public ClientMetadata from `KeyDirectory::prepare`
+and exits before telemetry, object storage, Hub or database initialization. The
+same preparation constructs serving metadata; routes remain the authorization source.
+The private deployment key and native saved registration remain in that directory.
+
+Artifact prepares its bucket, then resumes or registers with the Hub at startup:
+it loads its deployment key, discovers the registration endpoint, registers its slug,
 scheme, endpoint and permissions, connects with the database login the response grants,
-applies its migrations, declares its audit classes and serves. On SIGTERM it stops serving, stops its loops, ends
-its process instance and deletes its registration.
+applies its migrations, declares its audit classes and serves. Native
+`resume_or_register` validates exact metadata/key/Hub authority and reuses saved
+RFC7592 credentials plus its original private database grant. On SIGTERM it stops
+serving, its loops and its process instance without deleting registration. Explicit
+retirement deletes it; the Hub's existing orphan grace still applies. Missing or
+expired registration requires fresh trusted scoped admission, with no global initial
+credential fallback. A new build/contract/endpoint uses a new admitted deployment;
+ordinary process restart keeps the same deployment and key directory.
 
 ## Deployment
 

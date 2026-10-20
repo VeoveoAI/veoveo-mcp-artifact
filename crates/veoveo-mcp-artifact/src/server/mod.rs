@@ -38,25 +38,30 @@ const STORAGE_READINESS: std::time::Duration = std::time::Duration::from_secs(12
 pub async fn run() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let _ = dotenvy::dotenv();
-    let _telemetry: TelemetryGuard =
-        init_server_telemetry("veoveo-mcp-artifact", "info,veoveo_mcp_artifact=debug")?;
     let args = Args::parse();
     let deployment = args.public_deployment()?;
-    let declaration = mcp::registration(&deployment)?;
+    let declaration = mcp::registration(&deployment, args.deployment_id)?;
     mcp::REGISTRATION
         .set(declaration.clone())
         .map_err(|_| anyhow::anyhow!("Artifact's registration was declared twice"))?;
     mcp::force_setup();
-    let storage = ObjectStorage::new(&args.storage()).context("configuring object storage")?;
+    if args.describe_registration {
+        let metadata = registration::prepare(&args, declaration)?;
+        serde_json::to_writer_pretty(std::io::stdout().lock(), &metadata)?;
+        println!();
+        return Ok(());
+    }
+    let _telemetry: TelemetryGuard =
+        init_server_telemetry("veoveo-mcp-artifact", "info,veoveo_mcp_artifact=debug")?;
+    let storage = ObjectStorage::new(&args.storage()?).context("configuring object storage")?;
     storage
         .prepare_within(STORAGE_READINESS)
         .await
         .context("preparing Artifact's bucket")?;
     let (registration_client, registration, http) =
         registration::register(&args, declaration).await?;
-    // The registration lasts while Artifact's login holds a live process instance. Once
-    // serving ends, on SIGTERM or Ctrl-C or on a failure, the client deletes it, which
-    // also drops the login.
+    // Process stop preserves native registration for resume. Explicit retirement and
+    // the Hub's existing orphan grace remain distinct from process shutdown.
     let issued = registration.clone();
     let mut served = None;
     let maintained = registration_client
@@ -65,7 +70,7 @@ pub async fn run() -> Result<()> {
         })
         .await;
     if let Err(error) = maintained {
-        tracing::warn!(%error, "Artifact could not remove its registration");
+        tracing::warn!(%error, "Artifact registration lifecycle failed");
     }
     served.context("Artifact's registration ended before serving finished")?
 }
@@ -89,6 +94,7 @@ async fn serve(
             grant.password.clone(),
         )?,
         crate::server(),
+        registration.access_tokens().deployment,
     )
     .await
     .context("connecting to the installation database")?;
