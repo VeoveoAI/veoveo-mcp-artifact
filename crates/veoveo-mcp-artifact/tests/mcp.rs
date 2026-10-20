@@ -87,6 +87,7 @@ fn token(granted: &[ArtifactPermission]) -> String {
         request_context: Some(context),
         acting_server: None,
         acting_task: None,
+        delegation_context: None,
         expires_at: now + TimeDelta::minutes(5),
     })
     .unwrap()
