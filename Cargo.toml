@@ -21,9 +21,9 @@ veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "433ed5f
 # RFC 7523 client assertions for the acceptance callers.
 # The Rust SDK for Veoveo MCP servers: the contract feature for the permission and audit
 # declarations, the server feature for hosting, registration and forwarded identity.
-veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "b3da412fffa67420148bd677645d4b27f072d7a2", default-features = false }
+veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "f369804dd2bda5c69103f480169769c80fac2859", default-features = false }
 # Ledger, the SDK's calls fixture server: the consumer the client tests call Artifact for.
-veoveo-hub-sdk-fixture = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "b3da412fffa67420148bd677645d4b27f072d7a2" }
+veoveo-hub-sdk-fixture = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "f369804dd2bda5c69103f480169769c80fac2859" }
 
 anyhow = "=1.0.104"
 # The share route, served beside MCP on the SDK's router.
