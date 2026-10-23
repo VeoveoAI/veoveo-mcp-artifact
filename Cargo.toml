@@ -13,18 +13,18 @@ publish = false
 [workspace.dependencies]
 tempfile = "=3.27.0"
 # veoveo-core, pinned to one revision for every core crate.
-veoveo-audit = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "1dd9994073515a85f90c3b5c71598366ab804a28" }
-veoveo-audit-contract = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "1dd9994073515a85f90c3b5c71598366ab804a28" }
-veoveo-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "1dd9994073515a85f90c3b5c71598366ab804a28" }
-veoveo-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "1dd9994073515a85f90c3b5c71598366ab804a28" }
-veoveo-task = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "1dd9994073515a85f90c3b5c71598366ab804a28" }
-veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "1dd9994073515a85f90c3b5c71598366ab804a28" }
+veoveo-audit = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "d473011e5dcb840c0ca9c6dcf2df231bfeab6956" }
+veoveo-audit-contract = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "d473011e5dcb840c0ca9c6dcf2df231bfeab6956" }
+veoveo-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "d473011e5dcb840c0ca9c6dcf2df231bfeab6956" }
+veoveo-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "d473011e5dcb840c0ca9c6dcf2df231bfeab6956" }
+veoveo-task = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "d473011e5dcb840c0ca9c6dcf2df231bfeab6956" }
+veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "d473011e5dcb840c0ca9c6dcf2df231bfeab6956" }
 # RFC 7523 client assertions for the acceptance callers.
 # The Rust SDK for Veoveo MCP servers: the contract feature for the permission and audit
 # declarations, the server feature for hosting, registration and forwarded identity.
-veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "cc23dc97bbe60f83e95d6e9d0c8fdcc35742d5a2", default-features = false }
+veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "b2304759b07f3e1d07cd1bf9ec9a182c6dcddd65", default-features = false }
 # Ledger, the SDK's calls fixture server: the consumer the client tests call Artifact for.
-veoveo-hub-sdk-fixture = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "cc23dc97bbe60f83e95d6e9d0c8fdcc35742d5a2" }
+veoveo-hub-sdk-fixture = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "b2304759b07f3e1d07cd1bf9ec9a182c6dcddd65" }
 
 anyhow = "=1.0.104"
 # The share route, served beside MCP on the SDK's router.
