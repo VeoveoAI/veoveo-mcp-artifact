@@ -212,7 +212,12 @@ bind (`content-type` and `if-none-match`), and sets a
 lifecycle rule that aborts incomplete multipart uploads after one day. The server uses aws-sdk-s3 1.152.0 without default features, with rustls on ring
 and without aws-config. It builds two clients from one configuration: one signs URLs
 with the address clients use, because SigV4 binds the Host header, and one makes its
-own calls on the installation network.
+own calls on the installation network. Both address the bucket by path, so a signed
+URL is `{signing endpoint}/{bucket}/{key}`. An installation can serve the store on a
+path of its public host: with the signing endpoint `https://veoveo.example.com` and
+the bucket `artifacts`, clients send `https://veoveo.example.com/artifacts/{key}`, and
+the installation routes `/artifacts/` to the store with the Host, path, query and
+headers unchanged.
 
 ## Access Control
 

@@ -158,6 +158,68 @@ pub(crate) fn attachment(name: &ArtifactName) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::ArtifactId;
+    use crate::storage::StorageConfig;
+    use url::Url;
+
+    /// The installation serves objects under `/artifacts/` on its public host:
+    /// path-style addressing puts the bucket first in the path, and SigV4 binds that
+    /// host and path. Presigning is local, so no store is reached.
+    #[tokio::test]
+    async fn signed_requests_name_the_public_host_and_the_bucket_path() {
+        let storage = ObjectStorage::new(&StorageConfig {
+            internal_endpoint: Url::parse(
+                "https://seaweedfs-s3.veoveo-system.svc.cluster.local:9000",
+            )
+            .unwrap(),
+            signing_endpoint: Url::parse("https://veoveo.bioma.ai").unwrap(),
+            region: "us-east-1".into(),
+            bucket: "artifacts".into(),
+            access_key: "access".into(),
+            secret_key: "secret".into(),
+            cors_origins: Vec::new(),
+        })
+        .unwrap();
+        let tenant = veoveo_store::deterministic_tenant_id("acme").unwrap();
+        let key = ObjectKey::for_artifact(tenant, ArtifactId::new());
+        let media_type = MediaType::parse("application/pdf").unwrap();
+        let now = Utc::now();
+        let signed = [
+            storage
+                .sign_put(&key, ObjectSize::new(11).unwrap(), &media_type, now)
+                .await
+                .unwrap(),
+            storage
+                .sign_part(&key, "upload", PartNumber::new(1).unwrap(), None, now)
+                .await
+                .unwrap(),
+            storage
+                .sign_get(
+                    &key,
+                    &ArtifactName::parse("informe.pdf").unwrap(),
+                    &media_type,
+                    now,
+                )
+                .await
+                .unwrap(),
+        ];
+        for transfer in &signed {
+            let url = Url::parse(transfer.url.as_str()).unwrap();
+            assert_eq!(url.scheme(), "https");
+            assert_eq!(url.host_str(), Some("veoveo.bioma.ai"));
+            assert_eq!(url.port(), None);
+            assert_eq!(url.path(), format!("/artifacts/{}", key.as_str()));
+            let signed_headers = url
+                .query_pairs()
+                .find(|(name, _)| name == "X-Amz-SignedHeaders")
+                .map(|(_, value)| value.into_owned())
+                .unwrap();
+            assert!(
+                signed_headers.split(';').any(|header| header == "host"),
+                "{signed_headers}"
+            );
+        }
+    }
 
     #[test]
     fn dispositions_carry_an_ascii_fallback_and_the_exact_name() {
