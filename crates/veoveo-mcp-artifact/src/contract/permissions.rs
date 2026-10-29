@@ -40,10 +40,11 @@ impl PermissionDefinition for ArtifactPermission {
     fn risks(self) -> &'static [Risk] {
         match self {
             Self::ArtifactsDelete => &[Risk::Destructive],
-            Self::GrantsWrite | Self::ShareLinksWrite => &[Risk::Sensitive],
+            Self::ShareLinksWrite => &[Risk::Sensitive],
             Self::UploadLimitsAdminister => &[Risk::Administer],
             Self::ArtifactsRead
             | Self::ArtifactsWrite
+            | Self::GrantsWrite
             | Self::ReleasesWrite
             | Self::AccessRequestsWrite => &[],
         }
@@ -73,7 +74,11 @@ mod tests {
             ArtifactPermission::ArtifactsDelete.risks(),
             &[Risk::Destructive]
         );
-        assert_eq!(ArtifactPermission::GrantsWrite.risks(), &[Risk::Sensitive]);
+        assert_eq!(ArtifactPermission::GrantsWrite.risks(), &[]);
+        assert_eq!(
+            ArtifactPermission::ShareLinksWrite.risks(),
+            &[Risk::Sensitive]
+        );
         assert_eq!(
             ArtifactPermission::UploadLimitsAdminister.risks(),
             &[Risk::Administer]

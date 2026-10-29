@@ -420,16 +420,16 @@ async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_res
             "complete_upload",
             "create_download",
             "create_upload",
+            "decide_access_request",
+            "grant_artifact",
             "request_artifact_access",
+            "revoke_artifact_grant",
             "set_release_state",
             "sign_upload_parts",
         ];
         let risky = [
             "create_share_link",
-            "decide_access_request",
             "delete_artifact",
-            "grant_artifact",
-            "revoke_artifact_grant",
             "revoke_share_link",
             "set_upload_limits",
         ];
@@ -440,7 +440,8 @@ async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_res
         let seen = listed(admin.list_all_tools().await?);
         ensure!(seen == every, "the Hub lists the admin {seen:?}");
         // A call the member's role does not admit is refused, with arguments that would
-        // otherwise be served.
+        // otherwise be served. The member shares, but only what it administers: it writes
+        // the admin's artifact through the Work Context, so Artifact refuses its grant.
         let artifact_id = upload_declared(&admin, "risks.bin", &part_bytes(1, 1024)).await?;
         let group = json!({"kind": "group", "id": "acceptance-readers"});
         refused(
@@ -449,7 +450,7 @@ async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_res
             json!({"artifactId": artifact_id, "subject": group, "level": "read"}),
         )
         .await
-        .context("the member granted access")?;
+        .context("the member granted access to an artifact it does not administer")?;
         refused(
             &member,
             "delete_artifact",

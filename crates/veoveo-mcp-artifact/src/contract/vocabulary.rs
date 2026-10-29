@@ -88,7 +88,7 @@ pub enum ArtifactPermission {
     /// Delete artifacts. Destructive.
     #[vocabulary(rename = "artifact.artifacts.delete")]
     ArtifactsDelete,
-    /// Grant and revoke access, and decide access requests. Sensitive.
+    /// Grant and revoke access, and decide access requests, inside the tenant.
     #[vocabulary(rename = "artifact.grants.write")]
     GrantsWrite,
     /// Move an artifact between private and released.

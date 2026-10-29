@@ -96,11 +96,11 @@ change on the `artifact` channel to its tenant's subscribers.
 | `complete_upload` | Completes native create-only storage, validates size and makes the artifact available | `artifact.artifacts.write` | the upload's creator |
 | `abort_upload` | Aborts the upload and releases its reservation | `artifact.artifacts.write` | the upload's creator |
 | `create_download` | Returns a signed GET URL valid for 5 minutes | `artifact.artifacts.read` | read |
-| `grant_artifact`, `revoke_artifact_grant` | Gives or removes read, write or admin for a principal or group, with an optional expiry | `artifact.grants.write` (sensitive) | admin |
+| `grant_artifact`, `revoke_artifact_grant` | Gives or removes read, write or admin for a principal or group, with an optional expiry | `artifact.grants.write` | admin |
 | `set_release_state` | Moves an artifact between private and released | `artifact.releases.write` | admin |
 | `create_share_link`, `revoke_share_link` | Issues or revokes an anonymous read link for a released artifact | `artifact.share-links.write` (sensitive) | admin |
 | `request_artifact_access`, `cancel_access_request` | Asks an artifact's administrators for a level above the caller's, or withdraws the caller's own pending request | `artifact.access-requests.write` | read, and a requested level above the caller's |
-| `decide_access_request` | Approves the request, which writes the grant, or denies it with a note | `artifact.grants.write` (sensitive) | admin |
+| `decide_access_request` | Approves the request, which writes the grant, or denies it with a note | `artifact.grants.write` | admin |
 | `delete_artifact` | Deletes the artifact, its grants and share links, and its object | `artifact.artifacts.delete` (destructive) | admin |
 | `set_upload_limits` | Sets a tenant's quota, largest object, allowed media types and active-upload limit | `artifact.upload-limits.administer` (administer) | installation administrator |
 
@@ -452,6 +452,20 @@ maps each tool, resource template and prompt to its permission, builds the
 `ai.veoveo/authorization` declaration, and drives every handler's check of the
 forwarded token. A target the declaration omits is denied.
 
+A permission's risks are Artifact's to declare: the installation's roles select by them,
+and its overrides can add a risk or deny a permission but never remove one. Sharing
+inside the tenant carries none. `artifact.grants.write` gives an identified person or
+group of the tenant a level the caller administers, as a repository's owner shares it in
+Lore, and reads no secret or personal data, which is what `sensitive` names. Every role
+that writes therefore holds it: the Hub lists `grant_artifact`, `revoke_artifact_grant`
+and `decide_access_request` to it, forwards `artifact.grants.write` in the token's
+`authorization_details`, and Artifact's admin level on the artifact decides. A share link
+keeps `sensitive`: its holder reads with no identity at all, which no role, group or level
+bounds after it is issued, so publishing outside the tenant stays the installation's
+decision. A group in a grant is named by the ID the Hub answers for it, and the forwarded
+identity carries the caller's groups and their roles in them (Hub's [groups and
+sharing](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md#groups-and-sharing)).
+
 ## Registration
 
 Artifact requires a trusted-provisioned immutable `VEOVEO_DEPLOYMENT_ID`
@@ -518,4 +532,4 @@ signed header would void the signature.
 | Share route | `tests/share_route.rs` through the hosted router and a private SeaweedFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
 | Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private SeaweedFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves available, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |
-| Acceptance | `tests/acceptance.rs` through a running installation's Hub and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call and the member refused the tools whose permissions carry a risk, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, independently fingerprinted by the consumer, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |
+| Acceptance | `tests/acceptance.rs` through a running installation's Hub and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call, the sharing tools among the member's, and the member refused the tools whose permissions carry a risk, a share link and a deletion among them, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, independently fingerprinted by the consumer, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |
