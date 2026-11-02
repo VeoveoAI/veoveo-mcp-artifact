@@ -16,6 +16,14 @@ use chrono::Utc;
 
 use crate::service::ArtifactService;
 
+/// The prefix of the share route under the mount, `{mount}/shares/`, which the routes
+/// declare public.
+pub const PATH: &str = "shares/";
+/// A redemption is a `GET` without a body, so the declared limit is the least one.
+pub const MAX_BODY_BYTES: u64 = 1;
+/// Redemptions a minute the Hub admits to the share route, across every link.
+pub const REQUESTS_PER_MINUTE: u32 = 600;
+
 /// The share route, which the hosted process serves under its mount without Hub
 /// authentication.
 pub fn routes(service: Arc<ArtifactService>) -> Router {

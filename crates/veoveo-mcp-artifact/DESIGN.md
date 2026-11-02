@@ -164,7 +164,10 @@ Each prompt requires `artifact.artifacts.read`, and acts only through the tools 
 
 `GET /artifact/shares/{token}` is the only route outside MCP, because a share link must
 work for someone without an account. The hosted process serves it under its mount
-without Hub authentication; the link's secret authenticates the request.
+without Hub authentication; the link's secret authenticates the request. The routes
+declare `/shares/` as Artifact's one public route, with the least body limit, 1 byte,
+since a redemption carries none, and 600 requests a minute, which the Hub enforces and
+registration declares as the server's surfaces.
 
 | The request names | The answer |
 |---|---|

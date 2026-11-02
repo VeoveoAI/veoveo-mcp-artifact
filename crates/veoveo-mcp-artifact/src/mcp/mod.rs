@@ -339,8 +339,14 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
     std::sync::LazyLock::new(|| {
         use crate::contract::ArtifactPermission::*;
         use veoveo_hub_sdk::hosting::{RoutePolicy, Routes};
+        // The share route is the one public route: links work for anyone holding them.
         let routes = Routes::<ArtifactMcp>::builder(
             RoutePolicy::permission(ArtifactsRead).expect("Artifact permission"),
+        )
+        .public_route(
+            crate::share::PATH,
+            crate::share::MAX_BODY_BYTES,
+            crate::share::REQUESTS_PER_MINUTE,
         );
         let routes = routes.tool::<Checked<CreateUploadRequest>, _, _>(
             "Reserve an artifact that you own and receive where to send its \

@@ -311,7 +311,10 @@ async fn create_upload_signs_a_put_and_storage_usage_counts_the_reservation() {
         );
         assert_eq!(result["transfer"]["form"], "single", "{created}");
         assert_eq!(result["transfer"]["put"]["method"], "PUT");
-        assert_eq!(result["artifact"]["workContext"], "mission");
+        assert_eq!(
+            result["artifact"]["owner"],
+            result["artifact"]["provenance"]["caller"]
+        );
         let usage = hub
             .rpc("resources/read", json!({"uri": "artifact://storage-usage"}))
             .await;

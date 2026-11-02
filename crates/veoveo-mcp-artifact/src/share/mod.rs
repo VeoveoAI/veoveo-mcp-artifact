@@ -3,5 +3,5 @@
 mod route;
 mod secret;
 
-pub use route::routes;
+pub use route::{MAX_BODY_BYTES, PATH, REQUESTS_PER_MINUTE, routes};
 pub use secret::{SHARE_TOKEN_CHARS, ShareBase, ShareLinkSecret};
