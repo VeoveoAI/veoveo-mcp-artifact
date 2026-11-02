@@ -343,7 +343,7 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
             RoutePolicy::permission(ArtifactsRead).expect("Artifact permission"),
         );
         let routes = routes.tool::<Checked<CreateUploadRequest>, _, _>(
-            "Reserve an artifact in your selected Work Context and receive where to send its \
+            "Reserve an artifact that you own and receive where to send its \
              bytes: one signed PUT, or a part size and signed part URLs. Give the size when \
              you know it. Send \
              each signed request with exactly its method, URL and headers, then call \

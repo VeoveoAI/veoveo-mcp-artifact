@@ -11,7 +11,6 @@ WHERE a.tenant = $1 AND a.artifact_id = $2 AND a.state = 'uploading'
 RETURNING
     a.artifact_id AS "artifact_id: ArtifactId",
     a.owner_key,
-    a.work_context,
     a.name,
     a.media_type,
     a.size_bytes,

@@ -6,7 +6,7 @@ use veoveo_types::Vocabulary;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Vocabulary)]
 #[cfg_attr(feature = "server", vocabulary(postgres))]
 pub enum ReleaseState {
-    /// Only its owner, grantees and Work Context members reach it.
+    /// Only its owner and grantees reach it.
     Private,
     /// It may also be shared with anyone through a share link.
     Released,

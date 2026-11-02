@@ -265,7 +265,6 @@ mod tests {
         assert!(affects(
             &change,
             &ArtifactResource::Artifacts {
-                work_context: None,
                 owner: None,
                 media_type: None,
                 name: None,

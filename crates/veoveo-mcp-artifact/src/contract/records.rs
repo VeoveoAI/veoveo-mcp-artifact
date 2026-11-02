@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use veoveo_hub_sdk::OpaqueTaskId;
-use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, ServerSlug, WorkContextId};
+use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, ServerSlug};
 
 use super::{
     AccessRequestId, AccessRequestState, ArtifactId, ArtifactLabels, ArtifactMetadataMap,
@@ -82,7 +82,6 @@ pub struct ArtifactRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<ObjectSize>,
     pub owner: PrincipalId,
-    pub work_context: WorkContextId,
     pub labels: ArtifactLabels,
     pub release_state: ReleaseState,
     pub state: ArtifactState,

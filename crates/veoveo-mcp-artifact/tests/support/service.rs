@@ -2,7 +2,7 @@
 //! SeaweedFS with a fresh bucket and a Task runtime with its own process instance.
 #![allow(dead_code)]
 
-use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use veoveo_fixtures::store::TestDb;
 use veoveo_mcp_artifact::{
@@ -11,8 +11,8 @@ use veoveo_mcp_artifact::{
 use veoveo_store::{Instance, PlatformStore};
 use veoveo_task::{PrincipalKind, TaskOwner, TaskRuntime, TaskSurface};
 use veoveo_types::{
-    AccessSubject, DataLabelId, InvocationAuthority, InvocationProvenance, PolicyVersion,
-    PrincipalId, TenantId, TokenIssuer, TokenSubject, WorkContextId, WorkContextOutputPolicy,
+    DataLabelId, InvocationAuthority, InvocationProvenance, PolicyVersion, PrincipalId, TenantId,
+    TokenIssuer, TokenSubject,
 };
 
 use super::{Who, seaweedfs::TestSeaweedFs};
@@ -88,16 +88,8 @@ pub fn owner(who: &Who) -> TaskOwner {
             .map(|label| DataLabelId::parse(*label).unwrap())
             .collect(),
         authority: InvocationAuthority {
-            work_context: WorkContextId::parse(who.work_context).unwrap(),
             tenant,
-            membership: who.membership,
             policy_revision: PolicyVersion::parse("r1").unwrap(),
-            output_policy: WorkContextOutputPolicy {
-                owner: AccessSubject::Principal(principal.clone()),
-                initial_grants: Vec::new(),
-                classification: None,
-                data_labels: BTreeSet::new(),
-            },
             provenance: InvocationProvenance::Direct {
                 initiator: principal,
             },

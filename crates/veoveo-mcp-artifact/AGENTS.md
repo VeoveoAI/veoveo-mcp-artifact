@@ -22,8 +22,8 @@ decisions; bytes move between clients and object storage through URLs the server
   and authorization from that association.
 - `ArtifactClient` holds at most `parallelism` parts in memory and never the whole body
   beyond one 16 MiB PUT. Its errors never carry a signed URL.
-- Owner, tenant, Work Context and provenance come from the forwarded identity. A tool
-  argument never names them.
+- Owner, tenant and provenance come from the forwarded identity. A tool argument never
+  names them. An artifact belongs to its creator and is private until a grant shares it.
 - `artifact.effective_level` decides per-artifact access in SQL. A listing filters on
   it inside the statement, before its row limit. Do not reimplement the decision in Rust.
 - Every statement is a `.sql` file under `src/store/` run through sqlx's checked macros.

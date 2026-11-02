@@ -1,6 +1,5 @@
 //! The caller facts Artifact decides on, taken from the identity the Hub forwards:
-//! tenant, principal, groups and their roles, data labels, and the selected Work
-//! Context with its membership and output policy.
+//! tenant, principal, groups and their roles, and data labels.
 use std::collections::BTreeSet;
 
 use rmcp::ErrorData as McpError;
@@ -30,13 +29,6 @@ pub fn caller(identity: &HubInternalIdentity) -> Result<Caller, McpError> {
             });
         }
     }
-    let policy = &authority.output_policy;
-    let output_labels = policy
-        .classification
-        .iter()
-        .chain(&policy.data_labels)
-        .cloned()
-        .collect();
     // The Hub forwards every MCP request with its signed request context, which
     // carries the attribution of the caller's audit records.
     let audit = identity.audit_context().map_err(|_| {
@@ -45,12 +37,9 @@ pub fn caller(identity: &HubInternalIdentity) -> Result<Caller, McpError> {
     Caller::new(
         authority.tenant.clone(),
         actor.id.clone(),
-        authority.work_context.clone(),
-        authority.membership,
         CallerContext {
             groups,
             labels: actor.data_labels.clone(),
-            output_labels,
             // A call another server made for the caller names that server, and the
             // server's Task when the call came from one.
             acting_server: identity.acting_server().cloned(),

@@ -157,19 +157,16 @@ impl CollectionResource for ReadArtifacts {
     type Provider = ArtifactProvider;
     type Address = ArtifactResource;
     type Collection = super::Artifacts;
-    const TEMPLATE: &'static str =
-        "artifact://artifacts{?work_context,owner,media_type,name,release_state}";
+    const TEMPLATE: &'static str = "artifact://artifacts{?owner,media_type,name,release_state}";
     fn address(&self) -> ArtifactResource {
         use super::ArtifactFilter;
         let mut address = ArtifactResource::Artifacts {
-            work_context: None,
             owner: None,
             media_type: None,
             name: None,
             release_state: None,
         };
         if let ArtifactResource::Artifacts {
-            work_context,
             owner,
             media_type,
             name,
@@ -178,7 +175,6 @@ impl CollectionResource for ReadArtifacts {
         {
             match &self.filter {
                 None => {}
-                Some(ArtifactFilter::WorkContext(value)) => *work_context = Some(value.clone()),
                 Some(ArtifactFilter::Owner(value)) => *owner = Some(value.clone()),
                 Some(ArtifactFilter::MediaType(value)) => *media_type = Some(value.clone()),
                 Some(ArtifactFilter::NamePrefix(value)) => *name = Some(value.clone()),
@@ -192,7 +188,6 @@ impl CollectionResource for ReadArtifacts {
     }
     fn from_address(address: &ArtifactResource) -> Option<Self> {
         if let ArtifactResource::Artifacts {
-            work_context,
             owner,
             media_type,
             name,
@@ -201,7 +196,6 @@ impl CollectionResource for ReadArtifacts {
         {
             Some(Self {
                 filter: super::ArtifactFilter::from_parts(
-                    work_context.clone(),
                     owner.clone(),
                     media_type.clone(),
                     name.clone(),

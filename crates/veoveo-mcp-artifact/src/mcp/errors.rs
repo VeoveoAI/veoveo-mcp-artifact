@@ -40,7 +40,6 @@ pub(crate) fn store_error(error: ArtifactStoreError) -> McpError {
         ArtifactStoreError::Forbidden { .. }
         | ArtifactStoreError::UploadNotOpen { .. }
         | ArtifactStoreError::ArtifactState { .. }
-        | ArtifactStoreError::WorkContextReadOnly
         | ArtifactStoreError::LabelOutsideClearance
         | ArtifactStoreError::TooManyOpenUploads { .. }
         | ArtifactStoreError::QuotaExceeded { .. }

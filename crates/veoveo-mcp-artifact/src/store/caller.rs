@@ -5,10 +5,7 @@ use std::collections::BTreeSet;
 use veoveo_audit_contract::AuditContext;
 use veoveo_hub_sdk::OpaqueTaskId;
 use veoveo_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
-use veoveo_types::{
-    AccessLevel, DataLabelId, GroupId, PrincipalId, ServerSlug, TenantId, WorkContextId,
-    WorkContextMembershipLevel,
-};
+use veoveo_types::{AccessLevel, DataLabelId, GroupId, PrincipalId, ServerSlug, TenantId};
 
 use super::ArtifactStoreError;
 
@@ -20,7 +17,7 @@ pub struct GroupAccess {
     pub role: AccessLevel,
 }
 
-/// Who calls, in which tenant and Work Context, with which groups and labels, and, when
+/// Who calls, in which tenant, with which groups and labels, and, when
 /// another server calls for the caller, which server and Task. The audit context is the
 /// verified attribution every record of the caller's decisions carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,24 +27,18 @@ pub struct Caller {
     principal_key: PrincipalId,
     principal: StoredPrincipal,
     groups: BTreeSet<GroupAccess>,
-    work_context: WorkContextId,
-    membership: WorkContextMembershipLevel,
     labels: BTreeSet<DataLabelId>,
-    output_labels: BTreeSet<DataLabelId>,
     acting_server: Option<ServerSlug>,
     acting_task: Option<OpaqueTaskId>,
     audit: AuditContext,
 }
 
-/// The parts of a [`Caller`] beyond its tenant, principal and Work Context.
+/// The parts of a [`Caller`] beyond its tenant and principal.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CallerContext {
     pub groups: BTreeSet<GroupAccess>,
     /// The caller's data labels: its clearance.
     pub labels: BTreeSet<DataLabelId>,
-    /// The labels the Work Context's output policy stamps on every new artifact: its
-    /// classification and data labels.
-    pub output_labels: BTreeSet<DataLabelId>,
     pub acting_server: Option<ServerSlug>,
     /// The acting server's Task the call came from, when it named one.
     pub acting_task: Option<OpaqueTaskId>,
@@ -57,8 +48,6 @@ impl Caller {
     pub fn new(
         tenant: TenantId,
         principal: PrincipalId,
-        work_context: WorkContextId,
-        membership: WorkContextMembershipLevel,
         context: CallerContext,
         audit: AuditContext,
     ) -> Result<Self, ArtifactStoreError> {
@@ -76,10 +65,7 @@ impl Caller {
             principal_key: principal,
             principal: stored_principal,
             groups: context.groups,
-            work_context,
-            membership,
             labels: context.labels,
-            output_labels: context.output_labels,
             acting_server: context.acting_server,
             acting_task: context.acting_task,
             audit,
@@ -107,20 +93,8 @@ impl Caller {
         self.principal
     }
 
-    pub fn work_context(&self) -> &WorkContextId {
-        &self.work_context
-    }
-
-    pub fn membership(&self) -> WorkContextMembershipLevel {
-        self.membership
-    }
-
     pub fn labels(&self) -> &BTreeSet<DataLabelId> {
         &self.labels
-    }
-
-    pub fn output_labels(&self) -> &BTreeSet<DataLabelId> {
-        &self.output_labels
     }
 
     pub fn acting_server(&self) -> Option<&ServerSlug> {
@@ -153,8 +127,6 @@ impl Caller {
             principal_key: self.principal_key.to_string(),
             groups,
             group_levels,
-            work_context: self.work_context.to_string(),
-            membership: membership_text(self.membership).to_owned(),
             labels: self.labels.iter().map(ToString::to_string).collect(),
         }
     }
@@ -168,8 +140,6 @@ pub(crate) struct CallerFacts {
     pub principal_key: String,
     pub groups: Vec<String>,
     pub group_levels: Vec<String>,
-    pub work_context: String,
-    pub membership: String,
     pub labels: Vec<String>,
 }
 
@@ -178,15 +148,6 @@ pub(crate) fn level_text(level: AccessLevel) -> &'static str {
         AccessLevel::Read => "read",
         AccessLevel::Write => "write",
         AccessLevel::Admin => "admin",
-    }
-}
-
-pub(crate) fn membership_text(level: WorkContextMembershipLevel) -> &'static str {
-    match level {
-        WorkContextMembershipLevel::Viewer => "viewer",
-        WorkContextMembershipLevel::Contributor => "contributor",
-        WorkContextMembershipLevel::Custodian => "custodian",
-        WorkContextMembershipLevel::Owner => "owner",
     }
 }
 

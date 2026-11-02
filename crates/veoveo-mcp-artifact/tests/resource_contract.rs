@@ -4,7 +4,7 @@ use veoveo_mcp_artifact::contract::{
     AccessRequestRole, ArtifactId, ArtifactResource, ArtifactResourceError, MediaType, NamePrefix,
     ReleaseState, UploadId, UploadState,
 };
-use veoveo_types::{PrincipalId, WorkContextId};
+use veoveo_types::PrincipalId;
 
 fn round_trip(resource: ArtifactResource) -> String {
     let wire = resource.to_string();
@@ -48,7 +48,6 @@ fn records_and_collections_round_trip() {
 #[test]
 fn listing_filters_encode_reserved_characters() {
     let resource = ArtifactResource::Artifacts {
-        work_context: Some(WorkContextId::parse("ops").unwrap()),
         owner: Some(PrincipalId::parse("alice").unwrap()),
         media_type: Some(MediaType::parse("application/vnd.api+json").unwrap()),
         name: Some(NamePrefix::parse("Q3 report & notes?#").unwrap()),
@@ -58,7 +57,6 @@ fn listing_filters_encode_reserved_characters() {
     assert!(!wire.contains(" & "), "{wire}");
     assert_eq!(
         round_trip(ArtifactResource::Artifacts {
-            work_context: None,
             owner: None,
             media_type: None,
             name: None,

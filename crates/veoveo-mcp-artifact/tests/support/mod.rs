@@ -20,10 +20,7 @@ use veoveo_mcp_artifact::{
     migrator, server,
     store::{ArtifactStore, Caller, CallerContext, CompletedObject, CreatedUpload},
 };
-use veoveo_types::{
-    AccessLevel, Checked, DataLabelId, GroupId, PrincipalId, ServerSlug, TenantId, WorkContextId,
-    WorkContextMembershipLevel,
-};
+use veoveo_types::{AccessLevel, Checked, DataLabelId, GroupId, PrincipalId, ServerSlug, TenantId};
 
 pub use veoveo_mcp_artifact::store::GroupAccess;
 
@@ -60,17 +57,13 @@ pub async fn declared_store(platform: veoveo_store::PlatformStore) -> ArtifactSt
     ArtifactStore::new(platform, registry)
 }
 
-/// A caller's identity, defaulting to a contributor in Work Context `ops` of `acme`
-/// with no groups or labels.
+/// A caller's identity, defaulting to a person of `acme` with no groups or labels.
 #[derive(Clone)]
 pub struct Who {
     pub tenant: &'static str,
     pub principal: &'static str,
-    pub work_context: &'static str,
-    pub membership: WorkContextMembershipLevel,
     pub groups: Vec<(&'static str, AccessLevel)>,
     pub labels: Vec<&'static str>,
-    pub output_labels: Vec<&'static str>,
     pub acting_server: Option<&'static str>,
 }
 
@@ -79,27 +72,14 @@ impl Who {
         Self {
             tenant: "acme",
             principal,
-            work_context: "ops",
-            membership: WorkContextMembershipLevel::Contributor,
             groups: Vec::new(),
             labels: Vec::new(),
-            output_labels: Vec::new(),
             acting_server: None,
         }
     }
 
     pub fn tenant(mut self, tenant: &'static str) -> Self {
         self.tenant = tenant;
-        self
-    }
-
-    pub fn in_context(
-        mut self,
-        work_context: &'static str,
-        membership: WorkContextMembershipLevel,
-    ) -> Self {
-        self.work_context = work_context;
-        self.membership = membership;
         self
     }
 
@@ -110,11 +90,6 @@ impl Who {
 
     pub fn labels(mut self, labels: &[&'static str]) -> Self {
         self.labels = labels.to_vec();
-        self
-    }
-
-    pub fn output_labels(mut self, labels: &[&'static str]) -> Self {
-        self.output_labels = labels.to_vec();
         self
     }
 
@@ -141,7 +116,6 @@ impl Who {
                 principal: principal.clone(),
                 kind: AuditPrincipalKind::User,
                 tenant: Some(tenant.clone()),
-                work_context: Some(WorkContextId::parse(self.work_context).unwrap()),
             },
             via: acting_server
                 .clone()
@@ -151,8 +125,6 @@ impl Who {
         Caller::new(
             tenant,
             principal,
-            WorkContextId::parse(self.work_context).unwrap(),
-            self.membership,
             CallerContext {
                 groups: self
                     .groups
@@ -163,7 +135,6 @@ impl Who {
                     })
                     .collect(),
                 labels: label_set(&self.labels),
-                output_labels: label_set(&self.output_labels),
                 acting_server,
                 acting_task: None,
             },

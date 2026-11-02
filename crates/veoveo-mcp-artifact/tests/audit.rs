@@ -268,12 +268,29 @@ async fn every_decision_records_its_declared_class() {
             )
             .await
             .unwrap();
+        // Bob and Cy review: the artifact is shared with their group to read.
+        let reviewers = AccessSubject::Group(veoveo_types::GroupId::parse("reviewers").unwrap());
+        service
+            .grant_artifact(
+                &caller,
+                &GrantArtifactRequest {
+                    artifact_id,
+                    subject: reviewers,
+                    level: AccessLevel::Read,
+                    expires_at: None,
+                },
+                Utc::now(),
+            )
+            .await
+            .unwrap();
         let ask = |who: &str| RequestArtifactAccessRequest {
             artifact_id,
             level: AccessLevel::Admin,
             justification: Note::parse(format!("{who} reviews it")).unwrap(),
         };
-        let bob = Who::new("bob").caller();
+        let bob = Who::new("bob")
+            .group("reviewers", AccessLevel::Write)
+            .caller();
         let approved = service
             .request_access(&bob, &ask("bob"), Utc::now())
             .await
@@ -290,7 +307,9 @@ async fn every_decision_records_its_declared_class() {
             )
             .await
             .unwrap();
-        let cy = Who::new("cy").caller();
+        let cy = Who::new("cy")
+            .group("reviewers", AccessLevel::Write)
+            .caller();
         let withdrawn = service
             .request_access(&cy, &ask("cy"), Utc::now())
             .await
@@ -343,6 +362,7 @@ async fn every_decision_records_its_declared_class() {
                 ReleaseChanged::CLASS,
                 ShareLinkCreated::CLASS,
                 ShareLinkRevoked::CLASS,
+                GrantChanged::CLASS,
                 AccessRequested::CLASS,
                 GrantChanged::CLASS,
                 AccessRequestDecided::CLASS,
@@ -378,7 +398,7 @@ async fn every_decision_records_its_declared_class() {
         let (class, detail) = read(grants[1]);
         let revoked: GrantChanged = registry.read(&class, &detail).unwrap();
         assert_eq!((revoked.subject, revoked.level), (grantee, None));
-        let (class, detail) = read(grants[2]);
+        let (class, detail) = read(grants[3]);
         let approval: GrantChanged = registry.read(&class, &detail).unwrap();
         assert_eq!(approval.level, Some(AccessLevel::Admin));
         let (class, detail) = read(of(AccessRequestDecided::CLASS)[0]);
@@ -402,6 +422,7 @@ async fn every_decision_records_its_declared_class() {
             artifact.clone(),
             links.clone(),
             links,
+            grants_of.clone(),
             artifact.clone(),
             grants_of,
             artifact.clone(),

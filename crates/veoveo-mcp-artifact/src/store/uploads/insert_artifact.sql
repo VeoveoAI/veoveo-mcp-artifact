@@ -1,13 +1,12 @@
 -- A new artifact waiting for its bytes. Its creator owns it, so the creator administers it.
 INSERT INTO artifact.artifact AS a (
-    tenant, artifact_id, owner, owner_key, work_context, name, media_type, labels,
+    tenant, artifact_id, owner, owner_key, name, media_type, labels,
     release_state, state, provenance, metadata, retention_days, created_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'private', 'uploading', $9, $10, $11, $12)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'private', 'uploading', $8, $9, $10, $11)
 RETURNING
     a.artifact_id AS "artifact_id: ArtifactId",
     a.owner_key,
-    a.work_context,
     a.name,
     a.media_type,
     a.size_bytes,

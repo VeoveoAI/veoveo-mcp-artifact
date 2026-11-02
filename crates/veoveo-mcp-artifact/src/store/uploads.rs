@@ -2,7 +2,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::types::Json;
 use veoveo_store::{PrincipalId as StoredPrincipal, TenantId as StoredTenant};
-use veoveo_types::{Checked, CursorToken, Page, PageSize, Pager, WorkContextMembershipLevel};
+use veoveo_types::{Checked, CursorToken, Page, PageSize, Pager};
 
 use crate::contract::{
     ArtifactId, ArtifactMetadataMap, ArtifactProvenance, ArtifactRecord, ArtifactState,
@@ -37,8 +37,8 @@ pub struct CompletedObject {
 }
 
 impl ArtifactStore {
-    /// Reserve an artifact and its bytes for the caller in its selected Work Context. A
-    /// repeated idempotency key returns the first call's upload. The tenant's usage row
+    /// Reserve an artifact and its bytes for the caller, who owns it. A repeated
+    /// idempotency key returns the first call's upload. The tenant's usage row
     /// stays locked from the limit checks to the commit.
     pub async fn create_upload(
         &self,
@@ -46,16 +46,8 @@ impl ArtifactStore {
         request: &Checked<CreateUploadRequest>,
         now: DateTime<Utc>,
     ) -> Result<CreatedUpload, ArtifactStoreError> {
-        if !caller
-            .membership()
-            .allows(WorkContextMembershipLevel::Contributor)
-        {
-            return Err(ArtifactStoreError::WorkContextReadOnly);
-        }
-        let labels = request
-            .labels
-            .union(caller.output_labels().iter().cloned())
-            .map_err(|_| ArtifactStoreError::LabelOutsideClearance)?;
+        // The artifact carries the labels the caller asked for, each one it holds.
+        let labels = &request.labels;
         if !labels.within(caller.labels()) {
             return Err(ArtifactStoreError::LabelOutsideClearance);
         }
@@ -134,8 +126,6 @@ impl ArtifactStore {
                 facts.principal_key,
                 &facts.groups,
                 &facts.group_levels,
-                facts.work_context,
-                facts.membership,
                 &facts.labels,
                 now,
                 &sources,
@@ -162,7 +152,6 @@ impl ArtifactStore {
             artifact_id as ArtifactId,
             caller.principal() as StoredPrincipal,
             caller.principal_key().as_str(),
-            caller.work_context().as_str(),
             request.name.as_str(),
             request.media_type.as_str(),
             &label_text,

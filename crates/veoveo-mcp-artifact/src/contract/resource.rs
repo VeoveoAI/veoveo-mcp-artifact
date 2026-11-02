@@ -3,9 +3,7 @@
 //! parsing, so no address is built or split by hand.
 use std::{borrow::Cow, error::Error, fmt};
 
-use veoveo_types::{
-    PrincipalId, ResourceFieldCodec, ResourceRouteError, ResourceUriError, WorkContextId,
-};
+use veoveo_types::{PrincipalId, ResourceFieldCodec, ResourceRouteError, ResourceUriError};
 
 use super::{
     AccessRequestState, ArtifactId, MediaType, NamePrefix, ReleaseState, UploadId, UploadState,
@@ -68,12 +66,10 @@ pub enum ArtifactResource {
     #[resource(template = "artifact://contract")]
     Contract,
     #[resource(
-        template = "artifact://artifacts{?work_context,owner,media_type,name,release_state}",
+        template = "artifact://artifacts{?owner,media_type,name,release_state}",
         route_error = listing_route_error
     )]
     Artifacts {
-        #[resource(error = |_| ArtifactResourceError::InvalidFilter)]
-        work_context: Option<WorkContextId>,
         #[resource(error = |_| ArtifactResourceError::InvalidFilter)]
         owner: Option<PrincipalId>,
         #[resource(codec = ArtifactFieldCodec)]

@@ -7,7 +7,7 @@
 //! qualification environment, set `VEOVEO_ACCEPTANCE_HUB` to the native HTTPS Hub
 //! origin and `VEOVEO_ACCEPTANCE_{MEMBER,ADMIN}_BEARER_ENV` to distinct variables
 //! holding the prepared bearer/opaque references. Explicit tenant, admin principal and
-//! Work Context inputs retain exact identity assertions; see the README. No caller
+//! member principal inputs retain exact identity assertions; see the README. No caller
 //! signing keys are copied.
 //! Run the six private cases serially, excluding the public share-route case and
 //! `restart_persistence_` phases; see the README for exact commands. The tests share
@@ -47,7 +47,7 @@ use veoveo_mcp_artifact::contract::{
     ReleaseState, RevokeArtifactGrantResult, ShareLinks, SignedTransfer, StorageUsage,
     UploadLimits, UploadLimitsResult, UploadTransfer,
 };
-use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, WorkContextId};
+use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId};
 
 #[derive(Clone, Copy)]
 enum CallerRole {
@@ -138,7 +138,7 @@ type Client = RunningService<RoleClient, Caller>;
 struct AcceptanceCoordinates {
     tenant: TenantId,
     admin_principal: PrincipalId,
-    work_context: WorkContextId,
+    member_principal: PrincipalId,
 }
 
 impl AcceptanceCoordinates {
@@ -154,12 +154,10 @@ impl AcceptanceCoordinates {
                         "VEOVEO_ACCEPTANCE_ADMIN_PRINCIPAL must be a valid principal ID"
                     )
                 })?,
-            work_context: WorkContextId::parse(required("VEOVEO_ACCEPTANCE_WORK_CONTEXT")?)
+            member_principal: PrincipalId::parse(required("VEOVEO_ACCEPTANCE_MEMBER_PRINCIPAL")?)
                 .map_err(|_| {
-                    anyhow::anyhow!(
-                        "VEOVEO_ACCEPTANCE_WORK_CONTEXT must be a valid Work Context ID"
-                    )
-                })?,
+                anyhow::anyhow!("VEOVEO_ACCEPTANCE_MEMBER_PRINCIPAL must be a valid principal ID")
+            })?,
         })
     }
 }
@@ -479,7 +477,7 @@ async fn each_role_lists_the_tools_it_may_call_and_the_member_is_refused_the_res
 
 #[tokio::test]
 #[ignore = "requires a running local installation"]
-async fn a_declared_upload_is_available_and_serves_a_range_to_the_work_context() -> Result<()> {
+async fn a_declared_upload_is_available_and_serves_a_range_to_a_grantee() -> Result<()> {
     bounded(120, async {
         let installation = Installation::from_env()?;
         let admin = installation.connect(ADMIN).await?;
@@ -510,12 +508,29 @@ async fn a_declared_upload_is_available_and_serves_a_range_to_the_work_context()
             usage.stored_bytes
         );
 
-        // A member of the artifact's Work Context reads it and fetches a range.
+        // The artifact is private to its owner until shared: the member reads it once the
+        // admin grants them read, and fetches a range.
         let member = installation.connect(MEMBER).await?;
+        ensure!(
+            read::<ArtifactEntry>(&member, &artifact_uri(artifact_id))
+                .await
+                .is_err(),
+            "the member read an artifact nobody shared with them"
+        );
+        call::<GrantArtifactResult>(
+            &admin,
+            "grant_artifact",
+            json!({
+                "artifactId": artifact_id,
+                "subject": {"kind": "principal", "id": installation.coordinates.member_principal},
+                "level": "read"
+            }),
+        )
+        .await?;
         let seen: ArtifactEntry = read(&member, &artifact_uri(artifact_id)).await?;
         ensure!(
-            seen.level == AccessLevel::Write,
-            "a contributor of the Work Context reads at {:?}",
+            seen.level == AccessLevel::Read,
+            "the grantee reads at {:?}",
             seen.level
         );
         let download: CreateDownloadResult = call(
@@ -893,14 +908,25 @@ async fn the_admin_approves_the_members_request_for_more_access() -> Result<()> 
         let admin = installation.connect(ADMIN).await?;
         let member = installation.connect(MEMBER).await?;
         let artifact_id = upload_declared(&admin, "requested.bin", &part_bytes(5, 1024)).await?;
-        // The member writes through the Work Context and asks to administer.
+        // The admin shares the artifact with the member to write, and the member asks to
+        // administer it.
+        call::<GrantArtifactResult>(
+            &admin,
+            "grant_artifact",
+            json!({
+                "artifactId": artifact_id,
+                "subject": {"kind": "principal", "id": installation.coordinates.member_principal},
+                "level": "write"
+            }),
+        )
+        .await?;
         let requested: AccessRequestResult = call(
             &member,
             "request_artifact_access",
             json!({
                 "artifactId": artifact_id,
                 "level": "admin",
-                "justification": "I curate this Work Context's reports"
+                "justification": "I curate these reports"
             }),
         )
         .await?;
@@ -977,7 +1003,6 @@ fn check_retained(
             && artifact.size.map(|size| size.bytes()) == Some(body.len() as u64)
             && artifact.owner == *owner
             && artifact.provenance.caller == *owner
-            && artifact.work_context == coordinates.work_context
             && artifact.available_at.is_some(),
         "the prepared artifact's metadata, identity or integrity changed"
     );
@@ -1227,7 +1252,9 @@ mod coordinate_inputs {
             "VEOVEO_ACCEPTANCE_ADMIN_PRINCIPAL" => {
                 Some("https://idp.example.com/tenant/v2.0#operator".into())
             }
-            "VEOVEO_ACCEPTANCE_WORK_CONTEXT" => Some("reference-work".into()),
+            "VEOVEO_ACCEPTANCE_MEMBER_PRINCIPAL" => {
+                Some("https://idp.example.com/tenant/v2.0#member".into())
+            }
             _ => None,
         }
     }
@@ -1240,7 +1267,10 @@ mod coordinate_inputs {
             coordinates.admin_principal.as_str(),
             "https://idp.example.com/tenant/v2.0#operator"
         );
-        assert_eq!(coordinates.work_context.as_str(), "reference-work");
+        assert_eq!(
+            coordinates.member_principal.as_str(),
+            "https://idp.example.com/tenant/v2.0#member"
+        );
         Ok(())
     }
 
@@ -1249,7 +1279,7 @@ mod coordinate_inputs {
         for field in [
             "VEOVEO_ACCEPTANCE_TENANT",
             "VEOVEO_ACCEPTANCE_ADMIN_PRINCIPAL",
-            "VEOVEO_ACCEPTANCE_WORK_CONTEXT",
+            "VEOVEO_ACCEPTANCE_MEMBER_PRINCIPAL",
         ] {
             for invalid in [None, Some(""), Some("invalid\ncoordinate")] {
                 let error = AcceptanceCoordinates::load(|name| {

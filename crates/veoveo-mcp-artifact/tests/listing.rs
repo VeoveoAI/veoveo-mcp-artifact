@@ -11,9 +11,7 @@ use veoveo_mcp_artifact::{
     },
     store::ArtifactStoreError,
 };
-use veoveo_types::{
-    CursorToken, Page, PageSize, PrincipalId, WorkContextId, WorkContextMembershipLevel,
-};
+use veoveo_types::{CursorToken, Page, PageSize, PrincipalId};
 
 fn ids(page: &Page<Artifacts>) -> Vec<ArtifactId> {
     page.items()
@@ -39,10 +37,10 @@ async fn pages_walk_newest_first_and_hold_only_readable_artifacts() {
         }
         // An artifact still uploading is not listed.
         create(&store, &owner, upload_request("pending.txt", Some(1))).await;
-        // Someone else's artifact in another Work Context is invisible to the owner.
+        // Someone else's artifact, not shared with the owner, is invisible to them.
         available(
             &store,
-            &Who::new("sam").in_context("research", WorkContextMembershipLevel::Owner),
+            &Who::new("sam"),
             upload_request("hidden.txt", Some(1)),
         )
         .await;
@@ -67,8 +65,26 @@ async fn pages_walk_newest_first_and_hold_only_readable_artifacts() {
         assert_eq!(ids(&third), vec![created[0]]);
         assert!(third.next_cursor().is_none());
 
-        // A viewer of the Work Context reads every artifact in it; a stranger reads none.
-        let viewer = Who::new("vic").in_context("ops", WorkContextMembershipLevel::Viewer);
+        // A member of a group the artifacts are shared with reads every one of them; a
+        // stranger reads none.
+        for artifact in &created {
+            store
+                .grant_artifact(
+                    &caller,
+                    &veoveo_mcp_artifact::contract::GrantArtifactRequest {
+                        artifact_id: *artifact,
+                        subject: veoveo_types::AccessSubject::Group(
+                            veoveo_types::GroupId::parse("ops").unwrap(),
+                        ),
+                        level: veoveo_types::AccessLevel::Read,
+                        expires_at: None,
+                    },
+                    now(),
+                )
+                .await
+                .unwrap();
+        }
+        let viewer = Who::new("vic").group("ops", veoveo_types::AccessLevel::Write);
         let page = store
             .artifacts_page(
                 &viewer.caller(),
@@ -80,7 +96,7 @@ async fn pages_walk_newest_first_and_hold_only_readable_artifacts() {
             .await
             .unwrap();
         assert_eq!(page.items().len(), 5);
-        let stranger = Who::new("tom").in_context("elsewhere", WorkContextMembershipLevel::Owner);
+        let stranger = Who::new("tom").group("elsewhere", veoveo_types::AccessLevel::Admin);
         let page = store
             .artifacts_page(&stranger.caller(), None, None, two, now())
             .await
@@ -137,10 +153,27 @@ async fn pages_walk_newest_first_and_hold_only_readable_artifacts() {
 async fn each_filter_selects_its_artifacts() {
     with_store(|store| async move {
         let owner = Who::new("owen");
-        let research = Who::new("owen").in_context("research", WorkContextMembershipLevel::Owner);
         let report_b = available(&store, &owner, upload_request("report-b.txt", Some(1))).await;
         let report_a = available(&store, &owner, upload_request("report-a.txt", Some(1))).await;
-        let summary = available(&store, &research, upload_request("summary.txt", Some(1))).await;
+        let summary = available(&store, &owner, upload_request("summary.txt", Some(1))).await;
+        // Another person's artifact shared with the owner is theirs to read, not the owner's.
+        let colleague = Who::new("sam");
+        let shared = available(&store, &colleague, upload_request("shared.txt", Some(1))).await;
+        store
+            .grant_artifact(
+                &colleague.caller(),
+                &veoveo_mcp_artifact::contract::GrantArtifactRequest {
+                    artifact_id: shared,
+                    subject: veoveo_types::AccessSubject::Principal(
+                        PrincipalId::parse("owen").unwrap(),
+                    ),
+                    level: veoveo_types::AccessLevel::Read,
+                    expires_at: None,
+                },
+                now(),
+            )
+            .await
+            .unwrap();
         let mut image = upload_request("chart.png", Some(1));
         image.media_type = MediaType::parse("image/png").unwrap();
         let chart = available(&store, &owner, image).await;
@@ -162,19 +195,18 @@ async fn each_filter_selects_its_artifacts() {
         };
         let prefix = ArtifactFilter::NamePrefix(NamePrefix::parse("report").unwrap());
         assert_eq!(list(owner.clone(), prefix).await, vec![report_a, report_b]);
-        let context = ArtifactFilter::WorkContext(WorkContextId::parse("research").unwrap());
-        assert_eq!(list(research.clone(), context).await, vec![summary]);
         let media = ArtifactFilter::MediaType(MediaType::parse("image/png").unwrap());
         assert_eq!(list(owner.clone(), media).await, vec![chart]);
         let released = ArtifactFilter::ReleaseState(ReleaseState::Released);
         assert_eq!(list(owner.clone(), released).await, vec![chart]);
-        // Ownership gives admin in any Work Context, so the owner filter also lists the
-        // research summary.
+        // The owner filter lists the owner's own artifacts, not those shared with them.
         let mine = ArtifactFilter::Owner(PrincipalId::parse("owen").unwrap());
         assert_eq!(
             list(owner.clone(), mine).await,
             vec![chart, summary, report_a, report_b]
         );
+        let theirs = ArtifactFilter::Owner(PrincipalId::parse("sam").unwrap());
+        assert_eq!(list(owner.clone(), theirs).await, vec![shared]);
 
         // A name page continues by name.
         let one = PageSize::<100>::new(1).unwrap();
@@ -200,16 +232,15 @@ async fn each_filter_selects_its_artifacts() {
         // A listing applies at most one filter.
         assert!(matches!(
             ArtifactFilter::from_parts(
-                Some(WorkContextId::parse("ops").unwrap()),
                 Some(PrincipalId::parse("owen").unwrap()),
-                None,
+                Some(MediaType::parse("text/plain").unwrap()),
                 None,
                 None,
             ),
             Err(ArtifactResourceError::InvalidFilter)
         ));
         assert_eq!(
-            ArtifactFilter::from_parts(None, None, None, None, None).unwrap(),
+            ArtifactFilter::from_parts(None, None, None, None).unwrap(),
             None
         );
     })

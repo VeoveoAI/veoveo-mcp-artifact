@@ -38,11 +38,12 @@ port         8801
 | [RFC 6266](https://www.rfc-editor.org/rfc/rfc6266) | Download responses carry an attachment disposition with the artifact's name as `filename*`. |
 | [RFC 6838](https://www.rfc-editor.org/rfc/rfc6838) media types | An artifact's media type is a bare `type/subtype` without parameters. |
 | Object identity | ArtifactID and create-only storage identify an object. Artifact checks its size; consumers own any content digest policy. Share-link secrets still use SHA-256 protection. |
-| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Hub forwards each request with an access token naming the caller, their tenant, groups, data labels and Work Context authority. A call from another server carries an `act` chain naming that server, and the server's Task when the call came from one, which Artifact records in each artifact's provenance and as the `via` of its audit records. `ArtifactClient` calls through a Hub profile with a token the SDK obtains by exchange. |
+| [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Hub forwards each request with an access token naming the caller, their tenant, groups with their roles, and data labels. A call from another server carries an `act` chain naming that server, and the server's Task when the call came from one, which Artifact records in each artifact's provenance and as the `via` of its audit records. `ArtifactClient` calls through a Hub profile with a token the SDK obtains by exchange. |
 | [HTTP range requests, RFC 9110 §14](https://www.rfc-editor.org/rfc/rfc9110#name-range-requests) | `ArtifactClient` sends one `bytes=first-last` or `bytes=first-` range with a signed GET and expects `206 Partial Content`. |
 | [HTTP semantics, RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) `303 See Other` and `Cache-Control: no-store` ([RFC 9111](https://www.rfc-editor.org/rfc/rfc9111)) | The share route answers a live link with `303` to a signed GET, and every answer carries `no-store`. |
 | [Base64url, RFC 4648 §5](https://www.rfc-editor.org/rfc/rfc4648#section-5) | A share link's secret is 32 random bytes in unpadded canonical base64url, 43 characters. |
 | [Referrer Policy](https://www.w3.org/TR/referrer-policy/) | The share route's answers carry `Referrer-Policy: no-referrer`. |
+| [MCP Skills extension](https://github.com/modelcontextprotocol/ext-skills) `io.modelcontextprotocol/skills`, SEP-2640, and the [Agent Skills](https://agentskills.io/specification) format | The skills under `skills/`, embedded at build time and served at `skill://artifact/{name}/{path}` through the SDK; see [Skills](#skills) |
 | [Veoveo server registration](https://github.com/VeoveoAI/veoveo-hub-sdk) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions in `ai.veoveo/authorization`. |
 | [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/9a6b3ff95469ff19f9ccb513421a57ba6751aa9e/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. |
 | SeaweedFS 4.48 | The installation's object store, run as `weed mini` and pinned by image digest. Artifact uses only the S3 calls listed above through aws-sdk-s3 1.152.0, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
@@ -52,7 +53,7 @@ port         8801
 Artifact answers these questions for a tenant:
 
 - Which files may this caller see, and what does each one hold: name, media type,
-  size, labels, owner, Work Context, release state and provenance?
+  size, labels, owner, release state and provenance?
 - Where does a caller send the bytes of a new file, and where do they fetch an
   existing one?
 - Who else may read, change or administer a file, and until when?
@@ -91,7 +92,7 @@ change on the `artifact` channel to its tenant's subscribers.
 
 | Tool | Does | Permission | Level on the artifact |
 |---|---|---|---|
-| `create_upload` | Reserves quota and an artifact ID and returns the URLs that receive the bytes | `artifact.artifacts.write` | contributor or above in the caller's selected Work Context |
+| `create_upload` | Reserves quota and an artifact ID and returns the URLs that receive the bytes | `artifact.artifacts.write` | none: the caller creates an artifact it owns |
 | `sign_upload_parts` | Signs the next part URLs of a multipart upload, or signs expired ones again | `artifact.artifacts.write` | the upload's creator |
 | `complete_upload` | Completes native create-only storage, validates size and makes the artifact available | `artifact.artifacts.write` | the upload's creator |
 | `abort_upload` | Aborts the upload and releases its reservation | `artifact.artifacts.write` | the upload's creator |
@@ -106,17 +107,19 @@ change on the `artifact` channel to its tenant's subscribers.
 
 `create_upload` takes the name and media type, and optionally the size,
 a maximum size, data labels, a retention period, metadata, the artifacts it derives
-from and an idempotency key. The owner, tenant, Work Context and provenance come from
-the forwarded identity, never from arguments: the artifact belongs to the caller's
-selected Work Context. Its labels are the requested labels together with the Work
-Context's output classification and labels, and all of them must lie within the
-caller's data labels.
+from and an idempotency key. The owner, tenant and provenance come from the forwarded
+identity, never from arguments: the artifact belongs to its creator, the person the
+call is for, never a server's identity, and is private until shared. A call another
+server or its Task makes keeps that server and Task in the provenance. Its labels are
+exactly the requested labels, each one the caller's data labels hold. `create_upload`
+takes no grants: sharing is a separate `grant_artifact` call, so a failed share leaves
+the artifact private.
 
 ### Resources
 
 | URI | Returns |
 |---|---|
-| `artifact://artifacts{?work_context,owner,media_type,name,release_state,cursor}` | A page of artifacts the caller may read, newest first |
+| `artifact://artifacts{?owner,media_type,name,release_state,cursor}` | A page of artifacts the caller may read, newest first |
 | `artifact://artifacts/{artifact_id}` | The artifact's metadata |
 | `artifact://artifacts/{artifact_id}/grants` | Its grants, for administrators |
 | `artifact://artifacts/{artifact_id}/share-links{?cursor}` | Its share links without their secrets, for administrators |
@@ -131,12 +134,29 @@ listing; a change to an access request reaches every access-request listing of i
 tenant, whose readers then read only the requests they made or can decide. A
 subscription to an artifact's share links needs admin on the artifact.
 
+### Skills
+
+How an agent uses Artifact is in its skills, which a host loads when a task needs one.
+The server's `instructions` say what it is and name each skill's address, and the skill
+text names the tools as callers see them through the Hub, `artifact__{tool}`:
+
+| Skill | Guidance |
+|---|---|
+| `upload-an-artifact` | `create_upload` with its options and idempotency, a single PUT or signed parts, completion and abort, labels within the caller's and the tenant's limits |
+| `download-an-artifact` | the listing and its filters, an artifact's metadata, and `create_download` with its 5-minute URL and ranges |
+| `share-an-artifact` | how a level is decided, grants to people and groups, share links for released artifacts without labels, reviewing who can reach an artifact, access requests and deletion |
+
+Each skill file is a resource of the server under its document policy,
+`artifact.artifacts.read`.
+
 ### Prompts
 
-| Prompt | Arguments | Guides the model to |
-|---|---|---|
-| `review-artifact-sharing` | `artifact_id` | read the artifact, its grants and its share links, report who can reach it and how, and propose revocations the user then confirms |
-| `review-access-requests` | none | read the pending requests the caller can decide, weigh each against its artifact, and decide only the ones the user decides |
+Each prompt states its task and names the skill that says how:
+
+| Prompt | Arguments | Task | Skill |
+|---|---|---|---|
+| `review-artifact-sharing` | `artifact_id` | review who can reach the artifact through its grants and share links, changing nothing until the user agrees | `share-an-artifact` |
+| `review-access-requests` | none | recommend a decision on each pending request the caller can decide, deciding only the ones the user decides | `share-an-artifact` |
 
 Each prompt requires `artifact.artifacts.read`, and acts only through the tools above.
 
@@ -232,10 +252,12 @@ Otherwise the caller's level is the highest of:
 
 - admin for the owner;
 - the caller's unexpired principal grants;
-- the caller's unexpired group grants, each capped by the caller's role in that group;
-- the caller's membership in the artifact's Work Context, while it is the caller's
-  selected one: a viewer reads, a contributor writes, and a custodian or owner
-  administers.
+- the caller's unexpired group grants, each capped by the caller's role in that group.
+
+A project is a group: a project's artifacts are shared with its group, and joining the
+group gives what is shared with it while leaving takes that away; a person's own grants
+stay. Artifact decides from the groups and roles the forwarded identity names and its
+own grants, and nothing else.
 
 A tool needs read, write or admin as the table above lists. A caller below the needed
 level who can see the artifact gets a refusal that names the level. A caller who cannot
@@ -246,7 +268,6 @@ see it gets the same answer as for an unknown ID.
 | Mechanism | Reaches | Rules |
 |---|---|---|
 | Grant | a principal or group in the tenant | Read, write or admin, with an optional expiry. The owner's admin access cannot be revoked. |
-| Work Context membership | the members of the artifact's Work Context | The level follows the membership role. |
 | Share link | anyone holding the link | Read only, for a released artifact without data labels, for 1 to 30 days, with an optional redemption limit. An artifact holds at most 256 live links. The server stores only the SHA-256 of the link's secret. |
 | Access request | a caller who reads an artifact and asks for write or admin | Pending, then approved, denied or cancelled. Approval writes the grant in the same transaction. |
 
@@ -374,7 +395,7 @@ Per-rule compliance profiles and their generated manual section are removed.
 
 | Table in `artifact` | Holds | Retention |
 |---|---|---|
-| `artifact` | ID, tenant, Work Context, owner, name, media type, size, labels, release state, provenance, metadata, retention and state (`uploading`, `available`, `failed`, `deleting`) | Until deleted or its retention passes; a failed artifact, which holds no object, 7 days after it failed |
+| `artifact` | ID, tenant, owner, name, media type, size, labels, release state, provenance, metadata, retention and state (`uploading`, `available`, `failed`, `deleting`) | Until deleted or its retention passes; a failed artifact, which holds no object, 7 days after it failed |
 | `grant` | Artifact, subject kind and ID, level, expiry and grantor | With the artifact, or at expiry |
 | `upload` | Artifact, creator, acting identity, idempotency key, form, declared size, maximum size, S3 upload ID, part size, state and expiry | 7 days after it ends |
 | `share_link` | Artifact, secret digest, expiry, redemption limit and count, and revocation | 30 days after expiry or revocation |
@@ -524,7 +545,7 @@ signed header would void the signature.
 | Layer | Checks |
 |---|---|
 | Unit | The checksum-free content contract, object keys, attachment dispositions, part plans, permission risks, audit schemas, the requirement table and tool annotations, the MCP setup, subscription matching and configuration |
-| Database | Core's database checks over every statement and table; `tests/sql_confinement.rs` holds every query, migration and test query to the `artifact` schema with the SDK's `assert_sql_confined`; `effective_level` against a matrix of owners, grants, groups, Work Context roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
+| Database | Core's database checks over every statement and table; `tests/sql_confinement.rs` holds every query, migration and test query to the `artifact` schema with the SDK's `assert_sql_confined`; `effective_level` against a matrix of owners, principal and group grants, group roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
 | Object storage | A private SeaweedFS per test process, from the binary in the pinned image: signed single and multipart uploads, wrong object sizes and part lengths refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
 | Service | The store and SeaweedFS together: declared and undeclared uploads, refused bytes, aborts, a large unknown-size object made available without a background Task, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
 | MCP | The SDK's in-process Hub with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
@@ -532,4 +553,4 @@ signed header would void the signature.
 | Share route | `tests/share_route.rs` through the hosted router and a private SeaweedFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
 | Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private SeaweedFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves available, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |
-| Acceptance | `tests/acceptance.rs` through a running installation's Hub and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call, the sharing tools among the member's, and the member refused the tools whose permissions carry a risk, a share link and a deletion among them, a declared upload available at completion and read as a range by a Work Context member, a gibibyte of unknown size uploaded in parts, independently fingerprinted by the consumer, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |
+| Acceptance | `tests/acceptance.rs` through a running installation's Hub and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call, the sharing tools among the member's, and the member refused the tools whose permissions carry a risk, a share link and a deletion among them, a declared upload available at completion, private to its owner and read as a range by the member once granted, a gibibyte of unknown size uploaded in parts, independently fingerprinted by the consumer, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin on an artifact shared with them approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |

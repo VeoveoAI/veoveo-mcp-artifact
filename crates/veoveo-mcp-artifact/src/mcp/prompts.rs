@@ -1,6 +1,6 @@
-//! Artifact's prompts: guidance for reviewing how an artifact is shared and for deciding
-//! the access requests waiting on the caller. Both read through resources and act through
-//! tools, so a prompt grants nothing itself.
+//! Artifact's prompts: reviewing how an artifact is shared and deciding the access
+//! requests waiting on the caller. Each states its task and names the skill that says
+//! how, so a prompt grants nothing itself.
 use rmcp::{
     ErrorData as McpError,
     model::{GetPromptResult, JsonObject, Prompt, PromptArgument, PromptMessage, Role},
@@ -69,14 +69,9 @@ impl ArtifactPrompt {
                 let grants = ArtifactResource::Grants(artifact_id);
                 let links = ArtifactResource::ShareLinks { artifact_id };
                 format!(
-                    "Read {artifact} for the artifact's owner, Work Context, labels and release \
-                     state, {grants} for its grants and {links} for its share links. Report who \
-                     can reach it and through which mechanism. Flag grants without an expiry \
-                     to groups, share links that live longer than the artifact needs, links \
-                     close to their redemption limit, and a released artifact nobody shares by \
-                     link. Propose `revoke_artifact_grant`, `revoke_share_link` or \
-                     `set_release_state` to `private` where access exceeds the artifact's \
-                     purpose, and call none of them until the user agrees."
+                    "Review who can reach {artifact}, through {grants} and {links}, as the \
+                     skill skill://artifact/share-an-artifact/SKILL.md says, and change nothing \
+                     until I agree."
                 )
             }
             Self::ReviewAccessRequests => {
@@ -85,12 +80,9 @@ impl ArtifactPrompt {
                     state: Some(AccessRequestState::Pending),
                 };
                 format!(
-                    "Read {pending} for the pending requests you can decide, following \
-                     `nextCursor` to the end. For each one, read the artifact it names and its \
-                     grants, then weigh the requested level against the requester's \
-                     justification and the artifact's labels. Present each request with a \
-                     recommendation, and call `decide_access_request` with `approve` or `deny` \
-                     and a note only for the requests the user decides."
+                    "Recommend a decision on each request in {pending} as the skill \
+                     skill://artifact/share-an-artifact/SKILL.md says, and decide only the ones \
+                     I decide."
                 )
             }
         };

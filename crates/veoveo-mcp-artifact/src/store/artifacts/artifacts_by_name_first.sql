@@ -1,12 +1,11 @@
 -- The first page of the readable artifacts whose name starts with a prefix, ordered by
--- name, then ID. $10 is the prefix and $11 the prefix followed by U+10FFFF, which no name
+-- name, then ID. $8 is the prefix and $9 the prefix followed by U+10FFFF, which no name
 -- holds, so the two bound exactly the names that start with the prefix.
--- Parameters $1 to $9 are the caller's facts for artifact.effective_level: tenant,
--- principal, principal key, groups, their roles, Work Context, membership, labels and time.
+-- Parameters $1 to $7 are the caller's facts for artifact.effective_level: tenant,
+-- principal, principal key, groups, their roles, labels and time.
 SELECT
     a.artifact_id AS "artifact_id: ArtifactId",
     a.owner_key,
-    a.work_context,
     a.name,
     a.media_type,
     a.size_bytes,
@@ -18,12 +17,12 @@ SELECT
     a.created_at,
     a.available_at,
     a.retain_until,
-    artifact.effective_level(a, $1, $2, $3, $4, $5, $6, $7, $8, $9) AS "level!: i16"
+    artifact.effective_level(a, $1, $2, $3, $4, $5, $6, $7) AS "level!: i16"
 FROM artifact.artifact AS a
 WHERE a.tenant = $1
-    AND a.name >= $10
-    AND a.name < $11
+    AND a.name >= $8
+    AND a.name < $9
     AND a.state = 'available'
-    AND artifact.effective_level(a, $1, $2, $3, $4, $5, $6, $7, $8, $9) >= 1
+    AND artifact.effective_level(a, $1, $2, $3, $4, $5, $6, $7) >= 1
 ORDER BY a.name, a.artifact_id
-LIMIT $12
+LIMIT $10

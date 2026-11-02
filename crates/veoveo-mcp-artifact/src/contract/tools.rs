@@ -1,4 +1,4 @@
-//! Every tool's request and result. Owner, tenant, Work Context and provenance never
+//! Every tool's request and result. Owner, tenant and provenance never
 //! appear in a request: the server takes them from the forwarded identity.
 use std::{borrow::Cow, num::NonZeroU32};
 

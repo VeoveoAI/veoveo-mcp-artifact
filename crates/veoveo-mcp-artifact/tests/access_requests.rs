@@ -22,7 +22,7 @@ use veoveo_mcp_artifact::{
     store::{ArtifactStore, ArtifactStoreError},
 };
 use veoveo_store::PlatformStore;
-use veoveo_types::{AccessLevel, AccessSubject, PrincipalId, TenantId, WorkContextMembershipLevel};
+use veoveo_types::{AccessLevel, AccessSubject, GroupId, PrincipalId, TenantId};
 
 async fn with_database<F, Fut>(test: F)
 where
@@ -61,12 +61,34 @@ fn ada() -> Who {
     Who::new("ada")
 }
 
+/// A member of the reviewers group, with which Ada shares her reports to read.
 fn vera() -> Who {
-    Who::new("vera").in_context("ops", WorkContextMembershipLevel::Viewer)
+    Who::new("vera").group("reviewers", AccessLevel::Write)
 }
 
+/// Someone outside the reviewers group.
 fn carol() -> Who {
-    Who::new("carol").in_context("research", WorkContextMembershipLevel::Contributor)
+    Who::new("carol")
+}
+
+/// An available artifact of `owner` named `name`, shared with the reviewers group to read,
+/// as a project shares its files with its group.
+async fn shared(store: &ArtifactStore, owner: &Who, name: &str) -> ArtifactId {
+    let artifact = available(store, owner, upload_request(name, Some(8))).await;
+    store
+        .grant_artifact(
+            &owner.caller(),
+            &GrantArtifactRequest {
+                artifact_id: artifact,
+                subject: AccessSubject::Group(GroupId::parse("reviewers").unwrap()),
+                level: AccessLevel::Read,
+                expires_at: None,
+            },
+            now(),
+        )
+        .await
+        .unwrap();
+    artifact
 }
 
 fn asking(artifact: ArtifactId, level: AccessLevel) -> RequestArtifactAccessRequest {
@@ -84,7 +106,7 @@ async fn level(store: &ArtifactStore, who: &Who, artifact: ArtifactId) -> Option
 #[tokio::test]
 async fn an_approval_gives_the_requested_level_and_records_each_step() {
     with_database(|db, store| async move {
-        let artifact = available(&store, &ada(), upload_request("report.txt", Some(8))).await;
+        let artifact = shared(&store, &ada(), "report.txt").await;
         assert_eq!(
             level(&store, &vera(), artifact).await,
             Some(AccessLevel::Read)
@@ -169,7 +191,7 @@ async fn an_approval_gives_the_requested_level_and_records_each_step() {
 #[tokio::test]
 async fn a_request_needs_a_visible_artifact_and_a_level_above_the_one_held() {
     with_database(|_db, store| async move {
-        let artifact = available(&store, &ada(), upload_request("report.txt", Some(8))).await;
+        let artifact = shared(&store, &ada(), "report.txt").await;
         // Carol cannot see the artifact, so it is as unknown to her as an unused ID.
         assert!(matches!(
             store
@@ -212,7 +234,7 @@ async fn a_request_needs_a_visible_artifact_and_a_level_above_the_one_held() {
 #[tokio::test]
 async fn only_the_requester_withdraws_and_only_an_administrator_decides() {
     with_database(|db, store| async move {
-        let artifact = available(&store, &ada(), upload_request("report.txt", Some(8))).await;
+        let artifact = shared(&store, &ada(), "report.txt").await;
         let pending = store
             .request_access(
                 &vera().caller(),
@@ -221,8 +243,8 @@ async fn only_the_requester_withdraws_and_only_an_administrator_decides() {
             )
             .await
             .unwrap();
-        // Another principal of the Work Context neither withdraws nor decides it.
-        let other = Who::new("otto").in_context("ops", WorkContextMembershipLevel::Viewer);
+        // Another reviewer neither withdraws nor decides it.
+        let other = Who::new("otto").group("reviewers", AccessLevel::Write);
         assert!(matches!(
             store
                 .cancel_access_request(&other.caller(), pending.access_request_id, now())
@@ -305,7 +327,15 @@ async fn only_the_requester_withdraws_and_only_an_administrator_decides() {
                 .iter()
                 .any(|class| class == AccessRequestCancelled::CLASS)
         );
-        assert!(!recorded.iter().any(|class| class == GrantChanged::CLASS));
+        // The one grant change is Ada's share with the reviewers: a withdrawal and a
+        // denial change no grant.
+        assert_eq!(
+            recorded
+                .iter()
+                .filter(|class| *class == GrantChanged::CLASS)
+                .count(),
+            1
+        );
     })
     .await;
 }
@@ -313,7 +343,7 @@ async fn only_the_requester_withdraws_and_only_an_administrator_decides() {
 #[tokio::test]
 async fn an_approval_keeps_a_stronger_grant_the_requester_received_meanwhile() {
     with_database(|_db, store| async move {
-        let artifact = available(&store, &ada(), upload_request("report.txt", Some(8))).await;
+        let artifact = shared(&store, &ada(), "report.txt").await;
         let pending = store
             .request_access(
                 &vera().caller(),
@@ -362,7 +392,7 @@ async fn listings_page_newest_first_by_role_and_state() {
     with_database(|_db, store| async move {
         let mut artifacts = Vec::new();
         for name in ["a.txt", "b.txt", "c.txt"] {
-            artifacts.push(available(&store, &ada(), upload_request(name, Some(8))).await);
+            artifacts.push(shared(&store, &ada(), name).await);
         }
         let mut requests = Vec::new();
         for artifact in &artifacts {
@@ -383,9 +413,8 @@ async fn listings_page_newest_first_by_role_and_state() {
             .await
             .unwrap();
         // Vera owns an artifact of her own, and Otto asks her for access to it.
-        let contributor = vera().in_context("ops", WorkContextMembershipLevel::Contributor);
-        let veras = available(&store, &contributor, upload_request("v.txt", Some(8))).await;
-        let otto = Who::new("otto").in_context("ops", WorkContextMembershipLevel::Viewer);
+        let veras = shared(&store, &vera(), "v.txt").await;
+        let otto = Who::new("otto").group("reviewers", AccessLevel::Write);
         let ottos_request = store
             .request_access(&otto.caller(), &asking(veras, AccessLevel::Write), now())
             .await

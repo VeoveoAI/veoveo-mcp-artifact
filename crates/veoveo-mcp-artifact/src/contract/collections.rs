@@ -8,14 +8,12 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fmt};
 use veoveo_types::{
     Collection, CursorError, CursorScope, LiveKeyset, PageSize, PagingPolicy, PrincipalId,
-    WorkContextId,
 };
 
 /// Exactly one effective artifact filter; absence lists all visible artifacts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum ArtifactFilter {
-    WorkContext(WorkContextId),
     Owner(PrincipalId),
     MediaType(MediaType),
     NamePrefix(NamePrefix),
@@ -23,14 +21,12 @@ pub enum ArtifactFilter {
 }
 impl ArtifactFilter {
     pub fn from_parts(
-        work_context: Option<WorkContextId>,
         owner: Option<PrincipalId>,
         media_type: Option<MediaType>,
         name: Option<NamePrefix>,
         release_state: Option<ReleaseState>,
     ) -> Result<Option<Self>, ArtifactResourceError> {
         let mut filters = [
-            work_context.map(Self::WorkContext),
             owner.map(Self::Owner),
             media_type.map(Self::MediaType),
             name.map(Self::NamePrefix),

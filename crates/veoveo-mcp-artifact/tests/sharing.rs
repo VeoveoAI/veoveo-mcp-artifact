@@ -21,7 +21,7 @@ use veoveo_mcp_artifact::{
     store::{ArtifactStore, ArtifactStoreError, NewShareLink},
 };
 use veoveo_store::PlatformStore;
-use veoveo_types::{Sha256Digest, TenantId, WorkContextMembershipLevel};
+use veoveo_types::{AccessLevel, AccessSubject, Sha256Digest, TenantId};
 
 /// A share-link test with the database at hand, bounded to 60 seconds.
 async fn with_database<F, Fut>(test: F)
@@ -182,8 +182,23 @@ async fn a_link_needs_an_administrator_and_a_released_available_artifact_without
             Err(ArtifactStoreError::NotReleased)
         ));
 
-        // A contributor of the Work Context writes but does not administer.
+        // A writer does not administer.
         let artifact = released(&store, &ada, "shared.txt").await;
+        store
+            .grant_artifact(
+                &ada.caller(),
+                &veoveo_mcp_artifact::contract::GrantArtifactRequest {
+                    artifact_id: artifact,
+                    subject: AccessSubject::Principal(
+                        veoveo_types::PrincipalId::parse("bob").unwrap(),
+                    ),
+                    level: AccessLevel::Write,
+                    expires_at: None,
+                },
+                now(),
+            )
+            .await
+            .unwrap();
         let bob = Who::new("bob");
         assert!(matches!(
             store
@@ -379,7 +394,22 @@ async fn share_links_page_newest_first_for_administrators() {
             ))
         ));
         // A reader who does not administer the artifact sees no links.
-        let viewer = Who::new("vera").in_context("ops", WorkContextMembershipLevel::Viewer);
+        store
+            .grant_artifact(
+                &caller,
+                &veoveo_mcp_artifact::contract::GrantArtifactRequest {
+                    artifact_id: artifact,
+                    subject: AccessSubject::Principal(
+                        veoveo_types::PrincipalId::parse("vera").unwrap(),
+                    ),
+                    level: AccessLevel::Read,
+                    expires_at: None,
+                },
+                now(),
+            )
+            .await
+            .unwrap();
+        let viewer = Who::new("vera");
         assert!(matches!(
             store
                 .share_links_page(&viewer.caller(), artifact, None, size, now())

@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::types::Json;
 use veoveo_store::PrincipalId as StoredPrincipal;
-use veoveo_types::{AccessLevel, DataLabelId, PrincipalId, WorkContextId};
+use veoveo_types::{AccessLevel, DataLabelId, PrincipalId};
 
 use crate::contract::{
     ArtifactId, ArtifactLabels, ArtifactMetadataMap, ArtifactName, ArtifactProvenance,
@@ -17,7 +17,6 @@ use super::{ArtifactStoreError, caller::level_from_rank};
 pub(crate) struct ArtifactRow {
     pub artifact_id: ArtifactId,
     pub owner_key: String,
-    pub work_context: String,
     pub name: String,
     pub media_type: String,
     pub size_bytes: Option<i64>,
@@ -68,8 +67,6 @@ impl ArtifactRow {
             size: self.size_bytes.map(object_size).transpose()?,
             owner: PrincipalId::parse(self.owner_key)
                 .map_err(|_| ArtifactStoreError::Corrupt("artifact owner"))?,
-            work_context: WorkContextId::parse(self.work_context)
-                .map_err(|_| ArtifactStoreError::Corrupt("artifact Work Context"))?,
             labels: ArtifactLabels::new(labels)
                 .map_err(|_| ArtifactStoreError::Corrupt("artifact labels"))?,
             release_state: self.release_state,

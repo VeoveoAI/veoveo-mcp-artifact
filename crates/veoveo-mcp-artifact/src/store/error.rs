@@ -23,8 +23,6 @@ pub enum ArtifactStoreError {
     UploadNotOpen { state: UploadState },
     #[error("the artifact is {state}")]
     ArtifactState { state: ArtifactState },
-    #[error("creating an artifact needs contributor membership in the selected Work Context")]
-    WorkContextReadOnly,
     #[error("a label of the new artifact lies outside the caller's labels")]
     LabelOutsideClearance,
     #[error("an artifact it derives from does not exist for the caller")]

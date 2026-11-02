@@ -5,7 +5,7 @@ mod support;
 use chrono::Duration;
 use support::*;
 use veoveo_mcp_artifact::contract::GrantArtifactRequest;
-use veoveo_types::{AccessLevel, AccessSubject, GroupId, PrincipalId, WorkContextMembershipLevel};
+use veoveo_types::{AccessLevel, AccessSubject, GroupId, PrincipalId};
 
 fn grant(
     artifact: veoveo_mcp_artifact::contract::ArtifactId,
@@ -29,7 +29,7 @@ fn group(key: &str) -> AccessSubject {
 }
 
 #[tokio::test]
-async fn ownership_grants_groups_and_work_context_decide_the_level() {
+async fn ownership_principal_grants_and_capped_group_grants_decide_the_level() {
     with_store(|store| async move {
         let owner = Who::new("owen");
         let artifact = available(&store, &owner, upload_request("plan.txt", Some(5))).await;
@@ -40,8 +40,9 @@ async fn ownership_grants_groups_and_work_context_decide_the_level() {
             Some(AccessLevel::Admin)
         );
 
-        // Outside the artifact's Work Context and without a grant, it does not exist.
-        let stranger = Who::new("sam").in_context("research", WorkContextMembershipLevel::Owner);
+        // Without a grant it does not exist for anyone else in the tenant: an artifact is
+        // private to its owner until shared.
+        let stranger = Who::new("sam");
         assert_eq!(level(&store, &stranger, artifact, at).await, None);
 
         // A principal grant gives its level.
@@ -65,7 +66,7 @@ async fn ownership_grants_groups_and_work_context_decide_the_level() {
             .grant_artifact(&owner.caller(), &expiring, at)
             .await
             .unwrap();
-        let eve = Who::new("eve").in_context("research", WorkContextMembershipLevel::Viewer);
+        let eve = Who::new("eve");
         assert_eq!(level(&store, &eve, artifact, at).await, None);
 
         // A group grant is capped by the caller's role in the group, and the cap works
@@ -78,9 +79,7 @@ async fn ownership_grants_groups_and_work_context_decide_the_level() {
             )
             .await
             .unwrap();
-        let reader = Who::new("rita")
-            .in_context("research", WorkContextMembershipLevel::Viewer)
-            .group("analysts", AccessLevel::Read);
+        let reader = Who::new("rita").group("analysts", AccessLevel::Read);
         assert_eq!(
             level(&store, &reader, artifact, at).await,
             Some(AccessLevel::Read)
@@ -93,38 +92,17 @@ async fn ownership_grants_groups_and_work_context_decide_the_level() {
             )
             .await
             .unwrap();
-        let lead = Who::new("lee")
-            .in_context("research", WorkContextMembershipLevel::Viewer)
-            .group("auditors", AccessLevel::Admin);
+        let lead = Who::new("lee").group("auditors", AccessLevel::Admin);
         assert_eq!(
             level(&store, &lead, artifact, at).await,
             Some(AccessLevel::Read)
         );
         // A group the caller is not in gives nothing.
-        let outsider = Who::new("otto")
-            .in_context("research", WorkContextMembershipLevel::Viewer)
-            .group("other", AccessLevel::Admin);
+        let outsider = Who::new("otto").group("other", AccessLevel::Admin);
         assert_eq!(level(&store, &outsider, artifact, at).await, None);
 
-        // Membership in the artifact's Work Context counts while it is the selected one.
-        for (membership, expected) in [
-            (WorkContextMembershipLevel::Viewer, AccessLevel::Read),
-            (WorkContextMembershipLevel::Contributor, AccessLevel::Write),
-            (WorkContextMembershipLevel::Custodian, AccessLevel::Admin),
-            (WorkContextMembershipLevel::Owner, AccessLevel::Admin),
-        ] {
-            let member = Who::new("mia").in_context("ops", membership);
-            assert_eq!(
-                level(&store, &member, artifact, at).await,
-                Some(expected),
-                "{membership:?}"
-            );
-        }
-        let elsewhere = Who::new("mia").in_context("research", WorkContextMembershipLevel::Owner);
-        assert_eq!(level(&store, &elsewhere, artifact, at).await, None);
-
-        // The highest source wins: a write grant over viewer membership.
-        let both = Who::new("sam").in_context("ops", WorkContextMembershipLevel::Viewer);
+        // The highest source wins: a write grant over a read group grant.
+        let both = Who::new("sam").group("analysts", AccessLevel::Read);
         assert_eq!(
             level(&store, &both, artifact, at).await,
             Some(AccessLevel::Write)
@@ -204,12 +182,20 @@ async fn labels_tenants_deletion_and_retention_hide_an_artifact_from_everyone() 
 }
 
 #[tokio::test]
-async fn administration_needs_admin_and_writing_needs_contributor() {
+async fn administration_needs_admin_and_new_labels_need_clearance() {
     with_store(|store| async move {
         let at = now();
         let owner = Who::new("owen");
         let artifact = available(&store, &owner, upload_request("shared.txt", Some(2))).await;
-        let viewer = Who::new("vic").in_context("ops", WorkContextMembershipLevel::Viewer);
+        let viewer = Who::new("vic");
+        store
+            .grant_artifact(
+                &owner.caller(),
+                &grant(artifact, principal("vic"), AccessLevel::Read),
+                at,
+            )
+            .await
+            .unwrap();
 
         let refused = store
             .grant_artifact(
@@ -234,26 +220,22 @@ async fn administration_needs_admin_and_writing_needs_contributor() {
             Err(veoveo_mcp_artifact::store::ArtifactStoreError::Forbidden { .. })
         ));
 
-        // A viewer cannot create artifacts in the Work Context.
-        let created = store
-            .create_upload(
-                &viewer.caller(),
-                &veoveo_types::Checked::new(upload_request("new.txt", Some(1))).unwrap(),
-                at,
-            )
-            .await;
-        assert!(matches!(
-            created,
-            Err(veoveo_mcp_artifact::store::ArtifactStoreError::WorkContextReadOnly)
-        ));
+        // Anyone may create an artifact, which they own; a reader of another's is no
+        // creator of theirs.
+        let created = create(&store, &viewer, upload_request("new.txt", Some(1))).await;
+        assert_eq!(created.artifact.owner.as_str(), "vic");
+        assert!(created.artifact.labels.is_empty());
 
-        // A label the creator does not hold is refused, including one the Work Context
-        // stamps on every output.
-        let stamped = Who::new("owen").output_labels(&["internal"]);
+        // A label the creator does not hold is refused; the artifact carries exactly the
+        // labels asked for.
         let created = store
             .create_upload(
-                &stamped.caller(),
-                &veoveo_types::Checked::new(upload_request("new.txt", Some(1))).unwrap(),
+                &Who::new("owen").caller(),
+                &veoveo_types::Checked::new(with_labels(
+                    upload_request("new.txt", Some(1)),
+                    &["internal"],
+                ))
+                .unwrap(),
                 at,
             )
             .await;
@@ -261,18 +243,22 @@ async fn administration_needs_admin_and_writing_needs_contributor() {
             created,
             Err(veoveo_mcp_artifact::store::ArtifactStoreError::LabelOutsideClearance)
         ));
-        let cleared = Who::new("owen")
-            .output_labels(&["internal"])
-            .labels(&["internal"]);
-        let created = create(&store, &cleared, upload_request("new.txt", Some(1))).await;
+        let cleared = Who::new("owen").labels(&["internal", "export"]);
+        let created = create(
+            &store,
+            &cleared,
+            with_labels(upload_request("new.txt", Some(1)), &["internal"]),
+        )
+        .await;
         assert_eq!(created.artifact.labels.len(), 1);
 
-        // Grants list for administrators, and revoking removes one.
+        // Grants list for administrators, a later grant to the same subject replaces its
+        // earlier one, and revoking removes it.
         let grants = store
             .artifact_grants(&owner.caller(), artifact, at)
             .await
             .unwrap();
-        assert!(grants.is_empty());
+        assert_eq!(grants.len(), 1);
         store
             .grant_artifact(
                 &owner.caller(),

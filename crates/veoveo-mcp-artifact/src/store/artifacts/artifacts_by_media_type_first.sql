@@ -1,12 +1,11 @@
 -- The first page of the readable artifacts of one media type, newest first, with one row
 -- of lookahead. Visibility is part of the statement, so the limit counts only rows the
 -- caller may read.
--- Parameters $1 to $9 are the caller's facts for artifact.effective_level: tenant,
--- principal, principal key, groups, their roles, Work Context, membership, labels and time.
+-- Parameters $1 to $7 are the caller's facts for artifact.effective_level: tenant,
+-- principal, principal key, groups, their roles, labels and time.
 SELECT
     a.artifact_id AS "artifact_id: ArtifactId",
     a.owner_key,
-    a.work_context,
     a.name,
     a.media_type,
     a.size_bytes,
@@ -18,11 +17,11 @@ SELECT
     a.created_at,
     a.available_at,
     a.retain_until,
-    artifact.effective_level(a, $1, $2, $3, $4, $5, $6, $7, $8, $9) AS "level!: i16"
+    artifact.effective_level(a, $1, $2, $3, $4, $5, $6, $7) AS "level!: i16"
 FROM artifact.artifact AS a
 WHERE a.tenant = $1
-    AND a.media_type = $10
+    AND a.media_type = $8
     AND a.state = 'available'
-    AND artifact.effective_level(a, $1, $2, $3, $4, $5, $6, $7, $8, $9) >= 1
+    AND artifact.effective_level(a, $1, $2, $3, $4, $5, $6, $7) >= 1
 ORDER BY a.artifact_id DESC
-LIMIT $11
+LIMIT $9

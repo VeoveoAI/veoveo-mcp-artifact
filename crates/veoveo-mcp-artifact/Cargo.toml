@@ -73,11 +73,17 @@ server = [
     "dep:url",
     "dep:veoveo-audit",
     "veoveo-audit-contract/postgres",
+    "dep:veoveo-skills",
     "dep:veoveo-store",
     "dep:veoveo-task",
 ]
 
+[build-dependencies]
+# Embeds the skills under skills/ at build time.
+veoveo-skills = { workspace = true, features = ["build"] }
+
 [dependencies]
+veoveo-skills = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }

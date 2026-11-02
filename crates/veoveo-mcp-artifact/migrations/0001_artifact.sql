@@ -1,6 +1,6 @@
 -- Artifact's tables. Every row belongs to one tenant. `tenant` and `owner` hold the
--- identity schema's deterministic UUIDs; principals, groups, Work Contexts and data
--- labels that only the forwarded identity names travel as their text keys.
+-- identity schema's deterministic UUIDs; principals, groups and data labels that only
+-- the forwarded identity names travel as their text keys.
 
 -- Nonempty text of at most `max` bytes without control characters.
 CREATE FUNCTION artifact.is_text(value text, max integer) RETURNS boolean
@@ -12,24 +12,11 @@ CREATE FUNCTION artifact.level_rank(level text) RETURNS smallint
     LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
     RETURN CASE level WHEN 'read' THEN 1 WHEN 'write' THEN 2 WHEN 'admin' THEN 3 ELSE 0 END;
 
--- The level a Work Context membership grants on the Work Context's artifacts: a viewer
--- reads, a contributor writes, and a custodian or owner administers.
-CREATE FUNCTION artifact.membership_rank(membership text) RETURNS smallint
-    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-    RETURN CASE membership
-        WHEN 'viewer' THEN 1
-        WHEN 'contributor' THEN 2
-        WHEN 'custodian' THEN 3
-        WHEN 'owner' THEN 3
-        ELSE 0
-    END;
-
 CREATE TABLE artifact.artifact (
     tenant uuid NOT NULL,
     artifact_id uuid NOT NULL,
     owner uuid NOT NULL,
     owner_key text NOT NULL CHECK (artifact.is_text(owner_key, 512)),
-    work_context text NOT NULL CHECK (artifact.is_text(work_context, 256)),
     name text COLLATE "C" NOT NULL CHECK (
         artifact.is_text(name, 255)
         AND name !~ '[/\\]'
@@ -64,7 +51,6 @@ CREATE TABLE artifact.artifact (
 
 -- One index per listing filter, each ending in the artifact ID so a page continues from
 -- its last key. Names compare bytewise, so a prefix is an index range.
-CREATE INDEX artifact_work_context_page ON artifact.artifact (tenant, work_context, artifact_id);
 CREATE INDEX artifact_owner_page ON artifact.artifact (tenant, owner, artifact_id);
 CREATE INDEX artifact_media_type_page ON artifact.artifact (tenant, media_type, artifact_id);
 CREATE INDEX artifact_release_page ON artifact.artifact (tenant, release_state, artifact_id);
@@ -232,8 +218,7 @@ COMMENT ON TABLE artifact.upload_limits IS
 -- An artifact of another tenant, one being deleted, one past its retention, and one
 -- carrying a label outside the caller's labels give 0 whatever the grants say.
 -- Otherwise the level is the highest of ownership, the caller's unexpired principal
--- grants, its unexpired group grants each capped by its role in the group, and its
--- membership in the artifact's Work Context while that is the caller's selected one.
+-- grants, and its unexpired group grants each capped by its role in the group.
 -- `groups` and `group_levels` pair each of the caller's groups with its role there.
 CREATE FUNCTION artifact.effective_level(
     target artifact.artifact,
@@ -242,8 +227,6 @@ CREATE FUNCTION artifact.effective_level(
     caller_key text,
     groups text[],
     group_levels text[],
-    work_context text,
-    membership text,
     labels text[],
     as_of timestamptz
 ) RETURNS smallint
@@ -257,8 +240,6 @@ RETURN CASE
         THEN 0::smallint
     ELSE greatest(
         CASE WHEN target.owner = caller THEN 3 ELSE 0 END,
-        CASE WHEN target.work_context = effective_level.work_context
-            THEN coalesce(artifact.membership_rank(membership), 0) ELSE 0 END,
         coalesce((
             SELECT max(artifact.level_rank(g.level))
             FROM artifact.grant AS g
