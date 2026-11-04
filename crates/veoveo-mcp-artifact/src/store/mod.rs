@@ -8,6 +8,7 @@ mod audit;
 mod caller;
 mod error;
 mod grants;
+mod knowledge;
 mod limits;
 mod plan;
 mod rows;
@@ -19,6 +20,7 @@ pub use access_requests::DecidedRequest;
 pub use caller::{Caller, CallerContext, GroupAccess};
 pub use error::ArtifactStoreError;
 pub use grants::MAX_GRANTS_PER_ARTIFACT;
+pub use knowledge::KnowledgeArtifact;
 pub use plan::{DEFAULT_PART_BYTES, SINGLE_PUT_MAX_BYTES, UPLOAD_LIFETIME, UploadPlan};
 pub use rows::VisibleArtifact;
 pub use sharing::{MAX_LIVE_SHARE_LINKS, NewShareLink, Redemption};
@@ -55,7 +57,7 @@ impl ArtifactStore {
         &self.store
     }
 
-    fn pool(&self) -> &sqlx::PgPool {
+    pub(crate) fn pool(&self) -> &sqlx::PgPool {
         self.store.pool()
     }
 }

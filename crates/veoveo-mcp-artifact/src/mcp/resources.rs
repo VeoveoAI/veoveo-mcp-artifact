@@ -20,6 +20,7 @@ pub(super) fn register(routes: RoutesBuilder<ArtifactMcp>) -> RoutesBuilder<Arti
     routes
         .template::<ReadArtifact, _, _>(
             ResourceBuilder::new("Artifact")
+                .knowledge(super::knowledge::collection())
                 .reader(read_artifact)
                 .policy(policy())
                 .cache(ReadCache::NoStore),

@@ -30,7 +30,7 @@ pub use records::{
 };
 pub use resource::{AccessRequestRole, ArtifactDocument, ArtifactResource, ArtifactResourceError};
 pub use tools::{
-    AbortUploadRequest, AbortUploadResult, AccessRequestResult, ArtifactResult,
+    AbortUploadRequest, AbortUploadResult, AccessRequestResult, ArtifactIndexing, ArtifactResult,
     CancelAccessRequestRequest, CompleteUploadRequest, CompleteUploadResult, CreateDownloadRequest,
     CreateDownloadResult, CreateShareLinkRequest, CreateShareLinkResult, CreateUploadRequest,
     CreateUploadResult, DecideAccessRequestRequest, DeleteArtifactRequest, DeleteArtifactResult,

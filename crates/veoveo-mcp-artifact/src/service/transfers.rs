@@ -16,6 +16,14 @@ use crate::{
 
 use super::{ArtifactError, ArtifactService};
 
+/// A completed upload's artifact, and whether the call that completed it made it
+/// available rather than returning a retained outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completion {
+    pub artifact: ArtifactRecord,
+    pub made_available: bool,
+}
+
 impl ArtifactService {
     /// Reserve an artifact and sign where its bytes go. A repeated idempotency key signs
     /// the open upload again, or returns the ended one without a transfer.
@@ -158,10 +166,20 @@ impl ArtifactService {
         upload_id: UploadId,
         now: DateTime<Utc>,
     ) -> Result<ArtifactRecord, ArtifactError> {
+        Ok(self.complete(caller, upload_id, now).await?.artifact)
+    }
+
+    /// [`Self::complete_upload`], saying whether this call made the artifact available.
+    pub async fn complete(
+        &self,
+        caller: &Caller,
+        upload_id: UploadId,
+        now: DateTime<Utc>,
+    ) -> Result<Completion, ArtifactError> {
         let (upload, object_upload) = self.store.upload(caller, upload_id).await?;
         let artifact_id = upload.artifact_id;
         let key = ObjectKey::for_artifact(caller.tenant(), artifact_id);
-        let artifact = match upload.state {
+        let completion = match upload.state {
             UploadState::Open => {
                 if let Some(object_upload) = &object_upload {
                     self.storage.complete_multipart(&key, object_upload).await?;
@@ -177,7 +195,10 @@ impl ArtifactService {
                     .complete_upload(caller, upload_id, &object, now)
                     .await
                 {
-                    Ok(artifact) => artifact,
+                    Ok(artifact) => Completion {
+                        artifact,
+                        made_available: true,
+                    },
                     Err(error @ ArtifactStoreError::SizeMismatch { .. }) => {
                         self.discard_object(caller, artifact_id).await;
                         return Err(error.into());
@@ -185,12 +206,15 @@ impl ArtifactService {
                     Err(error) => return Err(error.into()),
                 }
             }
-            UploadState::Completed => self.artifact(caller, artifact_id, now).await?,
+            UploadState::Completed => Completion {
+                artifact: self.artifact(caller, artifact_id, now).await?,
+                made_available: false,
+            },
             state @ (UploadState::Aborted | UploadState::Expired) => {
                 return Err(ArtifactStoreError::UploadNotOpen { state }.into());
             }
         };
-        Ok(artifact)
+        Ok(completion)
     }
 
     /// Abort the caller's open upload, its multipart upload and any object that arrived.

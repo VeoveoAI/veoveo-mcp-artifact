@@ -18,12 +18,12 @@ use support::{
     upload_request,
 };
 use tower::ServiceExt as _;
-use veoveo_hub_sdk::hosting::{Hosted, ListenOnly, testing};
+use veoveo_hub_sdk::hosting::testing;
 use veoveo_mcp_artifact::{
     contract::{
         ArtifactId, CreateShareLinkRequest, ObjectSize, ReleaseState, ShareLinkDays, UploadTransfer,
     },
-    mcp::{ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs},
+    mcp::{ArtifactApp, ArtifactMcp, TenantHubs},
     share::{self, ShareLinkSecret},
 };
 use veoveo_types::Checked;
@@ -32,12 +32,10 @@ fn router(harness: &Harness) -> axum::Router {
     let app = Arc::new(ArtifactApp {
         service: (*harness.service).clone(),
         hubs: Arc::new(TenantHubs::default()),
+        tasks: harness.tasks.clone(),
     });
     testing::for_domain::<ArtifactMcp>()
-        .handler(move || {
-            Hosted::new(ArtifactMcp::new(app.clone()))
-                .with_tasks(ListenOnly::new(ArtifactSubscriptions::new(app.clone())))
-        })
+        .handler(move || veoveo_mcp_artifact::mcp::hosted(app.clone()))
         .public_routes(share::routes(harness.service.clone()))
         .build()
         .into_router()

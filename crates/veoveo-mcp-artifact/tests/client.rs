@@ -24,7 +24,7 @@ use veoveo_hub_sdk::{
     TokenIssuer,
     client::{CallError, HubClient},
     hosting::{
-        ForwardedBearer, Hosted, ListenOnly, ServerCalls,
+        ForwardedBearer, ServerCalls,
         testing::{self, MESH_PROFILE, RunningMesh, TestMesh},
     },
     registration::ResourceIndicator,
@@ -36,10 +36,7 @@ use veoveo_mcp_artifact::{
         ArtifactName, ArtifactPermission, ArtifactState, IdempotencyKey, MediaType, ObjectSize,
         UploadCompleted, UploadCreated, UploadState, audit_registry,
     },
-    mcp::{
-        AUTHORIZATION, ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs, identity,
-        watch_changes,
-    },
+    mcp::{AUTHORIZATION, ArtifactApp, ArtifactMcp, TenantHubs, identity, watch_changes},
     store::Caller,
 };
 use veoveo_types::{InvocationMode, PermissionName, Sha256Digest, TaskId, TenantId};
@@ -157,13 +154,11 @@ impl Mesh {
         let app = Arc::new(ArtifactApp {
             service: (*harness.service).clone(),
             hubs,
+            tasks: harness.tasks.clone(),
         });
         mesh.serve(
             testing::for_domain::<ArtifactMcp>()
-                .handler(move || {
-                    Hosted::new(ArtifactMcp::new(app.clone()))
-                        .with_tasks(ListenOnly::new(ArtifactSubscriptions::new(app.clone())))
-                })
+                .handler(move || veoveo_mcp_artifact::mcp::hosted(app.clone()))
                 .build(),
         );
         let mut declaration = ledger::authorization().unwrap();

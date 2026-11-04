@@ -15,10 +15,7 @@ use veoveo_audit_contract::AuditRequest;
 use veoveo_hub_sdk::{
     AccessTokenSubject, ForwardedRequest, HubInternalTokenIssuer, HubProfileId, HubRequestContext,
     OAuthClientId, ProtectedResourceId, TokenIssuer,
-    hosting::{
-        Hosted, ListenOnly,
-        testing::{self, TestHub},
-    },
+    hosting::testing::{self, TestHub},
     registration::ResourceIndicator,
 };
 use veoveo_mcp_artifact::{
@@ -26,7 +23,7 @@ use veoveo_mcp_artifact::{
         AccessRequestId, AccessRequests, ArtifactId, ArtifactPermission, CreateDownloadResult,
         CreateShareLinkResult, ShareLinkId, ShareLinks, SignedTransfer, TransferMethod,
     },
-    mcp::{ArtifactApp, ArtifactMcp, ArtifactSubscriptions, TenantHubs},
+    mcp::{ArtifactApp, ArtifactMcp, TenantHubs},
     share,
 };
 use veoveo_types::InvocationMode;
@@ -99,14 +96,12 @@ fn hub(harness: &Harness, granted: &[ArtifactPermission]) -> Hub {
     let app = Arc::new(ArtifactApp {
         service: (*harness.service).clone(),
         hubs: Arc::new(TenantHubs::default()),
+        tasks: harness.tasks.clone(),
     });
     Hub {
         inner: TestHub::new(
             testing::for_domain::<ArtifactMcp>()
-                .handler(move || {
-                    Hosted::new(ArtifactMcp::new(app.clone()))
-                        .with_tasks(ListenOnly::new(ArtifactSubscriptions::new(app.clone())))
-                })
+                .handler(move || veoveo_mcp_artifact::mcp::hosted(app.clone()))
                 .build(),
         ),
         granted: granted.to_vec(),
@@ -147,6 +142,7 @@ async fn discovery_lists_every_tool_and_resource() {
                 "request_artifact_access",
                 "revoke_artifact_grant",
                 "revoke_share_link",
+                "search_knowledge",
                 "set_release_state",
                 "set_upload_limits",
                 "sign_upload_parts",
@@ -413,12 +409,10 @@ fn hosted_router(harness: &Harness) -> axum::Router {
     let app = Arc::new(ArtifactApp {
         service: (*harness.service).clone(),
         hubs: Arc::new(TenantHubs::default()),
+        tasks: harness.tasks.clone(),
     });
     testing::for_domain::<ArtifactMcp>()
-        .handler(move || {
-            Hosted::new(ArtifactMcp::new(app.clone()))
-                .with_tasks(ListenOnly::new(ArtifactSubscriptions::new(app.clone())))
-        })
+        .handler(move || veoveo_mcp_artifact::mcp::hosted(app.clone()))
         .public_routes(share::routes(harness.service.clone()))
         .build()
         .into_router()

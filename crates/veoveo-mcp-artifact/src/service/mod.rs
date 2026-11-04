@@ -4,6 +4,8 @@
 mod sharing;
 mod transfers;
 
+pub use transfers::Completion;
+
 use chrono::{DateTime, Utc};
 use veoveo_types::{AccessLevel, AccessSubject, TenantId};
 

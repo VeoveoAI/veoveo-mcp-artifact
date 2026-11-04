@@ -40,6 +40,10 @@ where
 {
     tokio::time::timeout(Duration::from_secs(120), async {
         let db = TestDb::new().await;
+        // pgvector in `_extensions`, as the installation's bootstrap creates it.
+
+        db.create_extensions(&["vector"]).await;
+
         db.migrate_server(&server(), migrator()).await;
         let platform = db.server_store(&server()).await;
         let instance = Arc::new(Instance::start(&platform, &server()).await.unwrap());

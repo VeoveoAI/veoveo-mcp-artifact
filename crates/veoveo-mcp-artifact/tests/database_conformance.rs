@@ -8,6 +8,8 @@ use veoveo_fixtures::database::Conformance;
 #[tokio::test]
 async fn queries_and_schema_follow_the_database_rules() {
     Conformance::new()
+        // pgvector in `_extensions`, which the knowledge migration uses.
+        .extensions(&["vector"])
         .server(
             &veoveo_mcp_artifact::server(),
             veoveo_mcp_artifact::migrator(),

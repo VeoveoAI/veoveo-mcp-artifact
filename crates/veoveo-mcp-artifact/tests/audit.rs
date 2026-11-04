@@ -71,6 +71,10 @@ where
 {
     tokio::time::timeout(Duration::from_secs(60), async {
         let db = TestDb::new().await;
+        // pgvector in `_extensions`, as the installation's bootstrap creates it.
+
+        db.create_extensions(&["vector"]).await;
+
         db.migrate_server(&server(), migrator()).await;
         test(db).await;
     })

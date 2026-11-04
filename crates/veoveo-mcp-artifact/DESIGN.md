@@ -45,7 +45,8 @@ port         8801
 | [Referrer Policy](https://www.w3.org/TR/referrer-policy/) | The share route's answers carry `Referrer-Policy: no-referrer`. |
 | [MCP Skills extension](https://github.com/modelcontextprotocol/ext-skills) `io.modelcontextprotocol/skills`, SEP-2640, and the [Agent Skills](https://agentskills.io/specification) format | The skills under `skills/`, embedded at build time and served at `skill://artifact/{name}/{path}` through the SDK; see [Skills](#skills) |
 | [Veoveo server registration](https://github.com/VeoveoAI/veoveo-hub-sdk) | Artifact registers through RFC 7591, removes its registration through RFC 7592, and declares its permissions in `ai.veoveo/authorization`. |
-| [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/9a6b3ff95469ff19f9ccb513421a57ba6751aa9e/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. |
+| [PostgreSQL 18](https://www.postgresql.org/docs/18/) | Server 18.6 through sqlx 0.9.0, under the [installation database design](https://github.com/VeoveoAI/veoveo-core/blob/9a6b3ff95469ff19f9ccb513421a57ba6751aa9e/docs/DATABASE.md) of `veoveo-core`. Artifact owns the schema `artifact`, applies its own migrations and runs every statement from a `.sql` file that sqlx checks. Row triggers publish changes on the `artifact` channel. pgvector 0.8.7 in the installation's `_extensions` schema holds the knowledge vectors. |
+| [Veoveo knowledge contract](https://github.com/VeoveoAI/veoveo-hub-sdk) `ai.veoveo/knowledge` | `search_knowledge` over `artifact.artifacts` through the SDK's ready-made PostgreSQL search, embedded through Embedding's `embed` tool with the client of `veoveo-mcp-embedding`; see [Knowledge](#knowledge) |
 | SeaweedFS 4.48 | The installation's object store, run as `weed mini` and pinned by image digest. Artifact uses only the S3 calls listed above through aws-sdk-s3 1.152.0, so an S3-compatible store such as Ceph or AWS S3 can replace it. |
 
 ## Domain Contract
@@ -82,9 +83,10 @@ boundaries with `cargo tree`.
 
 The binary parses configuration, prepares its bucket, registers with the Hub,
 connects to PostgreSQL with the login its registration returned, applies its
-migrations and serves MCP. Two loops run on every replica beside it: the sweep, which
-claims rows with `FOR UPDATE SKIP LOCKED`; and the change watcher, which hands each
-change on the `artifact` channel to its tenant's subscribers.
+migrations, checks its knowledge table and serves MCP. Three loops run on every replica
+beside it: the sweep, which claims rows with `FOR UPDATE SKIP LOCKED`; the change
+watcher, which hands each change on the `artifact` channel to its tenant's subscribers;
+and the Task worker, which runs the index Tasks of people's uploads.
 
 ## MCP Surface
 
@@ -94,7 +96,7 @@ change on the `artifact` channel to its tenant's subscribers.
 |---|---|---|---|
 | `create_upload` | Reserves quota and an artifact ID and returns the URLs that receive the bytes | `artifact.artifacts.write` | none: the caller creates an artifact it owns |
 | `sign_upload_parts` | Signs the next part URLs of a multipart upload, or signs expired ones again | `artifact.artifacts.write` | the upload's creator |
-| `complete_upload` | Completes native create-only storage, validates size and makes the artifact available | `artifact.artifacts.write` | the upload's creator |
+| `complete_upload` | Completes native create-only storage, validates size, makes the artifact available and indexes it for search | `artifact.artifacts.write` | the upload's creator |
 | `abort_upload` | Aborts the upload and releases its reservation | `artifact.artifacts.write` | the upload's creator |
 | `create_download` | Returns a signed GET URL valid for 5 minutes | `artifact.artifacts.read` | read |
 | `grant_artifact`, `revoke_artifact_grant` | Gives or removes read, write or admin for a principal or group, with an optional expiry | `artifact.grants.write` | admin |
@@ -104,6 +106,7 @@ change on the `artifact` channel to its tenant's subscribers.
 | `decide_access_request` | Approves the request, which writes the grant, or denies it with a note | `artifact.grants.write` | admin |
 | `delete_artifact` | Deletes the artifact, its grants and share links, and its object | `artifact.artifacts.delete` (destructive) | admin |
 | `set_upload_limits` | Sets a tenant's quota, largest object, allowed media types and active-upload limit | `artifact.upload-limits.administer` (administer) | installation administrator |
+| `search_knowledge` | Finds available artifacts by words, media or both; see [Knowledge](#knowledge) | `artifact.artifacts.read` | read |
 
 `create_upload` takes the name and media type, and optionally the size,
 a maximum size, data labels, a retention period, metadata, the artifacts it derives
@@ -145,6 +148,7 @@ text names the tools as callers see them through the Hub, `artifact__{tool}`:
 | `upload-an-artifact` | `create_upload` with its options and idempotency, a single PUT or signed parts, completion and abort, labels within the caller's and the tenant's limits |
 | `download-an-artifact` | the listing and its filters, an artifact's metadata, and `create_download` with its 5-minute URL and ranges |
 | `share-an-artifact` | how a level is decided, grants to people and groups, share links for released artifacts without labels, reviewing who can reach an artifact, access requests and deletion |
+| `find-artifacts` | `search_knowledge` with words, media or both, and reading a hit; see [Knowledge](#knowledge) |
 
 Each skill file is a resource of the server under its document policy,
 `artifact.artifacts.read`.
@@ -291,6 +295,49 @@ without one, and records the grant change beside the decision. The access-reques
 listing holds the requests the caller made, those on artifacts it administers, or,
 without a role, both, newest first.
 
+## Knowledge
+
+Artifact expresses the knowledge contract, `ai.veoveo/knowledge`, with the SDK's
+ready-made PostgreSQL search: its template `artifact://artifacts/{artifact_id}` is the
+collection `artifact.artifacts`, and `search_knowledge` finds available artifacts by
+their name, their metadata and their media, under the same read rule as their listings.
+A person searches with words, an image, a clip or both, as the contract allows.
+
+- **Columns.** `artifact.artifact` carries `knowledge_text`, generated from its name,
+  whole and split at `.`, `_` and `-` so `kite.png` is found by `kite`, and the string
+  values of its metadata, `knowledge_vector` and `knowledge_model`, with their GIN and
+  HNSW indexes, in migration `0002_knowledge.sql`. A unique index on `artifact_id`, which
+  is unique across tenants, keys the SDK's reads and writes of one artifact.
+- **Read rule.** `artifact.knowledge_readable(a artifact.artifact, caller jsonb)` admits
+  an artifact that is available and whose `artifact.effective_level` for the caller is
+  read or more, the rule every listing uses; a label outside the caller's data labels
+  therefore hides it. A hit is the artifact's URI, its name as title, and a snippet of
+  its media type, size and metadata.
+- **Embedding.** The call that makes an artifact available, `complete_upload`, indexes
+  it through the SDK after it commits: for a person's own call in a Task named in its
+  result, for another server's call, such as Media saving an output, before it returns,
+  with the outcome in the result's `indexed`, `{embedded, reason?}`. A retried completion
+  returns the artifact without indexing it again. No tool edits a name or metadata, so
+  nothing else indexes.
+  Indexing signs Artifact's own GET of the object and sends Embedding one item, the
+  artifact's name and metadata with its media when its type is `image/*`, `audio/*` or
+  `video/*` and its size is within Embedding's source bound; any other artifact is
+  embedded by its name and metadata. The GET is on Artifact's signing endpoint, the
+  storage origin the installation gives Embedding's runtime, and records no download:
+  it is the index's own read, not a person's. The one statement the index reads an
+  artifact with names it by ID across tenants, as its marker says. Embedding is called
+  for the person who made the artifact, so its usage is theirs. Until its vector is
+  stored, an artifact is found by words; a failure is the Task's, or the call's outcome,
+  never dropped. Storing a vector wakes the artifact's subscribers like any row change.
+- **Calls.** Artifact declares use of `embedding.embeddings.create` when it registers, runs
+  a Task worker for its index Tasks beside its loops, and its policy admits the Hub's
+  token exchange and `embedding__embed`. Its routes declare `starts_tasks`, so it declares
+  the Tasks extension; `tasks/*` serve the caller's own index Tasks, and
+  `subscriptions/listen` follows them beside the caller's resources.
+- **Skill.** `find-artifacts` says how to call `artifact__search_knowledge`, with words or
+  with media signed through `artifact__create_download`, and that a hit is read with
+  `artifact://artifacts/{artifact_id}`.
+
 ## Calls From Other Servers
 
 A server such as Media declares uses of `artifact.artifacts.read` and
@@ -405,6 +452,11 @@ Per-rule compliance profiles and their generated manual section are removed.
 | `access_request` | Artifact, requester, level, justification, state, decider and note | 90 days after a decision |
 | `storage_usage` | Per tenant: stored and reserved bytes | With the tenant |
 | `upload_limits` | Per tenant: quota, largest object, allowed media types and active-upload limit. A tenant without a row has no quota, objects up to 5 TiB, any media type and 64 open uploads | With the tenant |
+
+`artifact` also holds each artifact's [knowledge](#knowledge) columns, and the schema
+holds the read rule `artifact.knowledge_readable`; pgvector's type and operators come
+from the installation's `_extensions` schema, the one schema outside `artifact` the SQL
+names. Index Tasks live in core's Task runtime, not in this schema.
 
 Triggers keep `storage_usage` current as uploads reserve, complete and end and as
 artifacts are deleted. `create_upload` locks the tenant's usage row while it reserves,
@@ -548,12 +600,13 @@ signed header would void the signature.
 | Layer | Checks |
 |---|---|
 | Unit | The checksum-free content contract, object keys, attachment dispositions, part plans, permission risks, audit schemas, the requirement table and tool annotations, the MCP setup, subscription matching and configuration |
-| Database | Core's database checks over every statement and table; `tests/sql_confinement.rs` holds every query, migration and test query to the `artifact` schema with the SDK's `assert_sql_confined`; `effective_level` against a matrix of owners, principal and group grants, group roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
+| Database | Core's database checks over every statement and table, with pgvector created as the installation creates it; `tests/sql_confinement.rs` holds every query, migration and test query to the `artifact` schema, and pgvector's `_extensions`, with the SDK's `assert_sql_confined`; `effective_level` against a matrix of owners, principal and group grants, group roles and labels; quota reservation under concurrent uploads; paging and cursor binding; the sweep's claims |
 | Object storage | A private SeaweedFS per test process, from the binary in the pinned image: signed single and multipart uploads, wrong object sizes and part lengths refused, create-only writes, idempotent completion and abort, ranged downloads and bucket preparation |
 | Service | The store and SeaweedFS together: declared and undeclared uploads, refused bytes, aborts, a large unknown-size object made available without a background Task, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
 | MCP | The SDK's in-process Hub with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
 | Sharing | Database tests: returning to private ends only live links and releasing again revives none; links need an administrator and a released, available artifact without labels; twelve concurrent redemptions of a link limited to three count exactly three; expired, revoked, deleted and unknown links redeem nothing, and a dropped redemption counts nothing; share-link pages and their cursors. Access requests: an approval writes the requested grant and records each step, visibility and the held level bound a request, only the requester withdraws and only an administrator decides, an approval keeps a stronger grant, and listings page by role and state |
 | Share route | `tests/share_route.rs` through the hosted router and a private SeaweedFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
+| Knowledge | `tests/knowledge.rs` through the SDK's in-process mesh, with Artifact over a fresh database with pgvector and a private SeaweedFS, and a synthetic stand-in for Embedding that serves Embedding's `embed` contract, fetches each media part through its signed GET and answers vectors hashed from words and bytes, never a model's: a person's image upload names its index Task, which embeds the name, metadata and bytes for the uploader from that Task and is then found first by a word and by an image of its bytes; a grant to the person's group makes another person's artifact found and its revocation hides it; and Ledger's upload is embedded before its completion returns, with `indexed` in the result and both servers in the chain |
 | Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private SeaweedFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves available, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |
 | Acceptance | `tests/acceptance.rs` through a running installation's Hub and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call, the sharing tools among the member's, and the member refused the tools whose permissions carry a risk, a share link and a deletion among them, a declared upload available at completion, private to its owner and read as a range by the member once granted, a gibibyte of unknown size uploaded in parts, independently fingerprinted by the consumer, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin on an artifact shared with them approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |

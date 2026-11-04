@@ -4,18 +4,28 @@ use anyhow::{Context, Result};
 use veoveo_hub_sdk::registration::{
     ClientMetadata, RegistrationDeclaration,
     client::{KeyDirectory, Registration, RegistrationClient},
+    statement::ServerKeyPair,
 };
 
 use super::config::Args;
 use crate::mcp::AUTHORIZATION;
 
-/// Resume or initially register Artifact. Returns the lifecycle client, the
-/// registration, and the HTTP client that reached the Hub, which also fetches the
-/// Hub's token keys when a forwarded token names a key the registration lacks.
+/// A registration and what calls to other servers need from it.
+pub(super) struct Registered {
+    pub client: RegistrationClient,
+    pub registration: Registration,
+    pub metadata: ClientMetadata,
+    pub key: ServerKeyPair,
+    /// The HTTP client that reached the Hub, which also fetches the Hub's token keys
+    /// when a forwarded token names a key the registration lacks.
+    pub http: reqwest::Client,
+}
+
+/// Resume or initially register Artifact, declaring the Embedding permission it uses.
 pub(super) async fn register(
     args: &Args,
     declaration: RegistrationDeclaration,
-) -> Result<(RegistrationClient, Registration, reqwest::Client)> {
+) -> Result<Registered> {
     let keys = KeyDirectory::new(&args.key_directory);
     let metadata = prepare(args, declaration)?;
     let key = keys
@@ -39,14 +49,24 @@ pub(super) async fn register(
             .clone()
             .context("serving requires initial registration admission")?,
         key,
-        metadata,
+        metadata.clone(),
     )?;
     let registration = client
         .resume_or_register(&keys)
         .await
         .context("registering Artifact with the Hub")?;
     tracing::info!(client_id = %registration.client_id(), "registered with the Hub");
-    Ok((client, registration, http))
+    // The same key signs the client assertions of Artifact's token exchanges.
+    let key = keys
+        .load_or_generate()
+        .context("loading Artifact's registration key")?;
+    Ok(Registered {
+        client,
+        registration,
+        metadata,
+        key,
+        http,
+    })
 }
 
 /// Identical metadata construction for offline admission and actual serving.

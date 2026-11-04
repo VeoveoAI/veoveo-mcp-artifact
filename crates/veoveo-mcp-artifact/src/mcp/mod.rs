@@ -3,6 +3,7 @@
 mod declarations;
 mod errors;
 pub mod identity;
+mod knowledge;
 mod prompts;
 mod requirements;
 mod resources;
@@ -15,15 +16,18 @@ use chrono::Utc;
 use rmcp::{ErrorData as McpError, RoleServer, service::RequestContext};
 use veoveo_hub_sdk::{
     definition::Product,
-    hosting::{DomainServer, hub_identity},
+    durable_tasks::DurableTasks,
+    hosting::{DomainServer, Hosted, hub_identity},
+    knowledge::{Indexed, WriteIndexing},
     server_contract::McpServerSetup,
 };
+use veoveo_task::TaskRuntime;
 use veoveo_types::Checked;
 
 use crate::{
     contract::{
-        AbortUploadRequest, AbortUploadResult, AccessRequestResult, ArtifactResult,
-        CancelAccessRequestRequest, CompleteUploadRequest, CompleteUploadResult,
+        AbortUploadRequest, AbortUploadResult, AccessRequestResult, ArtifactId, ArtifactIndexing,
+        ArtifactResult, CancelAccessRequestRequest, CompleteUploadRequest, CompleteUploadResult,
         CreateDownloadRequest, CreateDownloadResult, CreateShareLinkRequest, CreateShareLinkResult,
         CreateUploadRequest, CreateUploadResult, DecideAccessRequestRequest, DeleteArtifactRequest,
         DeleteArtifactResult, GrantArtifactRequest, GrantArtifactResult,
@@ -35,6 +39,7 @@ use crate::{
 };
 
 pub use declarations::{REGISTRATION, registration};
+pub use knowledge::{ArtifactTasks, Artifacts, ContentError, KNOWLEDGE, collection, words, work};
 pub use requirements::AUTHORIZATION;
 pub use setup::ArtifactContract;
 pub use subscriptions::{ArtifactSubscriptions, TenantHubs, watch_changes};
@@ -47,10 +52,22 @@ pub fn force_setup() {
     std::sync::LazyLock::force(&SERVER_SETUP);
 }
 
-/// What every handler shares: the service and the tenants' subscription hubs.
+/// What every handler shares: the service, the tenants' subscription hubs and the Task
+/// runtime that holds the index Tasks of people's uploads.
 pub struct ArtifactApp {
     pub service: ArtifactService,
     pub hubs: Arc<TenantHubs>,
+    pub tasks: TaskRuntime,
+}
+
+/// The hosted MCP handler: Artifact's routes, its Tasks and its subscriptions.
+pub fn hosted(
+    app: Arc<ArtifactApp>,
+) -> Hosted<ArtifactMcp, DurableTasks<ArtifactTasks, ArtifactSubscriptions>> {
+    Hosted::new(ArtifactMcp::new(app.clone())).with_tasks(DurableTasks::with_listener(
+        ArtifactTasks::new(app.tasks.clone()),
+        ArtifactSubscriptions::new(app.clone()),
+    ))
 }
 
 #[derive(Clone)]
@@ -106,17 +123,70 @@ impl ArtifactMcp {
     ) -> Result<Product<CompleteUploadResult>, McpError> {
         let identity = hub_identity(&context)?;
         let caller = identity::caller(&identity)?;
-        let artifact = self
+        let completion = self
             .app
             .service
-            .complete_upload(&caller, request.upload_id, Utc::now())
+            .complete(&caller, request.upload_id, Utc::now())
             .await
             .map_err(tool_error)?;
+        let artifact = completion.artifact;
+        // The call that makes an artifact available indexes it, as its last step.
+        let indexed = if completion.made_available {
+            self.index(&context, artifact.artifact_id).await
+        } else {
+            None
+        };
         Product::new(
             &crate::contract::ArtifactResource::Artifact(artifact.artifact_id),
-            CompleteUploadResult { artifact },
+            CompleteUploadResult { artifact, indexed },
         )
         .map_err(|_| McpError::internal_error("artifact product construction failed", None))
+    }
+
+    /// Index an artifact the call made available: in a Task named in the result for a
+    /// person's own call, or before returning for another server's call, with the outcome.
+    async fn index(
+        &self,
+        context: &RequestContext<RoleServer>,
+        artifact_id: ArtifactId,
+    ) -> Option<ArtifactIndexing> {
+        let indexing = KNOWLEDGE
+            .index_written(
+                &self.app.tasks,
+                context,
+                self,
+                &Artifacts,
+                &[artifact_id.as_uuid()],
+            )
+            .await;
+        match indexing {
+            Ok(WriteIndexing::Task(_)) => None,
+            Ok(WriteIndexing::Indexed(outcomes)) => {
+                outcomes
+                    .into_iter()
+                    .next()
+                    .map(|(_, outcome)| match outcome {
+                        Indexed::Embedded => ArtifactIndexing {
+                            embedded: true,
+                            reason: None,
+                        },
+                        Indexed::NotEmbedded(reason) => ArtifactIndexing {
+                            embedded: false,
+                            reason: Some(reason.to_string()),
+                        },
+                    })
+            }
+            Err(error) => {
+                tracing::warn!(%artifact_id, error = %error.message, "an artifact could not be indexed");
+                Some(ArtifactIndexing {
+                    embedded: false,
+                    reason: Some(format!(
+                        "the artifact could not be indexed: {}",
+                        error.message
+                    )),
+                })
+            }
+        }
     }
 
     async fn abort_upload(
@@ -519,6 +589,20 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
                     .map_err(Into::into)
             },
         );
+        // Search: the artifacts the caller may read, by words or media, embedded through
+        // Embedding for the person who made them, in Tasks a person's uploads start.
+        let routes = routes
+            .knowledge(
+                RoutePolicy::permission(ArtifactsRead).expect("Artifact permission"),
+                KNOWLEDGE.clone(),
+            )
+            .uses(
+                veoveo_types::PermissionName::parse(
+                    veoveo_mcp_embedding::contract::EmbeddingPermission::EmbeddingsCreate.as_str(),
+                )
+                .expect("Embedding's permission"),
+            )
+            .starts_tasks();
         let mut routes = resources::register(routes);
         for prompt in prompts::ArtifactPrompt::ALL {
             routes = routes.prompt(

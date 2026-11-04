@@ -62,15 +62,16 @@ fn server_config() -> ServerConfig {
 const INSTRUCTIONS: &str = "Artifact stores the files of the person you work for, each \
      owned by its creator and private until shared; bytes go straight to object storage. \
      Its skills say how: skill://artifact/upload-an-artifact/SKILL.md, \
-     skill://artifact/download-an-artifact/SKILL.md and \
-     skill://artifact/share-an-artifact/SKILL.md.";
+     skill://artifact/download-an-artifact/SKILL.md, \
+     skill://artifact/share-an-artifact/SKILL.md and \
+     skill://artifact/find-artifacts/SKILL.md.";
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn the_instructions_name_every_skill_the_server_serves() {
         let skills = &*super::SERVER_SKILLS;
-        assert_eq!(skills.skills().len(), 3);
+        assert_eq!(skills.skills().len(), 4);
         for skill in skills.skills() {
             assert!(super::INSTRUCTIONS.contains(&skill.uri), "{}", skill.uri);
         }

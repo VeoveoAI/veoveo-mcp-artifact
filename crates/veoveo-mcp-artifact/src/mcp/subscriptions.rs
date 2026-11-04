@@ -1,7 +1,8 @@
-//! Resource subscriptions. Row triggers notify the `artifact` channel with each changed
-//! row's key and tenant; every replica's watcher hands the change to that tenant's hub,
-//! and each `subscriptions/listen` request tells its caller which of its accepted
-//! resources the change may have altered. A subscriber hears only its own tenant.
+//! Subscriptions to resources and to the caller's Tasks. Row triggers notify the
+//! `artifact` channel with each changed row's key and tenant; every replica's watcher
+//! hands the change to that tenant's hub, and each `subscriptions/listen` request tells
+//! its caller which of its accepted resources the change may have altered. A subscriber
+//! hears only its own tenant. The same request may follow the caller's index Tasks.
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, Weak},
@@ -14,14 +15,17 @@ use rmcp::{
     service::{SubscriptionContext, SubscriptionSendError},
 };
 use tokio::sync::broadcast;
-use veoveo_hub_sdk::hosting::{SubscriptionListener, requested_addresses};
+use veoveo_hub_sdk::{
+    durable_tasks::{DurableListener, DurableTaskService, DurableTaskUpdateStream},
+    hosting::requested_addresses,
+};
 use veoveo_store::{
     ChangeSignal, ChangeStream, Channel, PlatformStore, ServerSchema, TenantId as StoredTenant,
 };
 
 use crate::contract::{ArtifactId, ArtifactResource, UploadId};
 
-use super::{ArtifactApp, identity, requirements::authorize};
+use super::{ArtifactApp, ArtifactTasks, identity, requirements::authorize};
 
 /// Changes a hub holds for a slow listener before it falls back to a full refresh.
 const HUB_BUFFER: usize = 256;
@@ -151,7 +155,7 @@ impl ArtifactSubscriptions {
     }
 }
 
-impl SubscriptionListener for ArtifactSubscriptions {
+impl DurableListener<ArtifactTasks> for ArtifactSubscriptions {
     fn accepted_subscription_filter(
         &self,
         requested: &SubscriptionFilter,
@@ -159,15 +163,29 @@ impl SubscriptionListener for ArtifactSubscriptions {
         let resources = requested
             .resource_subscriptions
             .as_ref()
-            .filter(|uris| !uris.is_empty())?;
-        Some(
-            SubscriptionFilter::builder()
-                .resource_subscriptions(resources.clone())
-                .build(),
-        )
+            .filter(|uris| !uris.is_empty());
+        let tasks = requested.task_ids.as_ref().filter(|ids| !ids.is_empty());
+        if resources.is_none() && tasks.is_none() {
+            return None;
+        }
+        let mut accepted = SubscriptionFilter::builder().build();
+        accepted.resource_subscriptions = resources.cloned();
+        accepted.task_ids = tasks.cloned();
+        Some(accepted)
     }
 
-    async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
+    async fn listen(
+        &self,
+        tasks: &ArtifactTasks,
+        context: SubscriptionContext,
+    ) -> Result<(), McpError> {
+        let identity = veoveo_hub_sdk::hosting::hub_identity(context.request_context())?;
+        let task_ids = context.accepted().task_ids.clone().unwrap_or_default();
+        let mut task_updates: DurableTaskUpdateStream = if task_ids.is_empty() {
+            Box::pin(futures::stream::pending())
+        } else {
+            tasks.subscribe_tasks(&identity, task_ids).await?.updates
+        };
         let uris: Vec<String> = context
             .accepted()
             .resource_subscriptions
@@ -181,7 +199,6 @@ impl SubscriptionListener for ArtifactSubscriptions {
                 None,
             ));
         }
-        let identity = veoveo_hub_sdk::hosting::hub_identity(context.request_context())?;
         for uri in &uris {
             authorize(&identity, uri)?;
         }
@@ -211,13 +228,24 @@ impl SubscriptionListener for ArtifactSubscriptions {
                 _ => {}
             }
         }
-        let hub = self.app.hubs.hub(caller.tenant());
-        let mut changes = hub.subscribe();
+        // A request for Tasks alone holds no tenant hub.
+        let hub = (!uris.is_empty()).then(|| self.app.hubs.hub(caller.tenant()));
+        let mut changes = hub.as_ref().map(|hub| hub.subscribe());
         notify(&context, &uris, &addresses, &ArtifactChange::Everything).await?;
         loop {
             let change = tokio::select! {
                 () = context.cancelled() => return Ok(()),
-                change = changes.recv() => match change {
+                update = task_updates.next() => {
+                    let Some(update) = update else { return Ok(()) };
+                    context.sink().notify_task_status(update?).await.map_err(send_error)?;
+                    continue;
+                }
+                change = async {
+                    match changes.as_mut() {
+                        Some(changes) => changes.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => match change {
                     Ok(change) => change,
                     Err(broadcast::error::RecvError::Lagged(_)) => ArtifactChange::Everything,
                     Err(broadcast::error::RecvError::Closed) => return Ok(()),

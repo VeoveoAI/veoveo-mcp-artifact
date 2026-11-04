@@ -76,6 +76,7 @@ server = [
     "dep:veoveo-skills",
     "dep:veoveo-store",
     "dep:veoveo-task",
+    "dep:veoveo-mcp-embedding",
 ]
 
 [build-dependencies]
@@ -117,6 +118,7 @@ url = { workspace = true, optional = true }
 veoveo-audit = { workspace = true, optional = true }
 veoveo-store = { workspace = true, optional = true }
 veoveo-task = { workspace = true, optional = true }
+veoveo-mcp-embedding = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex.workspace = true

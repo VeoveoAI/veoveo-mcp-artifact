@@ -131,6 +131,21 @@ pub struct AbortUploadRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CompleteUploadResult {
     pub artifact: ArtifactRecord,
+    /// How the artifact reached the knowledge index, when this call indexed it before
+    /// it returned: for another server's call. A person's own call names its index Task
+    /// in the result's `_meta["io.modelcontextprotocol/related-task"]` instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indexed: Option<ArtifactIndexing>,
+}
+
+/// Whether an artifact's vector was stored for search, and why not. An artifact without
+/// one is found by its words until it is completed again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArtifactIndexing {
+    pub embedded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
