@@ -122,8 +122,8 @@ li button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 
     return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
   };
 
-  const facts = (artifact) => {
-    const parts = [artifact.mediaType];
+  const facts = (artifact, level) => {
+    const parts = [artifact.mediaType, level];
     if (artifact.availableAt) parts.push(new Date(artifact.availableAt).toLocaleString());
     if (artifact.releaseState === "released") parts.push("released");
     const from = artifact.provenance && artifact.provenance.actingServer;
@@ -141,7 +141,7 @@ li button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 
     }
   };
 
-  const row = (artifact) => {
+  const row = (artifact, level) => {
     const item = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
@@ -153,7 +153,7 @@ li button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 
     bytes.textContent = size(artifact.size);
     const about = document.createElement("span");
     about.className = "facts";
-    about.textContent = facts(artifact);
+    about.textContent = facts(artifact, level);
     button.append(name, bytes, about);
     button.addEventListener("click", () => open(artifact));
     item.append(button);
@@ -182,7 +182,7 @@ li button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 
       const page = JSON.parse(read.contents[0].text);
       const list = $("artifacts");
       if (fresh) list.replaceChildren();
-      for (const artifact of page.items) list.append(row(artifact));
+      for (const { artifact, level } of page.items) list.append(row(artifact, level));
       list.hidden = list.children.length === 0;
       $("empty").hidden = list.children.length !== 0;
       cursor = page.nextCursor || null;

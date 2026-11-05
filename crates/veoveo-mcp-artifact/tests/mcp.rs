@@ -117,6 +117,34 @@ fn error_message(response: &Value) -> String {
 }
 
 #[tokio::test]
+async fn the_library_app_lists_what_the_listing_holds_under_the_read_permission() {
+    with_service(|harness| async move {
+        let hub = hub(&harness, &[ArtifactPermission::ArtifactsRead]);
+        let read = hub
+            .rpc("resources/read", json!({"uri": "ui://artifact/library"}))
+            .await;
+        let page = read["result"]["contents"][0]["text"].as_str().unwrap();
+        assert!(page.contains("<title>Artifacts</title>"), "{read}");
+        // What the view reads of a listing's page is what the listing says.
+        assert!(page.contains("const { artifact, level } of page.items"));
+        let listing = hub
+            .rpc("resources/read", json!({"uri": "artifact://artifacts"}))
+            .await;
+        let listed: Value =
+            serde_json::from_str(listing["result"]["contents"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(listed["items"], json!([]));
+
+        let without = self::hub(&harness, &[ArtifactPermission::ArtifactsWrite]);
+        let refused = without
+            .rpc("resources/read", json!({"uri": "ui://artifact/library"}))
+            .await;
+        assert!(refused["error"].is_object(), "{refused}");
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn discovery_lists_every_tool_and_resource() {
     with_service(|harness| async move {
         let hub = hub(&harness, ArtifactPermission::ALL);
