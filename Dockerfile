@@ -102,10 +102,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* /var/log/apt /var/log/dpkg.log \
     && useradd --system --uid 10001 --create-home --home-dir /var/lib/veoveo "${COMPONENT}" \
-    && mkdir -p /var/lib/veoveo/artifact/keys \
+    && mkdir -p /var/lib/veoveo/artifact/keys /usr/share/veoveo/artifact \
     && chown -R "${COMPONENT}:${COMPONENT}" /var/lib/veoveo/artifact
 COPY --from=build "/home/sandbox/${COMPONENT}" "/usr/local/bin/${COMPONENT}"
-COPY crates/veoveo-mcp-artifact/assets/library.html /usr/share/veoveo/artifact/library.html
+COPY --chmod=0644 crates/veoveo-mcp-artifact/assets/library.html /usr/share/veoveo/artifact/library.html
 USER ${COMPONENT}
 # The exec form cannot expand build arguments, so the binary path is fixed here.
 EXPOSE 8801

@@ -38,7 +38,9 @@ For someone without an account, and only for an artifact without labels:
 2. `artifact__create_share_link`, living 1 to 30 days, with an optional redemption limit.
    Its URL holds the link's secret and is shown only once: hand it to the person
    directly.
-3. `artifact__revoke_share_link` stops a link at once; `artifact__set_release_state` back
+3. Opened in a browser, the link previews the file in its viewer, which offers a download;
+   any other caller gets the bytes through a short-lived signed URL. Each counts one redemption.
+4. `artifact__revoke_share_link` stops a link and its preview at once; `artifact__set_release_state` back
    to `private` ends every live link.
 
 ## Review who can reach it

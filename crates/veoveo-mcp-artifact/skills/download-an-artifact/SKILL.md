@@ -28,3 +28,9 @@ An artifact the person may not read looks the same as one that does not exist.
 Never paste a signed URL into a chat or a file another person reads: anyone holding it can
 fetch the bytes until it expires. To give someone lasting access, follow the skill
 `share-an-artifact`.
+
+## Show a file to a person
+
+A signed URL downloads. To show a person a file, give them the address of its page on the Hub,
+`/view/artifact/{artifact_id}/{name}`: it opens in a viewer chosen by its name, for whoever may
+read it, and an HTML file runs as itself, apart from everything else they can reach.
