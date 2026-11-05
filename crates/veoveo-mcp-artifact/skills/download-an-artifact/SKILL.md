@@ -32,5 +32,8 @@ fetch the bytes until it expires. To give someone lasting access, follow the ski
 ## Show a file to a person
 
 A signed URL downloads. To show a person a file, give them the address of its page on the Hub,
-`/view/artifact/{artifact_id}/{name}`: it opens in a viewer chosen by its name, for whoever may
-read it, and an HTML file runs as itself, apart from everything else they can reach.
+`{hub}/view/artifact/{artifact_id}/{name}`, where `{hub}` is the Hub's origin, in a Computer
+`COMPUTER_HUB_URL` without its path. It opens in a viewer chosen by its name, for whoever may
+read it, and an HTML file runs as itself, apart from everything else they can reach. The person
+you work for reads their own files this way, so they need no share link: leave a file's release
+state alone, as a share link is for someone without an account.
