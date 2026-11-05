@@ -24,6 +24,14 @@ use veoveo_types::{AccessLevel, Checked, DataLabelId, GroupId, PrincipalId, Serv
 
 pub use veoveo_mcp_artifact::store::GroupAccess;
 
+/// The App's document, as the image holds it.
+pub fn library() -> veoveo_hub_sdk::apps::AppHtml {
+    veoveo_hub_sdk::apps::AppHtml::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/library.html"),
+    )
+    .unwrap()
+}
+
 /// A fixed instant, so expiries and retention compare predictably.
 pub fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, 12, 12, 0, 0).unwrap()

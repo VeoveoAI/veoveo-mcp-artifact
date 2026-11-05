@@ -20,6 +20,25 @@ fn absent(code: Option<&str>) -> bool {
 }
 
 impl ObjectStorage {
+    /// The bytes of an object, or of `range`, an RFC 9110 `bytes=` range the caller has checked
+    /// against its size, as they arrive from the store.
+    pub async fn read(
+        &self,
+        key: &ObjectKey,
+        range: Option<String>,
+    ) -> Result<aws_sdk_s3::primitives::ByteStream, StorageError> {
+        let object = self
+            .internal
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key.as_str())
+            .set_range(range)
+            .send()
+            .await
+            .map_err(|error| StorageError::call("GetObject", error))?;
+        Ok(object.body)
+    }
+
     /// Start a multipart upload and return the store's identifier for it.
     pub async fn start_multipart(
         &self,

@@ -33,6 +33,7 @@ fn router(harness: &Harness) -> axum::Router {
         service: (*harness.service).clone(),
         hubs: Arc::new(TenantHubs::default()),
         tasks: harness.tasks.clone(),
+        library: support::library(),
     });
     testing::for_domain::<ArtifactMcp>()
         .handler(move || veoveo_mcp_artifact::mcp::hosted(app.clone()))

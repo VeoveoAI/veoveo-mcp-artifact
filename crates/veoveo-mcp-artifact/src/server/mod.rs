@@ -12,6 +12,7 @@ use clap::Parser;
 use tokio_util::sync::CancellationToken;
 use veoveo_hub_sdk::{
     PublicDeployment, TelemetryGuard,
+    apps::AppHtml,
     durable_tasks::TaskWorker,
     hosting::{HostedServer, ServerCalls},
     init_server_telemetry,
@@ -22,6 +23,7 @@ use veoveo_task::{TaskRuntime, TaskRuntimeConfig};
 use veoveo_audit::AuditStore;
 
 use crate::{
+    content,
     contract::audit_registry,
     mcp::{self, ArtifactApp, ArtifactMcp, KNOWLEDGE, TenantHubs, watch_changes},
     service::ArtifactService,
@@ -139,17 +141,23 @@ async fn serve(
         .declare_as_server(&crate::server())
         .await
         .context("declaring Artifact's audit classes")?;
-    let share_base = args.share_base().context("configuring share links")?;
-    let service = Arc::new(ArtifactService::new(
-        ArtifactStore::new(store.clone(), registry),
-        storage.clone(),
-        share_base.clone(),
-    ));
+    let share_base = args
+        .share_base(registration.public_base())
+        .context("configuring share links")?;
+    let service = Arc::new(
+        ArtifactService::new(
+            ArtifactStore::new(store.clone(), registry),
+            storage.clone(),
+            share_base.clone(),
+        )
+        .with_content_origin(registration.content_origin().cloned()),
+    );
     let hubs = Arc::new(TenantHubs::default());
     let app = Arc::new(ArtifactApp {
         service: (*service).clone(),
         hubs: hubs.clone(),
         tasks: tasks.clone(),
+        library: AppHtml::load(&args.app_html).context("loading the App's document")?,
     });
     // Calls to Embedding for the person whose upload an artifact is: from a call, or
     // from the index Task the call started.
@@ -167,17 +175,22 @@ async fn serve(
     ));
 
     let ready = storage.clone();
+    let deployment = deployment
+        .clone()
+        .with_public_base(registration.public_base().cloned());
     let hosted = HostedServer::for_domain::<ArtifactMcp>()
-        // A browser following a share link names the installation origin's host, which
-        // the deployment admits.
-        .deployment(deployment, args.allow_loopback_hosts)?
+        // A browser following a share link comes through the Hub, naming the public base's host,
+        // or the installation origin's, which the deployment admits.
+        .deployment(&deployment, args.allow_loopback_hosts)?
         .allowed_hosts(args.allowed_hosts.iter().cloned())
         .internal_trust(registration.access_tokens(), hub.http)?
         .calls(calls)
         .handler(move || mcp::hosted(app.clone()))
-        // Share links work for people without an account, so their route needs no
-        // Hub authentication; it verifies the link's secret itself.
-        .public_routes(share::routes(service.clone()))
+        // An artifact the Hub reads as the person who opened it on the content domain.
+        .authenticated_routes(content::routes(service.clone()))
+        // Share links work for people without an account, so their routes need no Hub
+        // authentication: one verifies the link's secret, and the other the token of its preview.
+        .public_routes(share::routes(service.clone()).merge(content::link_routes(service.clone())))
         // Artifact serves only while its bucket answers.
         .readiness(move || {
             let storage = ready.clone();

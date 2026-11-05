@@ -6,7 +6,8 @@ operational contract.
 ## Purpose
 
 Files for a tenant, with access control, sharing and quotas. MCP carries metadata and
-decisions; bytes move between clients and object storage through URLs the server signs.
+decisions; bytes move between clients and object storage through URLs the server signs. A preview
+on the content domain is the one read the server streams.
 
 ## Invariants
 
@@ -34,9 +35,13 @@ decisions; bytes move between clients and object storage through URLs the server
   locks the tenant's usage row before it checks the quota.
 - Row triggers notify the `artifact` channel with each row's key and tenant. Do not
   notify subscribers from handlers.
-- Bytes never pass through the server. A tool returns signed requests, and each
-  signature binds every header the client sends. Object storage calls stay in
-  `src/storage/`, and the store never reads bytes.
+- Bytes pass through the server only for a preview, which the Hub reads from `src/content/`,
+  with the same decision `create_download` makes, on every request. A tool returns signed
+  requests, and each signature binds every header the client sends. Object storage calls stay
+  in `src/storage/`, and the store never reads bytes.
+- A preview's route for a link is a public route that the Hub serves only on the link's own
+  origin, so never hand out its URL under the Hub's own host, where a file would run with a
+  person's session.
 - An object's key is `tenants/{tenant}/artifacts/{artifact}`. A failed, aborted or
   expired upload's object is removed when it fails, and the sweep removes it again
   before the row goes.
@@ -46,7 +51,7 @@ decisions; bytes move between clients and object storage through URLs the server
 - A share link's secret appears only in the URL `create_share_link` returns. The store
   keeps its SHA-256, records and errors never name it, and the hosted server's request
   span records the route template, never the path. Never log a request path or query.
-- Every refused share link answers the same `404`; a refusal never says why. A
+- Every refused share link or preview of one answers the same `404`; a refusal never says why. A
   redemption counts in the statement that checks the limit, and its audit record
   commits with it before the route answers.
 - Returning an artifact to private revokes its live links in the same transaction. An

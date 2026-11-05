@@ -23,7 +23,7 @@ pub use grants::MAX_GRANTS_PER_ARTIFACT;
 pub use knowledge::KnowledgeArtifact;
 pub use plan::{DEFAULT_PART_BYTES, SINGLE_PUT_MAX_BYTES, UPLOAD_LIFETIME, UploadPlan};
 pub use rows::VisibleArtifact;
-pub use sharing::{MAX_LIVE_SHARE_LINKS, NewShareLink, Redemption};
+pub use sharing::{MAX_LIVE_SHARE_LINKS, NewShareLink, PreviewedArtifact, Redemption};
 pub use sweep::{
     ACCESS_REQUEST_RETENTION, ClaimedDeletion, DeletionBatch, ExpiredUpload, FAILED_RETENTION,
     SHARE_LINK_RETENTION, UPLOAD_RETENTION,

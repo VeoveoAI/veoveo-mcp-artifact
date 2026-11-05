@@ -6,7 +6,8 @@ mod transfers;
 
 pub use transfers::Completion;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
+use veoveo_hub_sdk::registration::ContentOrigin;
 use veoveo_types::{AccessLevel, AccessSubject, TenantId};
 
 use crate::{
@@ -18,6 +19,9 @@ use crate::{
     storage::{ObjectKey, ObjectStorage, StorageError},
     store::{ArtifactStore, ArtifactStoreError, Caller},
 };
+
+/// The most a preview's origin lives, by the Hub's content design.
+const PREVIEW_LIMIT: TimeDelta = TimeDelta::hours(24);
 
 /// Why an operation failed: the store refused or failed, or object storage failed.
 #[derive(Debug, thiserror::Error)]
@@ -43,6 +47,7 @@ pub struct ArtifactService {
     store: ArtifactStore,
     storage: ObjectStorage,
     share_base: ShareBase,
+    content_origin: Option<ContentOrigin>,
 }
 
 impl ArtifactService {
@@ -51,7 +56,14 @@ impl ArtifactService {
             store,
             storage,
             share_base,
+            content_origin: None,
         }
+    }
+
+    /// The installation's content domain, where a browser opening a share link previews it.
+    pub fn with_content_origin(mut self, origin: Option<ContentOrigin>) -> Self {
+        self.content_origin = origin;
+        self
     }
 
     pub fn store(&self) -> &ArtifactStore {
@@ -91,6 +103,42 @@ impl ArtifactService {
             artifact: visible.record,
             get,
         })
+    }
+
+    /// The available artifact the caller may read now, as `create_download` decides it.
+    pub async fn readable(
+        &self,
+        caller: &Caller,
+        artifact_id: ArtifactId,
+        now: DateTime<Utc>,
+    ) -> Result<ArtifactRecord, ArtifactError> {
+        let visible = self
+            .store
+            .artifact_requiring(caller, artifact_id, AccessLevel::Read, now)
+            .await?;
+        if visible.record.state != ArtifactState::Available {
+            return Err(ArtifactStoreError::ArtifactState {
+                state: visible.record.state,
+            }
+            .into());
+        }
+        Ok(visible.record)
+    }
+
+    /// The caller opens the artifact's preview: the same decision and the same record as a
+    /// download, once a visit however many requests it makes. A preview asks again on every
+    /// request and has no URL to expire, so the record's time is the most its origin can live.
+    pub async fn open_preview(
+        &self,
+        caller: &Caller,
+        artifact_id: ArtifactId,
+        now: DateTime<Utc>,
+    ) -> Result<ArtifactRecord, ArtifactError> {
+        let record = self.readable(caller, artifact_id, now).await?;
+        self.store
+            .record_download(caller, artifact_id, now + PREVIEW_LIMIT)
+            .await?;
+        Ok(record)
     }
 
     /// Delete an artifact the caller administers. The sweep removes its object.

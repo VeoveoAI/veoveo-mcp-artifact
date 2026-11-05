@@ -5,6 +5,7 @@ use std::fmt;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest as _, Sha256};
 use url::Url;
+use veoveo_hub_sdk::registration::{ContentLinkToken, PublicBase};
 use veoveo_types::Sha256Digest;
 
 use crate::contract::ShareLinkUrl;
@@ -42,6 +43,24 @@ impl ShareLinkSecret {
     pub fn digest(&self) -> Sha256Digest {
         Sha256Digest::from_bytes(Sha256::digest(self.0).into())
     }
+
+    /// The token of the link's preview on the content domain. A hash, under its own purpose, of
+    /// the secret, so that an origin holding it can read the artifact and cannot redeem the
+    /// link, and that one link has one origin.
+    pub fn preview_token(&self) -> ContentLinkToken {
+        let hash = Sha256::new()
+            .chain_update(b"artifact share link preview\0")
+            .chain_update(self.0)
+            .finalize();
+        let mut bytes = [0; 20];
+        bytes.copy_from_slice(&hash[..20]);
+        ContentLinkToken::from_bytes(bytes)
+    }
+}
+
+/// The digest the server stores of a preview's token.
+pub fn preview_digest(token: &ContentLinkToken) -> Sha256Digest {
+    Sha256Digest::from_bytes(Sha256::digest(token.as_str().as_bytes()).into())
 }
 
 impl fmt::Debug for ShareLinkSecret {
@@ -50,8 +69,9 @@ impl fmt::Debug for ShareLinkSecret {
     }
 }
 
-/// The origin under which `/artifact/shares/{token}` reaches the server: an `http` or
-/// `https` origin without a path, query or fragment.
+/// Where the server's mount is public, under which `{mount}/shares/{token}` reaches it: the
+/// public base the Hub names for it, or `/artifact` under an `http` or `https` origin without a
+/// path, query or fragment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShareBase(Url);
 
@@ -71,7 +91,18 @@ impl ShareBase {
                 "the share link origin is an http or https origin without credentials, path, query or fragment",
             );
         }
-        Ok(Self(url))
+        let mut mount = url;
+        mount
+            .path_segments_mut()
+            .expect("an http origin has a path")
+            .clear()
+            .push(crate::server().as_str());
+        Ok(Self(mount))
+    }
+
+    /// The public base of this instance's mount, as the Hub's registration response names it.
+    pub fn under(base: &PublicBase) -> Self {
+        Self(base.url().clone())
     }
 
     /// The host and port a browser names when it follows a link, which the server must
@@ -88,8 +119,7 @@ impl ShareBase {
         let mut url = self.0.clone();
         url.path_segments_mut()
             .expect("an http origin has a path")
-            .clear()
-            .extend([crate::server().as_str(), "shares", &secret.token()]);
+            .extend(["shares", &secret.token()]);
         ShareLinkUrl::parse(url.as_str()).expect("an origin and a token form a share link URL")
     }
 }
@@ -121,6 +151,17 @@ mod tests {
     }
 
     #[test]
+    fn a_preview_token_is_the_links_own_and_says_nothing_of_its_secret() {
+        let secret = ShareLinkSecret::generate().unwrap();
+        let token = secret.preview_token();
+        assert_eq!(token.as_str().len(), 40);
+        assert_eq!(token, secret.preview_token());
+        assert_ne!(token, ShareLinkSecret::generate().unwrap().preview_token());
+        assert!(!secret.digest().as_str().contains(token.as_str()));
+        assert_ne!(preview_digest(&token), secret.digest());
+    }
+
+    #[test]
     fn a_share_url_names_the_route_under_the_origin() {
         let base = ShareBase::parse("http://vv-mcp-artifact.internal:8801/").unwrap();
         let secret = ShareLinkSecret::generate().unwrap();
@@ -133,6 +174,16 @@ mod tests {
             )
         );
         assert_eq!(base.authority(), "vv-mcp-artifact.internal:8801");
+        // Under the public base the Hub names, the instance's own path stays.
+        let public =
+            PublicBase::parse("https://veoveo.example/instances/0199d4a1/artifact").unwrap();
+        assert_eq!(
+            ShareBase::under(&public).url(&secret).expose(),
+            format!(
+                "https://veoveo.example/instances/0199d4a1/artifact/shares/{}",
+                secret.token()
+            )
+        );
         assert!(!format!("{url:?}").contains(&secret.token()));
         for refused in [
             "ftp://example.test",

@@ -6,7 +6,9 @@ crate.
 Artifact stores files for a tenant and decides who may read, change, share and delete
 each one. People, agents and other servers ask it through MCP. Bytes move directly
 between the client and object storage through URLs the server signs, so the Hub
-and MCP carry only metadata and decisions.
+and MCP carry only metadata and decisions. A person who opens a file in a browser previews it
+on the installation's content domain instead, where the server streams it, because a signed
+URL is an attachment on the Hub's own host.
 
 ## Service Identity
 
@@ -19,6 +21,8 @@ URI scheme   artifact
 permissions  artifact.*
 MCP          /artifact/mcp
 share links  /artifact/shares/{token}
+content      /artifact/content/{artifact_id}/{name}, /artifact/content-links/{token}/{name}
+App          ui://artifact/library
 liveness     /livez
 readiness    /readyz (ready while the bucket answers)
 port         8801
@@ -39,8 +43,10 @@ port         8801
 | [RFC 6838](https://www.rfc-editor.org/rfc/rfc6838) media types | An artifact's media type is a bare `type/subtype` without parameters. |
 | Object identity | ArtifactID and create-only storage identify an object. Artifact checks its size; consumers own any content digest policy. Share-link secrets still use SHA-256 protection. |
 | [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) and [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Hub forwards each request with an access token naming the caller, their tenant, groups with their roles, and data labels. A call from another server carries an `act` chain naming that server, and the server's Task when the call came from one, which Artifact records in each artifact's provenance and as the `via` of its audit records. `ArtifactClient` calls through a Hub profile with a token the SDK obtains by exchange. |
-| [HTTP range requests, RFC 9110 §14](https://www.rfc-editor.org/rfc/rfc9110#name-range-requests) | `ArtifactClient` sends one `bytes=first-last` or `bytes=first-` range with a signed GET and expects `206 Partial Content`. |
-| [HTTP semantics, RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) `303 See Other` and `Cache-Control: no-store` ([RFC 9111](https://www.rfc-editor.org/rfc/rfc9111)) | The share route answers a live link with `303` to a signed GET, and every answer carries `no-store`. |
+| [HTTP range requests, RFC 9110 §14](https://www.rfc-editor.org/rfc/rfc9110#name-range-requests) | `ArtifactClient` sends one `bytes=first-last` or `bytes=first-` range with a signed GET and expects `206 Partial Content`. A preview answers one range itself, with `If-Range`; several ranges answer the whole file. |
+| [HTTP semantics, RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) `303 See Other` and `Cache-Control: no-store` ([RFC 9111](https://www.rfc-editor.org/rfc/rfc9111)) | The share route answers a live link with `303` to a signed GET, or to its preview for a browser, and every answer carries `no-store`. A preview's entity tag is the artifact's ID, because an artifact is immutable once available. |
+| [Fetch Metadata](https://www.w3.org/TR/fetch-metadata/) | `Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: document` tell the share route a browser is opening a link. |
+| [MCP Apps](https://modelcontextprotocol.io/extensions/apps) `2026-01-26` | The library App, `ui://artifact/library`. |
 | [Base64url, RFC 4648 §5](https://www.rfc-editor.org/rfc/rfc4648#section-5) | A share link's secret is 32 random bytes in unpadded canonical base64url, 43 characters. |
 | [Referrer Policy](https://www.w3.org/TR/referrer-policy/) | The share route's answers carry `Referrer-Policy: no-referrer`. |
 | [MCP Skills extension](https://github.com/modelcontextprotocol/ext-skills) `io.modelcontextprotocol/skills`, SEP-2640, and the [Agent Skills](https://agentskills.io/specification) format | The skills under `skills/`, embedded at build time and served at `skill://artifact/{name}/{path}` through the SDK; see [Skills](#skills) |
@@ -164,18 +170,29 @@ Each prompt states its task and names the skill that says how:
 
 Each prompt requires `artifact.artifacts.read`, and acts only through the tools above.
 
+### Library App
+
+`ui://artifact/library`, under `artifact.artifacts.read`, lists what `artifact://artifacts` holds for
+the person, newest first, with a name filter and its next pages, and calls no tool. A row opens
+`/view/artifact/{artifact_id}/{name}` with `ui/open-link`, so an artifact opens as any file does. A
+media run's outputs are artifacts of the person who ran it, so they are listed and open the same
+way, and a row names the server that made its artifact. The document is the image's
+`/usr/share/veoveo/artifact/library.html`, read once at startup (`VEOVEO_APP_HTML`).
+
 ### Share Route
 
-`GET /artifact/shares/{token}` is the only route outside MCP, because a share link must
-work for someone without an account. The hosted process serves it under its mount
-without Hub authentication; the link's secret authenticates the request. The routes
-declare `/shares/` as Artifact's one public route, with the least body limit, 1 byte,
-since a redemption carries none, and 600 requests a minute, which the Hub enforces and
-registration declares as the server's surfaces.
+`GET /artifact/shares/{token}` is outside MCP because a share link must work for someone
+without an account. The hosted process serves it under its mount without Hub
+authentication; the link's secret authenticates the request. The routes declare `/shares/` as
+a public route, with the least body limit, 1 byte, since a redemption carries none, and 600
+requests a minute, which the Hub enforces and registration declares as the server's surfaces. A
+link's URL is `{veoveo_public_base}/shares/{token}`, the instance's public base from the registration
+response, or under the installation's public origin or the public base URL without one.
 
 | The request names | The answer |
 |---|---|
-| a live link, neither revoked, expired nor at its redemption limit, to a released, available artifact without labels | `303 See Other` to a signed GET valid for 5 minutes, after one redemption and its audit record commit together |
+| a live link, neither revoked, expired nor at its redemption limit, to a released, available artifact without labels, from a browser opening a page, when the installation has a content domain | `303 See Other` to the link's [preview](#previews), after one redemption, the preview's name and its audit record commit together |
+| the same from anyone else | `303 See Other` to a signed GET valid for 5 minutes, after one redemption and its audit record commit together |
 | anything else: a malformed, unknown, expired, revoked or spent token, or an artifact that is private, deleted, past its retention or unavailable | `404` with one fixed body |
 | a `HEAD` request | `405` with `Allow: GET`, counting nothing |
 
@@ -190,6 +207,40 @@ never pass the limit. A redemption's record names no actor, because the holder h
 account, so it lands in the installation's audit partition. The hosted server's request
 span records the route template, `http.route=/artifact/shares/{token}`, and never the
 request's path or query, so neither the token nor the signed GET reaches logs or traces.
+
+### Previews
+
+A preview is an artifact on the Hub's [content domain](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md#content-domain),
+which chooses its viewer by its name and frames it: Artifact declares that content in its surfaces,
+and the Hub names no server. Each artifact has its own origin. A signed GET is an attachment on the
+Hub's own host, where a file served inline would run with the person's session, and it would expire in
+the middle of a video, so a preview streams the object from storage through the server. Nothing is
+stripped from a file, because the origin's isolation is the protection.
+
+| Request, from the Hub | For | Does |
+|---|---|---|
+| `HEAD /artifact/content/{artifact_id}` | a person, with a forwarded token | Answers `204` when they may read it now |
+| `POST /artifact/content/{artifact_id}` | the person opening it on the Hub's page | The same, and records `artifact.download_issued`: a visit, once however many requests follow |
+| `GET`, `HEAD /artifact/content/{artifact_id}/{name}` | the viewer or the file itself | The bytes |
+| `GET /artifact/content/{artifact_id}/` | the item's top | `303` to the viewer of its name |
+| `HEAD /artifact/content-links/{token}`, `GET`, `HEAD .../{name}`, `GET .../` | whoever holds a link's preview, without a token | The same for the link |
+
+A person's request needs the read permission, and `artifact.effective_level` decides it as it does
+`create_download`, on every request: a grant removed ends the preview on the next one, and a person
+who cannot see the artifact gets a `404`. A link's preview has an origin of its own,
+`artifact-{token}.{content domain}`, which the Hub reads through the public route `content-links/`
+and never serves on its own origin. Its token is 160 bits of a SHA-256, under its own purpose, of the
+link's secret, so one link has one origin and a file on that origin cannot redeem the link. The
+server stores the token's digest when a browser first opens the link, which is the only way to learn
+it, and checks on every request that the link is neither revoked nor expired and its artifact
+released, available, without labels and within its retention, so any of those ends the preview at once
+with one `404`. A redemption limit counts visits, so a preview already opened outlives it until the
+link ends; each visit to the share route is one redemption, and a preview's requests are none.
+
+A file's name is its path, and any other name is a `404`. The answer has the artifact's media type, the
+artifact's ID as its entity tag, `Accept-Ranges`, and for one range `206` with `Content-Range`, `416`
+beyond the end; the object is read through the server's own storage client, and a `HEAD` does not read
+it. The Hub adds the origin's policy and its `Cache-Control`.
 
 ## Object Storage
 
@@ -229,7 +280,8 @@ once.
 `create_download` signs a GetObject valid for 5 minutes, with
 `response-content-disposition` set to an attachment named after the artifact and
 `response-content-type` set to its media type. Ranges and resumed transfers go to
-SeaweedFS on the same URL.
+SeaweedFS on the same URL. A [preview](#previews) reads the object with the server's own
+client instead.
 
 ### Bucket Preparation
 
@@ -275,16 +327,16 @@ see it gets the same answer as for an unknown ID.
 | Mechanism | Reaches | Rules |
 |---|---|---|
 | Grant | a principal or group in the tenant | Read, write or admin, with an optional expiry. The owner's admin access cannot be revoked. |
-| Share link | anyone holding the link | Read only, for a released artifact without data labels, for 1 to 30 days, with an optional redemption limit. An artifact holds at most 256 live links. The server stores only the SHA-256 of the link's secret. |
+| Share link | anyone holding the link | Read only, for a released artifact without data labels, for 1 to 30 days, with an optional redemption limit. An artifact holds at most 256 live links. The server stores only the SHA-256 of the link's secret, and of its preview's token. |
 | Access request | a caller who reads an artifact and asks for write or admin | Pending, then approved, denied or cancelled. Approval writes the grant in the same transaction. |
 
 An administrator releases an available artifact with `set_release_state`. A share link
 reaches people without data labels, so an artifact that carries a label cannot be
 shared by link. Returning an artifact to private revokes its live links in the same
 transaction, so releasing it again revives none; revoking a link or deleting its
-artifact also stops new redemptions at once. A URL already issued expires within its 5
-minutes. A redemption counts once per visit to the share route, because ranges and
-resumes go to SeaweedFS.
+artifact also stops new redemptions and its preview at once. A URL already issued expires within
+its 5 minutes. A redemption counts once per visit to the share route, because ranges and
+resumes go to SeaweedFS or are a preview's.
 
 A caller holds at most one pending request per artifact, and asks only for a level
 above the one it holds; a caller who cannot read the artifact gets the answer for an
@@ -448,7 +500,7 @@ Per-rule compliance profiles and their generated manual section are removed.
 | `artifact` | ID, tenant, owner, name, media type, size, labels, release state, provenance, metadata, retention and state (`uploading`, `available`, `failed`, `deleting`) | Until deleted or its retention passes; a failed artifact, which holds no object, 7 days after it failed |
 | `grant` | Artifact, subject kind and ID, level, expiry and grantor | With the artifact, or at expiry |
 | `upload` | Artifact, creator, acting identity, idempotency key, form, declared size, maximum size, S3 upload ID, part size, state and expiry | 7 days after it ends |
-| `share_link` | Artifact, secret digest, expiry, redemption limit and count, and revocation | 30 days after expiry or revocation |
+| `share_link` | Artifact, secret digest, its preview token's digest once a browser opens it, expiry, redemption limit and count, and revocation | 30 days after expiry or revocation |
 | `access_request` | Artifact, requester, level, justification, state, decider and note | 90 days after a decision |
 | `storage_usage` | Per tenant: stored and reserved bytes | With the tenant |
 | `upload_limits` | Per tenant: quota, largest object, allowed media types and active-upload limit. A tenant without a row has no quota, objects up to 5 TiB, any media type and 64 open uploads | With the tenant |
@@ -493,14 +545,14 @@ for each class with the OCSF API Activity (6003) activity the export maps it to:
 | `artifact.upload_created` | `create_upload` reserves an artifact | the upload | Create | success |
 | `artifact.upload_completed` | `complete_upload` records the bytes that arrived | the upload | Update | success, or failure with reason `size_mismatch` when the size differs from the declared one or exceeds the reservation |
 | `artifact.upload_aborted` | `abort_upload` | the upload | Delete | success |
-| `artifact.download_issued` | `create_download` signs a URL, before the URL is returned | the artifact | Read | success |
+| `artifact.download_issued` | `create_download` signs a URL, before the URL is returned, or a person opens a [preview](#previews), once a visit, whose time is the most a preview's origin lives, 24 hours | the artifact | Read | success |
 | `artifact.grant_changed` | `grant_artifact`, `revoke_artifact_grant` with no level, or an approved access request | the artifact's grants | Update | success |
 | `artifact.deleted` | `delete_artifact` marks the artifact | the artifact | Delete | success |
 | `artifact.upload_limits_set` | `set_upload_limits` | `artifact://storage-usage` | Update | success |
 | `artifact.release_changed` | `set_release_state`, with the number of live share links a return to private ended | the artifact | Update | success |
 | `artifact.share_link_created` | `create_share_link`, with the link's expiry and limit | the artifact's share links | Create | success |
 | `artifact.share_link_revoked` | `revoke_share_link` | the artifact's share links | Delete | success |
-| `artifact.share_link_redeemed` | the share route counts a redemption, before it answers; the record names no actor | the artifact | Read | success |
+| `artifact.share_link_redeemed` | the share route counts a redemption, before it answers; the record names no actor, and its time is the signed URL's expiry or, for a preview, the link's | the artifact | Read | success |
 | `artifact.access_requested` | `request_artifact_access` | the artifact | Create | success |
 | `artifact.access_request_cancelled` | `cancel_access_request` | the artifact | Update | success |
 | `artifact.access_request_decided` | `decide_access_request`, with the decision; an approval that writes a grant also records `artifact.grant_changed` | the artifact | Update | success |
@@ -572,11 +624,12 @@ SeaweedFS beside PostgreSQL, pinned by digest, and configures the server through
 defaulting to the endpoint), `VEOVEO_STORAGE_REGION`, `VEOVEO_STORAGE_BUCKET`,
 `VEOVEO_STORAGE_ACCESS_KEY`, `VEOVEO_STORAGE_SECRET_KEY` and
 `VEOVEO_STORAGE_CORS_ORIGINS`, beside the registration settings every server takes.
-Share links name `{origin}/artifact/shares/{token}` under the installation's public
-origin, `VEOVEO_PUBLIC_ORIGIN`, an `https` origin such as `https://veoveo.example.com`,
-or under the public base URL when the installation has none. The server accepts the
-origin's host in the `Host` header, and the installation routes the origin's
-`/artifact/shares/*` to the server for people without an account.
+Share links name `{veoveo_public_base}/shares/{token}`, the public base the Hub's registration
+response names, which the Hub routes for people without an account, and the server accepts the base's
+host in the `Host` header. Without a base they name `{origin}/artifact/shares/{token}` under the
+installation's public origin, `VEOVEO_PUBLIC_ORIGIN`, or under the public base URL. The response's
+`veoveo_content_origin` names the installation's content domain, without which a browser opening a
+link gets the signed GET too.
 SigV4 signs with the secret key inside the server, so the server's environment holds the
 credential itself, the way the Hub's holds the database owner's password; a
 placeholder that a proxy substitutes cannot sign. The credential is limited to the
@@ -592,7 +645,6 @@ signed header would void the signature.
 | Area | State |
 |---|---|
 | Inline content for a model without a sandbox (`write_artifact` and a content resource) | Taken up with the agents (E4), under decision D27 |
-| The library App | Plan item M8 |
 | Helm chart | Pending (C15) |
 
 ## Verification
@@ -605,7 +657,8 @@ signed header would void the signature.
 | Service | The store and SeaweedFS together: declared and undeclared uploads, refused bytes, aborts, a large unknown-size object made available without a background Task, a repeated idempotency key, download access, and the sweep's removal of abandoned, deleted and orphaned objects |
 | MCP | The SDK's in-process Hub with tokens that carry a request context: discovery of the tools, which match the typed calls the contract publishes, the resources and the prompts; permission refusals on tools and resources, including every sharing tool; a signed upload counted in storage usage; upload limits; an owner who releases an artifact, creates a share link, lists it without its secret and redeems it once through the hosted router's share route; and an owner refused a request for more access |
 | Sharing | Database tests: returning to private ends only live links and releasing again revives none; links need an administrator and a released, available artifact without labels; twelve concurrent redemptions of a link limited to three count exactly three; expired, revoked, deleted and unknown links redeem nothing, and a dropped redemption counts nothing; share-link pages and their cursors. Access requests: an approval writes the requested grant and records each step, visibility and the held level bound a request, only the requester withdraws and only an administrator decides, an approval keeps a stronger grant, and listings page by role and state |
-| Share route | `tests/share_route.rs` through the hosted router and a private SeaweedFS: a live link redirects with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
+| Previews | `tests/content_route.rs` through the hosted router and a private SeaweedFS, with tokens as the Hub forwards them: the read permission and the bearer are both needed; whole files, ranges, a suffix, `416`, `If-Range`, `If-None-Match` and `HEAD`; the file has one name and its top goes to its viewer; a visit records one download however many reads follow; someone else's artifact is unknown until a grant, and the next request after the grant goes is refused. A browser's visit to a link goes to a preview whose token redeems nothing, a program gets the signed GET, a visit is one redemption, the same link has the same origin; revoking, expiry and returning to private end it at once, and a limit of one lets the opened preview stay and no second visit |
+| Share route | `tests/share_route.rs` through the hosted router and a private SeaweedFS: a live link redirects a program with `no-store` to a 5-minute signed GET that serves ranges; expired, revoked, private, deleted, spent, unknown and malformed tokens answer the same `404`, headers and body included; a `HEAD` answers `405` and counts nothing; the request spans of a redemption and a refusal record the route template and neither the token nor the redirect's signature |
 | Knowledge | `tests/knowledge.rs` through the SDK's in-process mesh, with Artifact over a fresh database with pgvector and a private SeaweedFS, and a synthetic stand-in for Embedding that serves Embedding's `embed` contract, fetches each media part through its signed GET and answers vectors hashed from words and bytes, never a model's: a person's image upload names its index Task, which embeds the name, metadata and bytes for the uploader from that Task and is then found first by a word and by an image of its bytes; a grant to the person's group makes another person's artifact found and its revocation hides it; and Ledger's upload is embedded before its completion returns, with `indexed` in the result and both servers in the chain |
 | Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private SeaweedFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves available, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |

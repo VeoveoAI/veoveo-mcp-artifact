@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn the_setup_round_trips_every_resource_and_template() {
         let setup = &*super::SERVER_SETUP;
-        assert_eq!(setup.resources().len(), 8);
+        assert_eq!(setup.resources().len(), 9);
         assert_eq!(setup.resource_templates().len(), 8);
     }
 }

@@ -1,5 +1,6 @@
 //! Typed routes bind Artifact requests, outputs and current policies. Handlers build
 //! the caller from the admitted identity; SQL decides its level on each artifact.
+pub mod app;
 mod declarations;
 mod errors;
 pub mod identity;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use rmcp::{ErrorData as McpError, RoleServer, service::RequestContext};
 use veoveo_hub_sdk::{
+    apps::AppHtml,
     definition::Product,
     durable_tasks::DurableTasks,
     hosting::{DomainServer, Hosted, hub_identity},
@@ -52,12 +54,14 @@ pub fn force_setup() {
     std::sync::LazyLock::force(&SERVER_SETUP);
 }
 
-/// What every handler shares: the service, the tenants' subscription hubs and the Task
-/// runtime that holds the index Tasks of people's uploads.
+/// What every handler shares: the service, the tenants' subscription hubs, the Task runtime that
+/// holds the index Tasks of people's uploads, and the App's document.
 pub struct ArtifactApp {
     pub service: ArtifactService,
     pub hubs: Arc<TenantHubs>,
     pub tasks: TaskRuntime,
+    /// The document of the App, `ui://artifact/library`.
+    pub library: AppHtml,
 }
 
 /// The hosted MCP handler: Artifact's routes, its Tasks and its subscriptions.
@@ -409,7 +413,8 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
     std::sync::LazyLock::new(|| {
         use crate::contract::ArtifactPermission::*;
         use veoveo_hub_sdk::hosting::{RoutePolicy, Routes};
-        // The share route is the one public route: links work for anyone holding them.
+        // A link works for anyone holding it: the share route, and the reads of its preview,
+        // which the Hub serves only on the link's own origin.
         let routes = Routes::<ArtifactMcp>::builder(
             RoutePolicy::permission(ArtifactsRead).expect("Artifact permission"),
         )
@@ -417,7 +422,14 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
             crate::share::PATH,
             crate::share::MAX_BODY_BYTES,
             crate::share::REQUESTS_PER_MINUTE,
-        );
+        )
+        .public_route(
+            crate::content::LINKS_PATH,
+            crate::content::MAX_BODY_BYTES,
+            crate::content::LINKS_REQUESTS_PER_MINUTE,
+        )
+        .content(crate::content::PATH, Some(crate::content::LINKS_PATH));
+        let routes = app::register(routes);
         let routes = routes.tool::<Checked<CreateUploadRequest>, _, _>(
             "Reserve an artifact that you own and receive where to send its \
              bytes: one signed PUT, or a part size and signed part URLs. Give the size when \

@@ -1,5 +1,7 @@
 //! Sharing: release states, share links with their redemption, and access requests.
 use chrono::{DateTime, TimeDelta, Utc};
+use url::Url;
+use veoveo_hub_sdk::registration::ContentLinkLabel;
 
 use crate::{
     contract::{
@@ -7,7 +9,7 @@ use crate::{
         CreateShareLinkRequest, CreateShareLinkResult, DecideAccessRequestRequest, ReleaseState,
         RequestArtifactAccessRequest, ShareLinkId, ShareLinkRecord, SignedTransfer,
     },
-    share::ShareLinkSecret,
+    share::{ShareLinkSecret, preview_digest},
     storage::ObjectKey,
     store::{Caller, NewShareLink},
 };
@@ -92,6 +94,41 @@ impl ArtifactService {
             .await?;
         redemption.commit(get.expires_at).await?;
         Ok(Some(get))
+    }
+
+    /// Whether a browser opening a share link can preview it: the installation has a content
+    /// domain.
+    pub fn previews_links(&self) -> bool {
+        self.content_origin.is_some()
+    }
+
+    /// Redeem the share link `token` names for a browser: count the redemption, name the link's
+    /// preview and record both, and answer where the preview begins. `None` when the token names
+    /// no live link.
+    pub async fn preview_share_link(
+        &self,
+        token: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Option<Url>, ArtifactError> {
+        let Some(secret) = ShareLinkSecret::parse(token) else {
+            return Ok(None);
+        };
+        let Some(mut redemption) = self.store.redeem_share_link(&secret.digest(), now).await?
+        else {
+            return Ok(None);
+        };
+        let preview = secret.preview_token();
+        let origin = self.content_origin.as_ref().and_then(|origin| {
+            let label = ContentLinkLabel::new(crate::server(), preview.clone())?;
+            Some(origin.link(&label))
+        });
+        let Some(origin) = origin else {
+            return Ok(None);
+        };
+        redemption.name_preview(&preview_digest(&preview)).await?;
+        let expires_at = redemption.link_expires_at;
+        redemption.commit(expires_at).await?;
+        Ok(Some(origin))
     }
 
     pub async fn request_access(

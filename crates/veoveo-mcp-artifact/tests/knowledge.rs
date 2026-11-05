@@ -321,6 +321,7 @@ impl Mesh {
             service: (*harness.service).clone(),
             hubs,
             tasks: harness.tasks.clone(),
+            library: support::library(),
         });
         let served = app.clone();
         mesh.serve(

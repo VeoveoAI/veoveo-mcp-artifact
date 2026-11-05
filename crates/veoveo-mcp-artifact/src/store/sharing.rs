@@ -13,7 +13,7 @@ use veoveo_types::{
 };
 
 use crate::contract::{
-    ArtifactId, ArtifactName, ArtifactState, MediaType, ReleaseChanged, ReleaseState,
+    ArtifactId, ArtifactName, ArtifactState, MediaType, ObjectSize, ReleaseChanged, ReleaseState,
     ShareLinkCreated, ShareLinkId, ShareLinkRecord, ShareLinkRedeemed, ShareLinkRevoked,
     ShareLinks,
 };
@@ -80,11 +80,27 @@ pub struct Redemption {
     pub share_link_id: ShareLinkId,
     /// The link's redemptions, this one included.
     pub redemptions: u32,
+    /// When the link expires.
+    pub link_expires_at: DateTime<Utc>,
     pub name: ArtifactName,
     pub media_type: MediaType,
 }
 
 impl Redemption {
+    /// Name the link's preview by the digest of the token its origin holds, so that the origin
+    /// reads the artifact while the link lives.
+    pub async fn name_preview(&mut self, digest: &Sha256Digest) -> Result<(), ArtifactStoreError> {
+        sqlx::query_file_scalar!(
+            "src/store/sharing/set_share_link_preview.sql",
+            self.tenant.clone() as StoredTenant,
+            self.share_link_id as ShareLinkId,
+            digest.to_string(),
+        )
+        .fetch_one(&mut *self.tx)
+        .await?;
+        Ok(())
+    }
+
     /// Record the redemption, whose download URL lives until `expires_at`, and commit.
     pub async fn commit(mut self, expires_at: DateTime<Utc>) -> Result<(), ArtifactStoreError> {
         let detail = self.registry.detail(&ShareLinkRedeemed {
@@ -105,7 +121,48 @@ impl Redemption {
     }
 }
 
+/// The artifact a live link's preview reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewedArtifact {
+    pub tenant: StoredTenant,
+    pub artifact_id: ArtifactId,
+    pub name: ArtifactName,
+    pub media_type: MediaType,
+    pub size: ObjectSize,
+}
+
 impl ArtifactStore {
+    /// What the preview whose token has `digest` reads, while its link is live; `None`
+    /// otherwise, so a refusal names no reason.
+    pub async fn share_link_preview(
+        &self,
+        digest: &Sha256Digest,
+        now: DateTime<Utc>,
+    ) -> Result<Option<PreviewedArtifact>, ArtifactStoreError> {
+        let Some(row) = sqlx::query_file!(
+            "src/store/sharing/share_link_preview.sql",
+            digest.to_string(),
+            now,
+        )
+        .fetch_optional(self.pool())
+        .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(PreviewedArtifact {
+            tenant: row.tenant,
+            artifact_id: row.artifact_id,
+            name: ArtifactName::parse(row.name)
+                .map_err(|_| ArtifactStoreError::Corrupt("artifact name"))?,
+            media_type: MediaType::parse(row.media_type)
+                .map_err(|_| ArtifactStoreError::Corrupt("artifact media type"))?,
+            size: u64::try_from(row.size_bytes)
+                .ok()
+                .and_then(|size| ObjectSize::new(size).ok())
+                .ok_or(ArtifactStoreError::Corrupt("artifact size"))?,
+        }))
+    }
+
     /// Move an available artifact the caller administers between private and released.
     /// Returning it to private ends its live share links in the same transaction.
     pub async fn set_release_state(
@@ -351,6 +408,7 @@ impl ArtifactStore {
             share_link_id: row.share_link_id,
             redemptions: u32::try_from(row.redemptions)
                 .map_err(|_| ArtifactStoreError::Corrupt("share link redemptions"))?,
+            link_expires_at: row.expires_at,
             name: ArtifactName::parse(row.name)
                 .map_err(|_| ArtifactStoreError::Corrupt("artifact name"))?,
             media_type: MediaType::parse(row.media_type)

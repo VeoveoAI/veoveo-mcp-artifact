@@ -5,6 +5,8 @@
 
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "server")]
+pub mod content;
 #[cfg(feature = "contract")]
 pub mod contract;
 #[cfg(feature = "server")]

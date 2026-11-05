@@ -1,14 +1,15 @@
-//! `GET /artifact/shares/{token}`: the one route outside MCP, because a share link works
-//! for someone without an account. A live link answers `303 See Other` to a fresh signed
-//! GET of its artifact. Every other token, whether malformed, unknown, expired, revoked,
-//! spent, or for an artifact that is private, deleted or unavailable, answers the same
-//! `404`, so a refusal tells the holder nothing about the link.
+//! `GET /artifact/shares/{token}`: a share link works for someone without an account. A live
+//! link answers `303 See Other`: a browser opening it to the link's preview on the content
+//! domain, and any other caller to a fresh signed GET of its artifact. Every other token,
+//! whether malformed, unknown, expired, revoked, spent, or for an artifact that is private,
+//! deleted or unavailable, answers the same `404`, so a refusal tells the holder nothing about
+//! the link.
 use std::sync::Arc;
 
 use axum::{
     Router,
     extract::{Path, State, rejection::PathRejection},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -32,16 +33,38 @@ pub fn routes(service: Arc<ArtifactService>) -> Router {
         .with_state(service)
 }
 
+/// Whether a browser is opening the link as a page, rather than a program fetching it.
+fn document_navigation(headers: &HeaderMap) -> bool {
+    headers
+        .get("sec-fetch-mode")
+        .is_some_and(|value| value == "navigate")
+        && headers
+            .get("sec-fetch-dest")
+            .is_some_and(|value| value == "document")
+}
+
 async fn redeem(
     State(service): State<Arc<ArtifactService>>,
+    headers: HeaderMap,
     token: Result<Path<String>, PathRejection>,
 ) -> Response {
     let Ok(Path(token)) = token else {
         return refused();
     };
-    match service.redeem_share_link(&token, Utc::now()).await {
-        Ok(Some(get)) => {
-            let Ok(location) = HeaderValue::from_str(get.url.as_str()) else {
+    let location = if document_navigation(&headers) && service.previews_links() {
+        service
+            .preview_share_link(&token, Utc::now())
+            .await
+            .map(|url| url.map(String::from))
+    } else {
+        service
+            .redeem_share_link(&token, Utc::now())
+            .await
+            .map(|get| get.map(|get| get.url.as_str().to_owned()))
+    };
+    match location {
+        Ok(Some(location)) => {
+            let Ok(location) = HeaderValue::from_str(&location) else {
                 return unavailable();
             };
             let mut response = StatusCode::SEE_OTHER.into_response();

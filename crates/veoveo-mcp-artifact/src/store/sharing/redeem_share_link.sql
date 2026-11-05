@@ -20,5 +20,6 @@ RETURNING
     s.share_link_id AS "share_link_id: ShareLinkId",
     s.artifact_id AS "artifact_id: ArtifactId",
     s.redemptions,
+    s.expires_at,
     a.name,
     a.media_type

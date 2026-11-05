@@ -7,7 +7,9 @@ use anyhow::Context;
 use clap::Parser;
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
-use veoveo_hub_sdk::{PublicDeployment, PublicOrigin, parse_allowed_host_authority};
+use veoveo_hub_sdk::{
+    PublicDeployment, PublicOrigin, parse_allowed_host_authority, registration::PublicBase,
+};
 
 use crate::{share::ShareBase, storage::StorageConfig};
 
@@ -94,6 +96,13 @@ pub(super) struct Args {
         value_delimiter = ','
     )]
     pub storage_cors_origins: Vec<String>,
+    /// The App document Artifact serves as `ui://artifact/library`, read once at startup.
+    #[arg(
+        long,
+        env = "VEOVEO_APP_HTML",
+        default_value = "/usr/share/veoveo/artifact/library.html"
+    )]
+    pub app_html: PathBuf,
     #[arg(long, env = "VEOVEO_ALLOW_LOOPBACK_HOSTS", default_value_t = false)]
     pub allow_loopback_hosts: bool,
     #[arg(
@@ -111,9 +120,12 @@ impl Args {
         Ok(PublicDeployment::new(&self.public_base_url)?.with_origin(self.public_origin.clone()))
     }
 
-    /// The origin share links name: the installation's public origin, or else the public
-    /// base URL.
-    pub fn share_base(&self) -> anyhow::Result<ShareBase> {
+    /// Where share links are public: the public base the Hub names for this instance, or else the
+    /// installation's public origin, or else the public base URL.
+    pub fn share_base(&self, public_base: Option<&PublicBase>) -> anyhow::Result<ShareBase> {
+        if let Some(base) = public_base {
+            return Ok(ShareBase::under(base));
+        }
         let origin = match &self.public_origin {
             Some(origin) => origin.to_string(),
             None => self.public_base_url.clone(),
@@ -189,7 +201,7 @@ mod tests {
         let storage = args.storage().unwrap();
         assert_eq!(storage.signing_endpoint, storage.internal_endpoint);
         assert_eq!(
-            args.share_base().unwrap().authority(),
+            args.share_base(None).unwrap().authority(),
             "vv-mcp-artifact.internal:8801",
             "share links default to the public base URL"
         );
@@ -219,7 +231,10 @@ mod tests {
             "not-printed",
         ])
         .unwrap();
-        assert_eq!(args.share_base().unwrap().authority(), "veoveo.example.com");
+        assert_eq!(
+            args.share_base(None).unwrap().authority(),
+            "veoveo.example.com"
+        );
         let deployment = args.public_deployment().unwrap();
         assert_eq!(
             veoveo_hub_sdk::public_allowed_hosts(&deployment, false),
