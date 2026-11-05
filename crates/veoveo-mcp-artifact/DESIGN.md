@@ -172,12 +172,19 @@ Each prompt requires `artifact.artifacts.read`, and acts only through the tools 
 
 ### Library App
 
-`ui://artifact/library`, under `artifact.artifacts.read`, lists what `artifact://artifacts` holds for
-the person, newest first, with a name filter and its next pages, and calls no tool. A row opens
-`/view/artifact/{artifact_id}/{name}` with `ui/open-link`, so an artifact opens as any file does. A
-media run's outputs are artifacts of the person who ran it, so they are listed and open the same
-way, and a row names the server that made its artifact. The document is the image's
-`/usr/share/veoveo/artifact/library.html`, read once at startup (`VEOVEO_APP_HTML`).
+`ui://artifact/library`, under `artifact.artifacts.read`, is a gallery of what `artifact://artifacts` holds for
+the person, newest first, with a name filter, kind filters and its next pages. Each card's picture comes from
+`thumbnail`, the one tool it calls, as the card comes on screen. Choosing a card shows a larger picture with the
+artifact's facts, the previous and next, and Open, which opens `/view/artifact/{artifact_id}/{name}` with
+`ui/open-link`, so an artifact opens as any file does. A media run's outputs are artifacts of the person who ran it,
+so they are listed and open the same way, and a card names the server that made its artifact.
+
+`thumbnail` takes `artifactId` and `size` and answers a picture in base64, or none. It calls the Thumb server's
+`thumbnail` as the same person, and that server asks this one, as them, whether they may read the artifact, then
+reads it with `create_download`'s signed GET and draws it in a confined process. So this server parses no file and
+keeps no picture, a person without access gets a refusal the library shows as no picture, and an installation with no
+Thumb server shows icons. The document is
+[veoveo-hub-ui](https://github.com/VeoveoAI/veoveo-hub-ui)'s gallery, assembled at startup with `assets/library.js`, which says what is Artifact's.
 
 ### Share Route
 

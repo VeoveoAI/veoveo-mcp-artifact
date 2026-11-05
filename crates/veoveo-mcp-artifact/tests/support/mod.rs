@@ -26,10 +26,7 @@ pub use veoveo_mcp_artifact::store::GroupAccess;
 
 /// The App's document, as the image holds it.
 pub fn library() -> veoveo_hub_sdk::apps::AppHtml {
-    veoveo_hub_sdk::apps::AppHtml::load(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/library.html"),
-    )
-    .unwrap()
+    veoveo_mcp_artifact::mcp::app::document().expect("the App's document")
 }
 
 /// A fixed instant, so expiries and retention compare predictably.

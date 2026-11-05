@@ -16,12 +16,17 @@ use std::sync::Arc;
 use chrono::Utc;
 use rmcp::{ErrorData as McpError, RoleServer, service::RequestContext};
 use veoveo_hub_sdk::{
-    apps::AppHtml,
+    apps::{AppHtml, UiVisibility},
+    calls::ToolCall,
     definition::Product,
     durable_tasks::DurableTasks,
-    hosting::{DomainServer, Hosted, hub_identity},
+    hosting::{ClientContext, DomainServer, Hosted, hub_identity},
     knowledge::{Indexed, WriteIndexing},
     server_contract::McpServerSetup,
+};
+use veoveo_mcp_thumb::contract::{
+    ArtifactRef, FileSource, ThumbPermission, ThumbnailRequest as ThumbThumbnail,
+    ThumbnailSize as ThumbThumbnailSize,
 };
 use veoveo_task::TaskRuntime;
 use veoveo_types::Checked;
@@ -35,7 +40,8 @@ use crate::{
         DeleteArtifactResult, GrantArtifactRequest, GrantArtifactResult,
         RequestArtifactAccessRequest, RevokeArtifactGrantRequest, RevokeArtifactGrantResult,
         RevokeShareLinkRequest, SetReleaseStateRequest, SetUploadLimitsRequest, ShareLinkResult,
-        SignUploadPartsRequest, SignUploadPartsResult, UploadLimitsResult,
+        SignUploadPartsRequest, SignUploadPartsResult, ThumbnailRequest, ThumbnailResult,
+        ThumbnailSize, UploadLimitsResult,
     },
     service::ArtifactService,
 };
@@ -223,6 +229,34 @@ impl ArtifactMcp {
             .await
             .map_err(tool_error)?;
         Ok(result)
+    }
+
+    /// The artifact's picture, from the Thumb server, which asks this server as the same person
+    /// whether they may read it. No Thumb server leaves no picture.
+    async fn thumbnail(
+        &self,
+        request: ThumbnailRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ThumbnailResult, McpError> {
+        let artifact = ArtifactRef::parse(request.artifact_id.to_string())
+            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
+        let asked = ThumbThumbnail {
+            source: FileSource::Artifact { artifact },
+            size: match request.size {
+                ThumbnailSize::Small => ThumbThumbnailSize::Small,
+                ThumbnailSize::Large => ThumbThumbnailSize::Large,
+            },
+        };
+        match context.client()?.call(asked).await {
+            Ok(drawn) => Ok(ThumbnailResult {
+                media_type: drawn.media_type,
+                data: drawn.data,
+            }),
+            Err(error) => {
+                tracing::debug!(%error, "the Thumb server drew no picture");
+                Ok(ThumbnailResult::default())
+            }
+        }
     }
 
     async fn grant_artifact(
@@ -489,6 +523,13 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
                     .map_err(Into::into)
             },
         );
+        let routes = routes.tool::<ThumbnailRequest, _, _>(
+            "A picture of an artifact you may read, in base64, or none.",
+            RoutePolicy::permission(ArtifactsRead).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain.thumbnail(request, context).await.map_err(Into::into)
+            },
+        );
         let routes = routes.tool::<GrantArtifactRequest, _, _>(
             "Give a principal or group read, write or admin access to an artifact you \
              administer, until an optional expiry. A later grant to the same subject replaces \
@@ -614,6 +655,10 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
                 )
                 .expect("Embedding's permission"),
             )
+            .uses(
+                veoveo_types::PermissionName::parse(ThumbPermission::ThumbnailsRead.as_str())
+                    .expect("Thumb's permission"),
+            )
             .starts_tasks();
         let mut routes = resources::register(routes);
         for prompt in prompts::ArtifactPrompt::ALL {
@@ -623,7 +668,13 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
                 move |_, request, _| async move { prompt.render(request.arguments) },
             );
         }
-        routes.build()
+        routes
+            .app_tools(
+                &app::uri(),
+                &[<ThumbnailRequest as ToolCall>::TOOL],
+                &[UiVisibility::App],
+            )
+            .build()
     });
 
 impl DomainServer for ArtifactMcp {

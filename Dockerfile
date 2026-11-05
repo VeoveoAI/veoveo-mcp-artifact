@@ -105,7 +105,6 @@ RUN apt-get update \
     && mkdir -p /var/lib/veoveo/artifact/keys /usr/share/veoveo/artifact \
     && chown -R "${COMPONENT}:${COMPONENT}" /var/lib/veoveo/artifact
 COPY --from=build "/home/sandbox/${COMPONENT}" "/usr/local/bin/${COMPONENT}"
-COPY --chmod=0644 crates/veoveo-mcp-artifact/assets/library.html /usr/share/veoveo/artifact/library.html
 USER ${COMPONENT}
 # The exec form cannot expand build arguments, so the binary path is fixed here.
 EXPOSE 8801

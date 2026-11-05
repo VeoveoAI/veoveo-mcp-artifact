@@ -175,6 +175,7 @@ async fn discovery_lists_every_tool_and_resource() {
                 "set_release_state",
                 "set_upload_limits",
                 "sign_upload_parts",
+                "thumbnail",
             ]
         );
         let resources = hub.rpc("resources/list", json!({})).await;

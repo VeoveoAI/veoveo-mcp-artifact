@@ -4335,6 +4335,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "veoveo-hub-ui"
+version = "0.1.0"
+source = "git+https://github.com/VeoveoAI/veoveo-hub-ui?rev=fb892c6fe2dfd903fac3a1788c9dea8b7c5d085c#fb892c6fe2dfd903fac3a1788c9dea8b7c5d085c"
+
+[[package]]
 name = "veoveo-macros"
 version = "0.1.0"
 source = "git+https://github.com/VeoveoAI/veoveo-core?rev=a8dafe90206d1cadbb1d2de26304fe061a542ffd#a8dafe90206d1cadbb1d2de26304fe061a542ffd"
@@ -4384,7 +4389,9 @@ dependencies = [
  "veoveo-fixtures",
  "veoveo-hub-sdk",
  "veoveo-hub-sdk-fixture",
+ "veoveo-hub-ui",
  "veoveo-mcp-embedding",
+ "veoveo-mcp-thumb",
  "veoveo-skills",
  "veoveo-store",
  "veoveo-task",
@@ -4401,6 +4408,19 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "uuid",
+ "veoveo-hub-sdk",
+ "veoveo-skills",
+ "veoveo-types",
+]
+
+[[package]]
+name = "veoveo-mcp-thumb"
+version = "0.1.0"
+source = "git+https://github.com/VeoveoAI/veoveo-mcp-thumb?rev=a98c5af59c523ee92461f3025270f3c4e6533fb3#a98c5af59c523ee92461f3025270f3c4e6533fb3"
+dependencies = [
+ "schemars",
+ "serde",
+ "thiserror 2.0.21",
  "veoveo-hub-sdk",
  "veoveo-skills",
  "veoveo-types",

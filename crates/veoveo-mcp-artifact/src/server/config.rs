@@ -96,13 +96,6 @@ pub(super) struct Args {
         value_delimiter = ','
     )]
     pub storage_cors_origins: Vec<String>,
-    /// The App document Artifact serves as `ui://artifact/library`, read once at startup.
-    #[arg(
-        long,
-        env = "VEOVEO_APP_HTML",
-        default_value = "/usr/share/veoveo/artifact/library.html"
-    )]
-    pub app_html: PathBuf,
     #[arg(long, env = "VEOVEO_ALLOW_LOOPBACK_HOSTS", default_value_t = false)]
     pub allow_loopback_hosts: bool,
     #[arg(

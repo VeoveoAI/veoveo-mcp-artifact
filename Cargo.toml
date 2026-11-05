@@ -28,6 +28,10 @@ veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "14
 veoveo-hub-sdk-fixture = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "14a649f3e37dca39a4bb29fc39dd03c6565b0490" }
 # Embedding's client: the SDK's knowledge Embedder over its typed `embed` tool, which
 # indexes Artifact's records for their writers.
+# The Thumb server's contract, for pictures of artifacts. It pins this SDK revision, so the two move together.
+veoveo-mcp-thumb = { git = "https://github.com/VeoveoAI/veoveo-mcp-thumb", rev = "a98c5af59c523ee92461f3025270f3c4e6533fb3", default-features = false }
+# The App's look and its gallery.
+veoveo-hub-ui = { git = "https://github.com/VeoveoAI/veoveo-hub-ui", rev = "fb892c6fe2dfd903fac3a1788c9dea8b7c5d085c" }
 veoveo-mcp-embedding = { git = "https://github.com/VeoveoAI/veoveo-mcp-embedding", rev = "c8ddb6dbf1ab0ca2d3ae12aeb9e5910bb3ce2044", default-features = false, features = ["client"] }
 
 anyhow = "=1.0.104"

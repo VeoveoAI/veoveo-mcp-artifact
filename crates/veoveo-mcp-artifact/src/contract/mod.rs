@@ -38,7 +38,7 @@ pub use tools::{
     PartRequest, RequestArtifactAccessRequest, RevokeArtifactGrantRequest,
     RevokeArtifactGrantResult, RevokeShareLinkRequest, SetReleaseStateRequest,
     SetUploadLimitsRequest, ShareLinkDays, ShareLinkResult, SignUploadPartsRequest,
-    SignUploadPartsResult, UploadLimitsResult,
+    SignUploadPartsResult, ThumbnailRequest, ThumbnailResult, ThumbnailSize, UploadLimitsResult,
 };
 pub use transfer::{
     MAX_SIGNED_URL_BYTES, SignedPart, SignedTransfer, SignedUrl, TransferMethod, UploadTransfer,

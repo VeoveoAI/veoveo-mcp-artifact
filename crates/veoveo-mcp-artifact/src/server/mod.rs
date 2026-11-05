@@ -12,7 +12,6 @@ use clap::Parser;
 use tokio_util::sync::CancellationToken;
 use veoveo_hub_sdk::{
     PublicDeployment, TelemetryGuard,
-    apps::AppHtml,
     durable_tasks::TaskWorker,
     hosting::{HostedServer, ServerCalls},
     init_server_telemetry,
@@ -157,7 +156,7 @@ async fn serve(
         service: (*service).clone(),
         hubs: hubs.clone(),
         tasks: tasks.clone(),
-        library: AppHtml::load(&args.app_html).context("loading the App's document")?,
+        library: mcp::app::document().context("assembling the App's document")?,
     });
     // Calls to Embedding for the person whose upload an artifact is: from a call, or
     // from the index Task the call started.

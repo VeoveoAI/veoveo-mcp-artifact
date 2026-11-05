@@ -161,6 +161,39 @@ pub struct CreateDownloadRequest {
     pub artifact_id: ArtifactId,
 }
 
+/// How large a picture of an artifact to draw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ThumbnailSize {
+    /// For a gallery's card.
+    #[default]
+    Small,
+    /// For a closer look.
+    Large,
+}
+
+/// `thumbnail`: a picture of an artifact, for the library.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThumbnailRequest {
+    pub artifact_id: ArtifactId,
+    #[serde(default)]
+    pub size: ThumbnailSize,
+}
+
+/// An artifact's picture, or none when it has none.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(veoveo_hub_sdk::SingleOutput)]
+pub struct ThumbnailResult {
+    /// The picture's media type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    /// The picture, in base64.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+}
+
 /// `delete_artifact`: delete an artifact and release its bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
