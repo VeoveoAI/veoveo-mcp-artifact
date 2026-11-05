@@ -4,7 +4,11 @@
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+    # Unmaintained since its repository was archived, with no vulnerability. Only the AWS SDK's
+    # aws-smithy-http reaches it, and it has no safe upgrade yet; this goes when the SDK drops it.
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils is unmaintained; reached only through aws-sdk-s3" },
+]
 
 [licenses]
 # Licenses compatible with distributing an Apache-2.0 project. Add a license here only
