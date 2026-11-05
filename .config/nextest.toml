@@ -4,6 +4,10 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 [profile.ci]
 fail-fast = false
 slow-timeout = { period = "60s", terminate-after = 5 }
+# Tests start a private SeaweedFS on ports that are free only when chosen. Under a busy build
+# host, another process can take one after SeaweedFS first answers, and the bucket's preparation
+# then fails. A second try gets other ports, and nextest reports the test as flaky.
+retries = 1
 
 [profile.ci.junit]
 path = "junit.xml"
