@@ -194,6 +194,38 @@ pub struct ThumbnailResult {
     pub data: Option<String>,
 }
 
+/// `thumbnails`: what is ready of many artifacts by one request, for the library.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThumbnailsRequest {
+    pub artifact_ids: Vec<ArtifactId>,
+    #[serde(default)]
+    pub size: ThumbnailSize,
+}
+
+/// What is ready of one artifact: its picture, or none, or `pending` when `thumbnail` has more to
+/// say.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReadyThumbnail {
+    /// The picture's media type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    /// The picture, in base64.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending: bool,
+}
+
+/// What `thumbnails` answers, one for each artifact, in their order.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(veoveo_hub_sdk::SingleOutput)]
+pub struct ThumbnailsResult {
+    pub thumbnails: Vec<ReadyThumbnail>,
+}
+
 /// `delete_artifact`: delete an artifact and release its bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -1,6 +1,6 @@
 //! Artifact's App, `ui://artifact/library`: a gallery of the artifacts the person may read, each
 //! opening through the Hub's `/view/` page. It reads Artifact's own listing, and calls one tool,
-//! `thumbnail`, for each artifact's picture.
+//! `thumbnails` and `thumbnail`, for each artifact's picture.
 use rmcp::model::Icon;
 use veoveo_hub_sdk::{
     apps::AppUri,

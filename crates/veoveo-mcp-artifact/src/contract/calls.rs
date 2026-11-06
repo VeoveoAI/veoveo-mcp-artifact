@@ -18,7 +18,7 @@ use super::{
     RequestArtifactAccessRequest, RevokeArtifactGrantRequest, RevokeArtifactGrantResult,
     RevokeShareLinkRequest, SetReleaseStateRequest, SetUploadLimitsRequest, ShareLinkResult,
     SignUploadPartsRequest, SignUploadPartsResult, ThumbnailRequest, ThumbnailResult,
-    UploadLimitsResult,
+    ThumbnailsRequest, ThumbnailsResult, UploadLimitsResult,
 };
 
 /// The Artifact server, the provider these calls reach.
@@ -113,6 +113,12 @@ impl ToolCall for ThumbnailRequest {
     type Provider = ArtifactProvider;
     type Output = ThumbnailResult;
     const TOOL: &'static str = "thumbnail";
+}
+
+impl ToolCall for ThumbnailsRequest {
+    type Provider = ArtifactProvider;
+    type Output = ThumbnailsResult;
+    const TOOL: &'static str = "thumbnails";
 }
 
 impl ToolCall for DeleteArtifactRequest {

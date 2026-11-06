@@ -25,8 +25,8 @@ use veoveo_hub_sdk::{
     server_contract::McpServerSetup,
 };
 use veoveo_mcp_thumb::contract::{
-    ArtifactRef, FileSource, ThumbPermission, ThumbnailRequest as ThumbThumbnail,
-    ThumbnailSize as ThumbThumbnailSize,
+    ArtifactRef, FileSource, ReadyThumbnailsRequest, ThumbPermission,
+    ThumbnailRequest as ThumbThumbnail, ThumbnailSize as ThumbThumbnailSize,
 };
 use veoveo_task::TaskRuntime;
 use veoveo_types::Checked;
@@ -37,11 +37,11 @@ use crate::{
         ArtifactResult, CancelAccessRequestRequest, CompleteUploadRequest, CompleteUploadResult,
         CreateDownloadRequest, CreateDownloadResult, CreateShareLinkRequest, CreateShareLinkResult,
         CreateUploadRequest, CreateUploadResult, DecideAccessRequestRequest, DeleteArtifactRequest,
-        DeleteArtifactResult, GrantArtifactRequest, GrantArtifactResult,
+        DeleteArtifactResult, GrantArtifactRequest, GrantArtifactResult, ReadyThumbnail,
         RequestArtifactAccessRequest, RevokeArtifactGrantRequest, RevokeArtifactGrantResult,
         RevokeShareLinkRequest, SetReleaseStateRequest, SetUploadLimitsRequest, ShareLinkResult,
         SignUploadPartsRequest, SignUploadPartsResult, ThumbnailRequest, ThumbnailResult,
-        ThumbnailSize, UploadLimitsResult,
+        ThumbnailSize, ThumbnailsRequest, ThumbnailsResult, UploadLimitsResult,
     },
     service::ArtifactService,
 };
@@ -242,10 +242,7 @@ impl ArtifactMcp {
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let asked = ThumbThumbnail {
             source: FileSource::Artifact { artifact },
-            size: match request.size {
-                ThumbnailSize::Small => ThumbThumbnailSize::Small,
-                ThumbnailSize::Large => ThumbThumbnailSize::Large,
-            },
+            size: thumb_size(request.size),
         };
         match context.client()?.call(asked).await {
             Ok(drawn) => Ok(ThumbnailResult {
@@ -257,6 +254,54 @@ impl ArtifactMcp {
                 Ok(ThumbnailResult::default())
             }
         }
+    }
+
+    /// What is ready of many artifacts by one request, from the Thumb server, which asks this one
+    /// as the same person and draws nothing here. Without an answer, each is left for `thumbnail`.
+    async fn thumbnails(
+        &self,
+        request: ThumbnailsRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ThumbnailsResult, McpError> {
+        let asked = request.artifact_ids.len();
+        let sources = request
+            .artifact_ids
+            .iter()
+            .map(|id| {
+                ArtifactRef::parse(id.to_string()).map(|artifact| FileSource::Artifact { artifact })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
+        let ready = context
+            .client()?
+            .call(ReadyThumbnailsRequest {
+                sources,
+                size: thumb_size(request.size),
+            })
+            .await;
+        Ok(ThumbnailsResult {
+            thumbnails: match ready {
+                Ok(ready) => ready
+                    .thumbnails
+                    .into_iter()
+                    .map(|one| ReadyThumbnail {
+                        media_type: one.media_type,
+                        data: one.data,
+                        pending: one.pending,
+                    })
+                    .collect(),
+                Err(error) => {
+                    tracing::debug!(%error, "the Thumb server said nothing of what is ready");
+                    vec![
+                        ReadyThumbnail {
+                            pending: true,
+                            ..ReadyThumbnail::default()
+                        };
+                        asked
+                    ]
+                }
+            },
+        })
     }
 
     async fn grant_artifact(
@@ -443,6 +488,13 @@ impl ArtifactMcp {
     }
 }
 
+fn thumb_size(size: ThumbnailSize) -> ThumbThumbnailSize {
+    match size {
+        ThumbnailSize::Small => ThumbThumbnailSize::Small,
+        ThumbnailSize::Large => ThumbThumbnailSize::Large,
+    }
+}
+
 static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>> =
     std::sync::LazyLock::new(|| {
         use crate::contract::ArtifactPermission::*;
@@ -528,6 +580,13 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
             RoutePolicy::permission(ArtifactsRead).expect("Artifact permission"),
             |domain, request, context| async move {
                 domain.thumbnail(request, context).await.map_err(Into::into)
+            },
+        );
+        let routes = routes.tool::<ThumbnailsRequest, _, _>(
+            "What is ready of many artifacts you may read by one request: each one's picture in base64, or none, or `pending` when `thumbnail` can still make one.",
+            RoutePolicy::permission(ArtifactsRead).expect("Artifact permission"),
+            |domain, request, context| async move {
+                domain.thumbnails(request, context).await.map_err(Into::into)
             },
         );
         let routes = routes.tool::<GrantArtifactRequest, _, _>(
@@ -671,7 +730,10 @@ static ROUTES: std::sync::LazyLock<veoveo_hub_sdk::hosting::Routes<ArtifactMcp>>
         routes
             .app_tools(
                 &app::uri(),
-                &[<ThumbnailRequest as ToolCall>::TOOL],
+                &[
+                    <ThumbnailRequest as ToolCall>::TOOL,
+                    <ThumbnailsRequest as ToolCall>::TOOL,
+                ],
                 &[UiVisibility::App],
             )
             .build()

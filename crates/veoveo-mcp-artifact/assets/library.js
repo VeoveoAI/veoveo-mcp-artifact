@@ -8,14 +8,6 @@ veoveoGallery((ui) => {
     const text = query.toString().replaceAll("+", "%20");
     return text ? `artifact://artifacts?${text}` : "artifact://artifacts";
   };
-  const facts = (artifact, level) => {
-    const parts = [ui.size(artifact.size), artifact.mediaType, level];
-    if (artifact.availableAt) parts.push(new Date(artifact.availableAt).toLocaleString());
-    if (artifact.releaseState === "released") parts.push("released");
-    const from = artifact.provenance && artifact.provenance.actingServer;
-    if (from) parts.push(`from ${from}`);
-    return parts.filter(Boolean).join(" · ");
-  };
   return {
     title: "Artifacts",
     placeholder: "Name starts with",
@@ -25,19 +17,19 @@ veoveoGallery((ui) => {
       const page = await ui.read(address(search, cursor));
       const items = [];
       for (const { artifact, level } of page.items) {
-        const from = artifact.provenance && artifact.provenance.actingServer;
         items.push({
           key: artifact.artifactId,
           name: artifact.name,
           kind: ui.kindOf(artifact.name, artifact.mediaType),
-          about: [ui.size(artifact.size), from ? `from ${from}` : ""].filter(Boolean).join(" · "),
-          detail: facts(artifact, level),
+          about: ui.size(artifact.size),
+          fields: { ...artifact, level },
           url: `/view/artifact/${artifact.artifactId}/${encodeURIComponent(artifact.name)}`,
         });
       }
       return { items, next: page.nextCursor, empty: "No artifacts here." };
     },
     thumbnail: (item, size) => ui.tool("thumbnail", { artifactId: item.key, size }, ui.PICTURE_TIMEOUT),
+    thumbnails: async (items, size) => (await ui.tool("thumbnails", { artifactIds: items.map((item) => item.key), size }, ui.PICTURE_TIMEOUT)).thumbnails,
     open: (item) => item.url,
   };
 });

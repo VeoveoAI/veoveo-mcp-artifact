@@ -35,10 +35,11 @@ pub use tools::{
     CreateDownloadResult, CreateShareLinkRequest, CreateShareLinkResult, CreateUploadRequest,
     CreateUploadResult, DecideAccessRequestRequest, DeleteArtifactRequest, DeleteArtifactResult,
     GrantArtifactRequest, GrantArtifactResult, MAX_PARTS_PER_SIGNING, MAX_SHARE_LINK_DAYS,
-    PartRequest, RequestArtifactAccessRequest, RevokeArtifactGrantRequest,
+    PartRequest, ReadyThumbnail, RequestArtifactAccessRequest, RevokeArtifactGrantRequest,
     RevokeArtifactGrantResult, RevokeShareLinkRequest, SetReleaseStateRequest,
     SetUploadLimitsRequest, ShareLinkDays, ShareLinkResult, SignUploadPartsRequest,
-    SignUploadPartsResult, ThumbnailRequest, ThumbnailResult, ThumbnailSize, UploadLimitsResult,
+    SignUploadPartsResult, ThumbnailRequest, ThumbnailResult, ThumbnailSize, ThumbnailsRequest,
+    ThumbnailsResult, UploadLimitsResult,
 };
 pub use transfer::{
     MAX_SIGNED_URL_BYTES, SignedPart, SignedTransfer, SignedUrl, TransferMethod, UploadTransfer,

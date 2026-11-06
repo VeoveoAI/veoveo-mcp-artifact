@@ -173,11 +173,14 @@ Each prompt requires `artifact.artifacts.read`, and acts only through the tools 
 ### Library App
 
 `ui://artifact/library`, under `artifact.artifacts.read`, is a gallery of what `artifact://artifacts` holds for
-the person, newest first, with a name filter, kind filters and its next pages. Each card's picture comes from
-`thumbnail`, the one tool it calls, as the card comes on screen. Choosing a card shows a larger picture with the
-artifact's facts, the previous and next, and Open, which opens `/view/artifact/{artifact_id}/{name}` with
-`ui/open-link`, so an artifact opens as any file does. A media run's outputs are artifacts of the person who ran it,
-so they are listed and open the same way, and a card names the server that made its artifact.
+the person, newest first, with a name filter, kind filters and its next pages. The pictures of the cards that come on
+screen together come from one `thumbnails`, and one still to be drawn from `thumbnail`, the two tools it calls.
+Choosing a card shows a larger picture with the artifact's record as it is, under its own field names, the previous
+and next, and Open, which opens `/view/artifact/{artifact_id}/{name}` with `ui/open-link`, so an artifact opens as any
+file does. A media run's outputs are artifacts of the person who ran it, so they are listed and open the same way.
+
+`thumbnails` takes `artifactIds` and `size` and answers, by one request, what the Thumb server's `ready_thumbnails`
+has kept, as the same person: a picture, nothing, or `pending` for `thumbnail`. It never draws.
 
 `thumbnail` takes `artifactId` and `size` and answers a picture in base64, or none. It calls the Thumb server's
 `thumbnail` as the same person, and that server asks this one, as them, whether they may read the artifact, then
