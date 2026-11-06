@@ -68,6 +68,8 @@ pub struct ArtifactApp {
     pub tasks: TaskRuntime,
     /// The document of the App, `ui://artifact/library`.
     pub library: AppHtml,
+    /// Small pictures it was handed, when it has somewhere to keep them.
+    pub pictures: Option<crate::pictures::KeptPictures>,
 }
 
 /// The hosted MCP handler: Artifact's routes, its Tasks and its subscriptions.
@@ -245,10 +247,20 @@ impl ArtifactMcp {
             size: thumb_size(request.size),
         };
         match context.client()?.call(asked).await {
-            Ok(drawn) => Ok(ThumbnailResult {
-                media_type: drawn.media_type,
-                data: drawn.data,
-            }),
+            Ok(drawn) => {
+                if let (Some(pictures), ThumbnailSize::Small, Some(media_type), Some(data)) = (
+                    &self.app.pictures,
+                    request.size,
+                    &drawn.media_type,
+                    &drawn.data,
+                ) {
+                    pictures.keep(request.artifact_id, media_type, data).await;
+                }
+                Ok(ThumbnailResult {
+                    media_type: drawn.media_type,
+                    data: drawn.data,
+                })
+            }
             Err(error) => {
                 tracing::debug!(%error, "the Thumb server drew no picture");
                 Ok(ThumbnailResult::default())
@@ -256,19 +268,59 @@ impl ArtifactMcp {
         }
     }
 
-    /// What is ready of many artifacts by one request, from the Thumb server, which asks this one
-    /// as the same person and draws nothing here. Without an answer, each is left for `thumbnail`.
+    /// What is ready of many artifacts by one request. This server decides each read, so what it
+    /// keeps answers at once, and only the rest asks the Thumb server, which draws nothing here. An
+    /// artifact the caller may not read now, or no answer, is left for `thumbnail` to say why.
     async fn thumbnails(
         &self,
         request: ThumbnailsRequest,
         context: RequestContext<RoleServer>,
     ) -> Result<ThumbnailsResult, McpError> {
-        let asked = request.artifact_ids.len();
-        let sources = request
-            .artifact_ids
+        let caller = identity::caller(&hub_identity(&context)?)?;
+        let now = Utc::now();
+        let mut thumbnails = vec![
+            ReadyThumbnail {
+                pending: true,
+                ..ReadyThumbnail::default()
+            };
+            request.artifact_ids.len()
+        ];
+        let mut asked = Vec::new();
+        for (at, artifact) in request.artifact_ids.iter().copied().enumerate() {
+            if self
+                .app
+                .service
+                .readable(&caller, artifact, now)
+                .await
+                .is_err()
+            {
+                continue;
+            }
+            let kept = match &self.app.pictures {
+                Some(pictures) if request.size == ThumbnailSize::Small => {
+                    pictures.get(artifact).await
+                }
+                _ => None,
+            };
+            match kept {
+                Some((media_type, data)) => {
+                    thumbnails[at] = ReadyThumbnail {
+                        media_type: Some(media_type),
+                        data: Some(data),
+                        pending: false,
+                    };
+                }
+                None => asked.push((at, artifact)),
+            }
+        }
+        if asked.is_empty() {
+            return Ok(ThumbnailsResult { thumbnails });
+        }
+        let sources = asked
             .iter()
-            .map(|id| {
-                ArtifactRef::parse(id.to_string()).map(|artifact| FileSource::Artifact { artifact })
+            .map(|(_, artifact)| {
+                ArtifactRef::parse(artifact.to_string())
+                    .map(|artifact| FileSource::Artifact { artifact })
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
@@ -279,29 +331,24 @@ impl ArtifactMcp {
                 size: thumb_size(request.size),
             })
             .await;
-        Ok(ThumbnailsResult {
-            thumbnails: match ready {
-                Ok(ready) => ready
-                    .thumbnails
-                    .into_iter()
-                    .map(|one| ReadyThumbnail {
+        match ready {
+            Ok(ready) => {
+                for ((at, artifact), one) in asked.into_iter().zip(ready.thumbnails) {
+                    if let (Some(pictures), ThumbnailSize::Small, Some(media_type), Some(data)) =
+                        (&self.app.pictures, request.size, &one.media_type, &one.data)
+                    {
+                        pictures.keep(artifact, media_type, data).await;
+                    }
+                    thumbnails[at] = ReadyThumbnail {
                         media_type: one.media_type,
                         data: one.data,
                         pending: one.pending,
-                    })
-                    .collect(),
-                Err(error) => {
-                    tracing::debug!(%error, "the Thumb server said nothing of what is ready");
-                    vec![
-                        ReadyThumbnail {
-                            pending: true,
-                            ..ReadyThumbnail::default()
-                        };
-                        asked
-                    ]
+                    };
                 }
-            },
-        })
+            }
+            Err(error) => tracing::debug!(%error, "the Thumb server said nothing of what is ready"),
+        }
+        Ok(ThumbnailsResult { thumbnails })
     }
 
     async fn grant_artifact(

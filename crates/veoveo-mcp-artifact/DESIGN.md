@@ -179,8 +179,9 @@ Choosing a card shows a larger picture with the artifact's record as it is, unde
 and next, and Open, which opens `/view/artifact/{artifact_id}/{name}` with `ui/open-link`, so an artifact opens as any
 file does. A media run's outputs are artifacts of the person who ran it, so they are listed and open the same way.
 
-`thumbnails` takes `artifactIds` and `size` and answers, by one request, what the Thumb server's `ready_thumbnails`
-has kept, as the same person: a picture, nothing, or `pending` for `thumbnail`. It never draws.
+`thumbnails` takes `artifactIds` and `size` and answers, by one request, a picture, nothing, or `pending` for `thumbnail`, and never
+draws. This server decides each read, so a small picture it was handed before, kept on disk beside its keys by artifact, whose bytes
+never change, answers with no call to any other server. Only the rest asks the Thumb server's `ready_thumbnails`, as the same person.
 
 `thumbnail` takes `artifactId` and `size` and answers a picture in base64, or none. It calls the Thumb server's
 `thumbnail` as the same person, and that server asks this one, as them, whether they may read the artifact, then

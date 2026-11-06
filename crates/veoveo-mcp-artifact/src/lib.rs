@@ -12,6 +12,8 @@ pub mod contract;
 #[cfg(feature = "server")]
 pub mod mcp;
 #[cfg(feature = "server")]
+pub mod pictures;
+#[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]
 pub mod service;

@@ -157,6 +157,9 @@ async fn serve(
         hubs: hubs.clone(),
         tasks: tasks.clone(),
         library: mcp::app::document().context("assembling the App's document")?,
+        pictures: crate::pictures::KeptPictures::new(args.key_directory.with_file_name("pictures"))
+            .inspect_err(|error| tracing::warn!(%error, "small pictures will not be kept"))
+            .ok(),
     });
     // Calls to Embedding for the person whose upload an artifact is: from a call, or
     // from the index Task the call started.

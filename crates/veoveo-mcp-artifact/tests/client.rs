@@ -156,6 +156,7 @@ impl Mesh {
             hubs,
             tasks: harness.tasks.clone(),
             library: support::library(),
+            pictures: None,
         });
         mesh.serve(
             testing::for_domain::<ArtifactMcp>()

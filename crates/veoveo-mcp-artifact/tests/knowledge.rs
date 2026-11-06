@@ -322,6 +322,7 @@ impl Mesh {
             hubs,
             tasks: harness.tasks.clone(),
             library: support::library(),
+            pictures: None,
         });
         let served = app.clone();
         mesh.serve(
