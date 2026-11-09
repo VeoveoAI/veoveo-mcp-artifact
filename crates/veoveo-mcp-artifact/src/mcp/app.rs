@@ -57,10 +57,11 @@ mod tests {
         assert!(ADAPTER.contains("ui.read(address(search, cursor))"));
         assert_eq!(
             ADAPTER.matches("ui.tool(").count(),
-            1,
-            "the one tool it calls"
+            2,
+            "the two tools it calls, both for pictures"
         );
         assert!(ADAPTER.contains(r#"ui.tool("thumbnail", { artifactId: item.key"#));
+        assert!(ADAPTER.contains(r#"ui.tool("thumbnails", { artifactIds: items.map("#));
         assert!(
             document()
                 .unwrap()
