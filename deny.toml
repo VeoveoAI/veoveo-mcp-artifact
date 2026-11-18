@@ -8,6 +8,9 @@ ignore = [
     # Unmaintained since its repository was archived, with no vulnerability. Only the AWS SDK's
     # aws-smithy-http reaches it, and it has no safe upgrade yet; this goes when the SDK drops it.
     { id = "RUSTSEC-2026-0441", reason = "pin-utils is unmaintained; reached only through aws-sdk-s3" },
+    # Unmaintained with no vulnerability and no patched release; these go when the graph drops them.
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, with no patched release; core and the SDK use it, and rmcp, schemars and sqlx depend on it" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime is unmaintained, with no patched release; reached only through object_store in core's audit" },
 ]
 
 [licenses]
