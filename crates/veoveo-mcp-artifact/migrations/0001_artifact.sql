@@ -39,6 +39,18 @@ CREATE TABLE artifact.artifact (
     retain_until timestamptz,
     failed_at timestamptz,
     deleting_at timestamptz,
+    -- The knowledge contract's words, vector and model, which migration 2 indexes: its name,
+    -- whole and split at `.`, `_` and `-` so `kite.png` is found by `kite`, and the string
+    -- values of its metadata, which PostgreSQL keeps current. pgvector lives in the
+    -- installation's `_extensions` schema. They are created with the table because
+    -- PostgreSQL 19 rewrites no table whose row type a function such as `effective_level`
+    -- reads, and adding a stored generated column rewrites it.
+    knowledge_text tsvector GENERATED ALWAYS AS (
+        to_tsvector('simple', name || ' ' || translate(name, '._-', '   '))
+        || jsonb_to_tsvector('simple', metadata, '["string"]')
+    ) STORED,
+    knowledge_vector _extensions.vector(768),
+    knowledge_model text CHECK (artifact.is_text(knowledge_model, 512)),
     PRIMARY KEY (tenant, artifact_id),
     -- Bytes exist from completion until the row goes, so only those states hold a size.
     CHECK ((size_bytes IS NULL) = (state IN ('uploading', 'failed'))),

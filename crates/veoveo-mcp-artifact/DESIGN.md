@@ -368,9 +368,12 @@ A person searches with words, an image, a clip or both, as the contract allows.
 
 - **Columns.** `artifact.artifact` carries `knowledge_text`, generated from its name,
   whole and split at `.`, `_` and `-` so `kite.png` is found by `kite`, and the string
-  values of its metadata, `knowledge_vector` and `knowledge_model`, with their GIN and
-  HNSW indexes, in migration `0002_knowledge.sql`. A unique index on `artifact_id`, which
-  is unique across tenants, keys the SDK's reads and writes of one artifact.
+  values of its metadata, `knowledge_vector` and `knowledge_model`. The table is created
+  with them in migration `0001_artifact.sql`, because PostgreSQL 19 rewrites no table
+  whose row type a function reads, and adding a stored generated column rewrites it.
+  Their GIN and HNSW indexes are in `0002_knowledge.sql`. A unique index on
+  `artifact_id`, which is unique across tenants, keys the SDK's reads and writes of one
+  artifact.
 - **Read rule.** `artifact.knowledge_readable(a artifact.artifact, caller jsonb)` admits
   an artifact that is available and whose `artifact.effective_level` for the caller is
   read or more, the rule every listing uses; a label outside the caller's data labels

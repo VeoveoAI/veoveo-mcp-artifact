@@ -1,16 +1,6 @@
--- The knowledge contract through the SDK's PostgreSQL search: an artifact's words, its
--- vector and the model that made it, and the read rule its search shares with its
--- listings. pgvector lives in the installation's `_extensions` schema.
-
--- Its name, whole and split at `.`, `_` and `-` so `kite.png` is found by `kite`, and
--- the string values of its metadata, which PostgreSQL keeps current.
-ALTER TABLE artifact.artifact
-    ADD COLUMN knowledge_text tsvector GENERATED ALWAYS AS (
-        to_tsvector('simple', name || ' ' || translate(name, '._-', '   '))
-        || jsonb_to_tsvector('simple', metadata, '["string"]')
-    ) STORED,
-    ADD COLUMN knowledge_vector _extensions.vector(768),
-    ADD COLUMN knowledge_model text CHECK (artifact.is_text(knowledge_model, 512));
+-- The knowledge contract through the SDK's PostgreSQL search: the indexes over an
+-- artifact's words and vector, which its table carries from migration 1, and the read rule
+-- its search shares with its listings.
 
 CREATE INDEX artifact_knowledge_text ON artifact.artifact USING gin (knowledge_text);
 CREATE INDEX artifact_knowledge_vector ON artifact.artifact
