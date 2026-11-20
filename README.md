@@ -94,7 +94,7 @@ and its migration ledger, coherent consumer contracts and newly admitted registr
 metadata. Obsolete content-verification Tasks are not resumed. Do not apply the edited
 baseline to an existing migration history or add a compatibility path.
 
-Tests need the PostgreSQL 18 server programs on `PATH`; each test clones its own
+Tests need the PostgreSQL 19 server programs on `PATH`; each test clones its own
 database from a migrated template.
 
 After changing a query or a migration, regenerate `.sqlx` against a database with the
@@ -131,7 +131,7 @@ account, so the installation routes it to the server without the Hub.
 docker build --target check .
 ```
 
-The `check` stage checks the `.sqlx` metadata against a migrated PostgreSQL 18.7
+The `check` stage checks the `.sqlx` metadata against a migrated PostgreSQL 19.0
 database, then runs rustfmt, clippy with warnings denied, cargo-deny, cargo-hack on each
 feature and the nextest `ci` profile with every feature on. It runs the same way on macOS and Linux.
 

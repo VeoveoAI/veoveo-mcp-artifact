@@ -1,6 +1,6 @@
 //! Shared fixtures for the store tests: a fresh database migrated as the server's own
 //! login, callers built the way the forwarded identity builds them, and artifacts made
-//! available through the upload path. Requires the PostgreSQL 18 server programs on
+//! available through the upload path. Requires the PostgreSQL 19 server programs on
 //! `PATH`.
 #![allow(dead_code)]
 

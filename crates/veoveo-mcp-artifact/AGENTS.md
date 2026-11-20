@@ -65,7 +65,7 @@ on the content domain is the one read the server streams.
 
 ## Build And Test
 
-- `cargo test -p veoveo-mcp-artifact` with the PostgreSQL 18 server programs, pgvector
+- `cargo test -p veoveo-mcp-artifact` with the PostgreSQL 19 server programs, pgvector
   0.8.7 for them, and `weed` (SeaweedFS) on `PATH`, as the `dev` image provides them.
 - `cargo test -p veoveo-mcp-artifact --no-default-features --features contract` checks
   the contract alone. `tests/client.rs` needs the `client` feature, so the gate runs
