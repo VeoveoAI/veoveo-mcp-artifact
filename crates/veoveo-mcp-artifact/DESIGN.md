@@ -677,3 +677,16 @@ signed header would void the signature.
 | Client | `tests/client.rs` through the SDK's in-process mesh, with Artifact over a fresh database and a private SeaweedFS, for Ledger, the SDK's calls fixture server, which declares uses of Artifact's read and write permissions: a request binding uploads a small body of unknown size in one PUT and 40 MiB of unknown size in parallel parts, which resolves available, then downloads whole, as a range across a part boundary and as a tail; a Task binding uploads 20 MiB of declared size after its request returned and resolves available; a caller without the write permission is refused; the acting server is recorded in provenance and as the audit records' `via`, and for a Task binding the Task as well; a body shorter than its declared size aborts the upload and releases its bytes. `tests/contract_boundary.rs` holds the `contract` and `client` features to their dependency boundaries |
 | Audit | Records read back as the installation owner: a decision and its record commit together, a refused record rolls its decision back, every decision, sharing included, records its declared class with the resource it concerns as its target, a success outcome, its actor and detail, a redemption records no actor in the installation's partition, a size mismatch records a failure with Artifact's reason code, and a decision another server asked for names that server as `via` and keeps it out of the detail |
 | Acceptance | `tests/acceptance.rs` through a running installation's Hub and SeaweedFS, one test at a time: each caller listing exactly the tools its role may call, the sharing tools among the member's, and the member refused the tools whose permissions carry a risk, a share link and a deletion among them, a declared upload available at completion, private to its owner and read as a range by the member once granted, a gibibyte of unknown size uploaded in parts, independently fingerprinted by the consumer, read as a range across a part boundary and released by the sweep after deletion, a grant listed and revoked, the admin's quota refusing an upload, a share link opened through Artifact's forward and its redirect to the object store until its limit of one is spent, and the member's request for admin on an artifact shared with them approved by the admin. The local installation has one tenant, so the database tests cover a read refused across tenants |
+
+## Patched URL dependency boundary
+
+The contract, client and server share upstream url 2.5.9 through the qualified
+Core and SDK source revisions. Embedding is consumed only through its native
+client and Thumb only through its unchanged contract, closing the optional
+server dependency cycle without compiling either server in those edges. The
+Thumb contract source is separately checked as a transitive dependency; it is
+not a qualified Thumb server release. This metadata-only transition changes no
+Artifact bytes, grants, labels, schema, upload or preview behavior. All ordinary
+Mac and Linux Docker gates remain required, including audit, native feature
+isolation, SQL checks and storage fixtures. No service rollout is implied by a
+consumer using this client revision.
